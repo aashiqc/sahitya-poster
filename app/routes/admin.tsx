@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   Form,
   Link,
@@ -40,9 +40,6 @@ export function meta() {
 // Loader
 // ============================================================================
 export async function loader({ request }: Route.LoaderArgs) {
-  const url = new URL(request.url);
-  const editCode = url.searchParams.get("edit");
-
   const { supabase, headers, user, profile } = await requireAdmin(request);
   const event = await loadEvent(supabase);
 
@@ -61,7 +58,7 @@ export async function loader({ request }: Route.LoaderArgs) {
     supabase
       .from("results")
       .select(
-        `id, program_id, status, result_no, result_winners(position, name_ml, unit_ml, marks, grade)`,
+        `id, program_id, status, result_no, result_winners(position, name_ml, name_en, unit_ml, marks, grade)`,
       )
       .eq("event_id", event.id),
   ]);
@@ -70,30 +67,45 @@ export async function loader({ request }: Route.LoaderArgs) {
   const programs = programsRes.data ?? [];
   const results = resultsRes.data ?? [];
 
-  // Map programId → result summary; also collect all PUBLISHED winners for standings.
+  // Map programId → result summary (incl. full winners so the edit modal
+  // opens instantly from already-loaded data — no extra round trip).
   type WinnerRow = {
     position: number;
     name_ml: string;
+    name_en: string | null;
     unit_ml: string | null;
     marks: number | null;
     grade: string | null;
   };
   const resultByProgram = new Map<
     string,
-    { id: string; status: string; result_no: string | null; topName: string | null }
+    {
+      id: string;
+      status: string;
+      result_no: string | null;
+      topName: string | null;
+      winners: WinnerRow[];
+    }
   >();
   const publishedWinners: WinnerRow[] = [];
   for (const r of results) {
-    const winners = ((r.result_winners as WinnerRow[]) ?? []).map((w) => ({
-      ...w,
-      marks: w.marks !== null && w.marks !== undefined ? Number(w.marks) : null,
-    }));
-    const top = winners.find((w) => w.position === 1)?.name_ml ?? null;
+    const winners = ((r.result_winners as WinnerRow[]) ?? [])
+      .map((w) => ({
+        position: w.position,
+        name_ml: w.name_ml,
+        name_en: w.name_en ?? null,
+        unit_ml: w.unit_ml,
+        marks: w.marks !== null && w.marks !== undefined ? Number(w.marks) : null,
+        grade: w.grade ?? null,
+      }))
+      .sort((a, b) => a.position - b.position);
+    const first = winners.find((w) => w.position === 1);
     resultByProgram.set(r.program_id, {
       id: r.id,
       status: r.status,
       result_no: r.result_no,
-      topName: top,
+      topName: first?.name_en ?? first?.name_ml ?? null,
+      winners,
     });
     if (r.status === "published") publishedWinners.push(...winners);
   }
@@ -125,70 +137,6 @@ export async function loader({ request }: Route.LoaderArgs) {
   const totalPending = activePrograms.filter((p) => !resultByProgram.get(p.id)).length;
   const totalInactive = programs.length - activePrograms.length;
 
-  // Edit modal data
-  let editData: {
-    program: { code: string; name_ml: string; name_en: string | null };
-    level: { code: string; name_ml: string };
-    result: { id: string; status: string; result_no: string | null } | null;
-    winners: { position: number; name_ml: string; name_en: string | null; unit_ml: string | null; marks: number | null; grade: string | null }[];
-    suggestedResultNo: string | null;
-    neighbors: {
-      prev: { code: string; name_ml: string } | null;
-      next: { code: string; name_ml: string } | null;
-    };
-  } | null = null;
-
-  if (editCode) {
-    const program = programs.find((p) => p.code === editCode);
-    const level = program?.level_id ? levels.find((l) => l.id === program.level_id) : null;
-    if (program && level) {
-      const result = results.find((r) => r.program_id === program.id) ?? null;
-      let winners: { position: number; name_ml: string; name_en: string | null; unit_ml: string | null; marks: number | null; grade: string | null }[] = [];
-      if (result) {
-        const { data: ws } = await supabase
-          .from("result_winners")
-          .select("position, name_ml, name_en, unit_ml, marks, grade")
-          .eq("result_id", result.id)
-          .order("position");
-        winners = (ws ?? []).map((w) => ({
-          position: w.position,
-          name_ml: w.name_ml,
-          name_en: w.name_en ?? null,
-          unit_ml: w.unit_ml,
-          marks: w.marks !== null ? Number(w.marks) : null,
-          grade: w.grade ?? null,
-        }));
-      }
-      let suggestedResultNo: string | null = null;
-      if (!result) {
-        const used = results
-          .map((r) => parseInt(r.result_no ?? "", 10))
-          .filter((n) => Number.isFinite(n) && n > 0);
-        suggestedResultNo = String((used.length > 0 ? Math.max(...used) : 0) + 1).padStart(3, "0");
-      }
-      const siblings = programs
-        .filter((p) => p.level_id === level.id)
-        .sort((a, b) => a.sort_order - b.sort_order || a.code.localeCompare(b.code));
-      const idx = siblings.findIndex((s) => s.code === program.code);
-      const prev = idx > 0 ? siblings[idx - 1] : null;
-      const next = idx >= 0 && idx + 1 < siblings.length ? siblings[idx + 1] : null;
-
-      editData = {
-        program: { code: program.code, name_ml: program.name_ml, name_en: program.name_en },
-        level: { code: level.code, name_ml: level.name_ml },
-        result: result
-          ? { id: result.id, status: result.status, result_no: result.result_no }
-          : null,
-        winners,
-        suggestedResultNo,
-        neighbors: {
-          prev: prev ? { code: prev.code, name_ml: prev.name_ml } : null,
-          next: next ? { code: next.code, name_ml: next.name_ml } : null,
-        },
-      };
-    }
-  }
-
   return data(
     {
       user: { email: user.email ?? "" },
@@ -203,7 +151,6 @@ export async function loader({ request }: Route.LoaderArgs) {
         totalInactive,
       },
       publishedWinners,
-      editData,
     },
     { headers: Object.fromEntries(headers) },
   );
@@ -289,22 +236,23 @@ export async function action({ request }: Route.ActionArgs) {
       grade: string | null;
     }[] = [];
     for (const pos of [1, 2, 3]) {
-      const name_ml = String(fd.get(`winner_${pos}_name_ml`) ?? "").trim();
-      if (!name_ml) continue;
+      const name = String(fd.get(`winner_${pos}_name_en`) ?? "").trim();
+      if (!name) continue;
       const marksRaw = String(fd.get(`winner_${pos}_marks`) ?? "").trim();
-      const gradeRaw = String(fd.get(`winner_${pos}_grade`) ?? "").trim().toUpperCase();
       winners.push({
         position: pos,
-        name_ml,
-        name_en: String(fd.get(`winner_${pos}_name_en`) ?? "").trim() || null,
+        // name_ml is NOT NULL in the DB; English name is the only one
+        // collected now, so it backs both columns.
+        name_ml: name,
+        name_en: name,
         unit_ml: String(fd.get(`winner_${pos}_unit_ml`) ?? "").trim() || null,
         marks: marksRaw ? Number(marksRaw) : null,
-        grade: ["A", "B", "C"].includes(gradeRaw) ? gradeRaw : null,
+        grade: null,
       });
     }
     if (winners.length === 0) {
       return data(
-        { error: "Enter at least the first-place winner's Malayalam name." },
+        { error: "Enter at least the first-place winner's name." },
         { headers: Object.fromEntries(headers) },
       );
     }
@@ -367,26 +315,26 @@ export async function action({ request }: Route.ActionArgs) {
   return data({ error: `Unknown intent: ${intent}` }, { headers: Object.fromEntries(headers) });
 }
 
-// Avoid re-running the loader when only `?edit` changes during the same session
-// — except after a form submit, which should always revalidate.
+// The loader no longer reads any query param — the edit modal is built
+// client-side from already-loaded data. So opening/closing the modal or
+// switching views needs zero network. Only revalidate after a form submit
+// or a real path change.
 export function shouldRevalidate({ formMethod, currentUrl, nextUrl, defaultShouldRevalidate }: {
   formMethod?: string;
   currentUrl: URL;
   nextUrl: URL;
   defaultShouldRevalidate: boolean;
 }) {
-  if (formMethod) return true; // after action
+  if (formMethod) return true; // after action — refresh data
   if (currentUrl.pathname !== nextUrl.pathname) return defaultShouldRevalidate;
-  // Same path, only `edit` differs — we still need to revalidate because the
-  // modal's data depends on `?edit`. So defer to default.
-  return defaultShouldRevalidate;
+  return false; // same path, only query changed — pure client state
 }
 
 // ============================================================================
 // Component
 // ============================================================================
 export default function Admin({ loaderData }: Route.ComponentProps) {
-  const { user, profile, event, levels, stats, editData, publishedWinners } =
+  const { user, profile, event, levels, stats, publishedWinners } =
     loaderData;
   const orgName = (profile.organizations as { name?: string } | null)?.name ?? "";
   const eventName = event.name_ml ?? event.name;
@@ -396,6 +344,12 @@ export default function Admin({ loaderData }: Route.ComponentProps) {
   const view = (searchParams.get("view") ?? "dashboard") as
     | "dashboard"
     | "standings";
+
+  const editCode = searchParams.get("edit");
+  const editData = useMemo(
+    () => buildEditData(editCode, levels as LevelRow[]),
+    [editCode, levels],
+  );
 
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<
@@ -823,7 +777,7 @@ function StandingsView({
 function ResultModal({
   editData,
 }: {
-  editData: NonNullable<Awaited<ReturnType<typeof loader>>["data"]["editData"]>;
+  editData: EditData;
 }) {
   const navigate = useNavigate();
   const navigation = useNavigation();
@@ -858,7 +812,7 @@ function ResultModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center"
+      className="fixed inset-0 z-50 flex items-center justify-center p-4"
       role="dialog"
       aria-modal="true"
       aria-labelledby="result-modal-title"
@@ -871,39 +825,36 @@ function ResultModal({
         aria-label="Close"
       />
 
-      {/* Sheet */}
-      <div className="relative w-full sm:max-w-lg max-h-[92dvh] bg-white sm:rounded-2xl rounded-t-3xl shadow-xl overflow-hidden flex flex-col">
-        {/* Modal header (outside form) */}
-        <div className="px-5 py-4 border-b border-stone-200 flex items-start gap-3">
+      {/* Panel — compact, centered, laptop-first */}
+      <div className="relative w-full max-w-2xl max-h-[88dvh] bg-white rounded-xl shadow-2xl ring-1 ring-stone-200 overflow-hidden flex flex-col">
+        {/* Header */}
+        <div className="px-4 py-3 border-b border-stone-200 flex items-center gap-3">
+          <span className="text-[10px] font-mono tracking-widest text-stone-400 shrink-0">
+            {program.code}
+          </span>
           <div className="min-w-0 flex-1">
-            <p className="text-[11px] font-mono tracking-widest text-stone-400">
-              {program.code}
-            </p>
             <h2
               id="result-modal-title"
-              lang="ml"
-              className="text-xl font-semibold tracking-tight mt-0.5"
+              className="text-base font-semibold tracking-tight truncate"
             >
-              {program.name_ml}
+              {program.name_en ?? program.name_ml}
             </h2>
-            {program.name_en && (
-              <p className="text-xs text-stone-500 mt-0.5">{program.name_en}</p>
-            )}
-            <p lang="ml" className="text-xs text-stone-500 mt-0.5">
-              {level.name_ml}
-            </p>
           </div>
-          <div className="flex flex-col items-end gap-2 shrink-0">
-            <ProgramStatus status={status} />
-            <button
-              type="button"
-              onClick={close}
-              className="text-stone-400 hover:text-stone-700 text-2xl leading-none"
-              aria-label="Close"
-            >
-              ×
-            </button>
-          </div>
+          <span
+            lang="ml"
+            className="hidden sm:inline text-[11px] text-stone-500 bg-stone-100 rounded px-2 py-0.5 shrink-0"
+          >
+            {level.name_ml}
+          </span>
+          <ProgramStatus status={status} />
+          <button
+            type="button"
+            onClick={close}
+            className="inline-flex items-center justify-center size-10 rounded-lg text-stone-500 hover:text-stone-800 hover:bg-stone-100 shrink-0"
+            aria-label="Close"
+          >
+            <X className="size-6" strokeWidth={2.25} />
+          </button>
         </div>
 
         {/* Single Form wraps body + footer so all inputs submit together */}
@@ -918,20 +869,34 @@ function ResultModal({
           )}
 
           {/* Scrollable body */}
-          <div className="flex-1 overflow-auto px-5 py-4 space-y-4">
-            {/* Result number — auto */}
-            <div className="rounded-xl border border-stone-200 bg-stone-50/50 px-4 py-3 flex items-center gap-3">
-              <span className="text-sm font-medium text-stone-700 shrink-0">Result #</span>
+          <div className="flex-1 overflow-auto px-4 py-3 space-y-2.5">
+            {/* Result number */}
+            <div className="flex items-center gap-2.5">
+              <label
+                htmlFor="result_no"
+                className="text-xs font-medium text-stone-600 shrink-0"
+              >
+                Result #
+              </label>
               <input
+                id="result_no"
                 name="result_no"
                 defaultValue={result?.result_no ?? suggestedResultNo ?? ""}
                 placeholder="030"
                 inputMode="numeric"
-                className="w-24 rounded-lg border border-stone-300 bg-white px-3 py-1.5 text-base tabular-nums focus:outline-none focus:ring-2 focus:ring-brand-600 focus:border-brand-600"
+                className="w-20 rounded-md border border-stone-300 bg-white px-2.5 py-1.5 text-sm tabular-nums focus:outline-none focus:border-stone-400"
               />
               {!result && suggestedResultNo && (
-                <span className="text-[11px] text-stone-400 ml-auto">auto</span>
+                <span className="text-[10px] text-stone-400">auto-suggested</span>
               )}
+            </div>
+
+            {/* Column headers (laptop) */}
+            <div className="hidden md:grid grid-cols-[3.25rem_minmax(0,1fr)_11rem_5rem] gap-2 px-1 text-[10px] font-medium uppercase tracking-wider text-stone-400">
+              <span>Place</span>
+              <span>Name</span>
+              <span>Team</span>
+              <span className="text-right">Marks</span>
             </div>
 
             {[1, 2, 3].map((pos) => {
@@ -939,91 +904,59 @@ function ResultModal({
               const meta = POSITION_META[pos];
               const isFirst = pos === 1;
               return (
-                <fieldset
+                <div
                   key={pos}
-                  className={
+                  className={`grid items-center gap-2 grid-cols-2 md:grid-cols-[3.25rem_minmax(0,1fr)_11rem_5rem] rounded-lg border px-2.5 py-2 ${
                     isFirst
-                      ? "rounded-2xl border-2 border-amber-300 bg-amber-50/40 p-4"
-                      : "rounded-2xl border border-stone-200 bg-white p-4"
-                  }
+                      ? "border-amber-300 bg-amber-50/40"
+                      : "border-stone-200"
+                  }`}
                 >
-                  <div className="flex items-center justify-between mb-2.5">
-                    <div className="flex items-center gap-2.5">
-                      <span className="text-2xl leading-none" aria-hidden>
-                        {meta.icon}
-                      </span>
-                      <span className="text-sm font-medium text-stone-800">
-                        {meta.label} place
-                      </span>
-                    </div>
-                    {!isFirst && (
-                      <span className="text-[10px] text-stone-400 tracking-wider uppercase">
-                        Optional
-                      </span>
-                    )}
-                  </div>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                    <input
-                      name={`winner_${pos}_name_ml`}
-                      lang="ml"
-                      required={isFirst}
-                      autoFocus={isFirst && !winnersByPos.get(1)}
-                      defaultValue={w?.name_ml ?? ""}
-                      placeholder="Name (Malayalam)"
-                      className="w-full rounded-xl border border-stone-300 bg-white px-3.5 py-2.5 text-base focus:outline-none focus:ring-2 focus:ring-brand-600 focus:border-brand-600"
-                    />
-                    <input
-                      name={`winner_${pos}_name_en`}
-                      defaultValue={w?.name_en ?? ""}
-                      placeholder="Name (English)"
-                      className="w-full rounded-xl border border-stone-300 bg-white px-3.5 py-2.5 text-base focus:outline-none focus:ring-2 focus:ring-brand-600 focus:border-brand-600"
-                    />
-                  </div>
-                  <div className="grid grid-cols-[1fr_5rem_5rem] gap-2 mt-2">
-                    <select
-                      name={`winner_${pos}_unit_ml`}
-                      defaultValue={(w?.unit_ml ?? "").toLowerCase()}
-                      className="rounded-xl border border-stone-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-600 focus:border-brand-600"
-                    >
-                      <option value="">Team —</option>
-                      {TEAMS.map((t) => (
-                        <option key={t.slug} value={t.slug}>
-                          {t.name}
-                        </option>
-                      ))}
-                    </select>
-                    <select
-                      name={`winner_${pos}_grade`}
-                      defaultValue={w?.grade ?? ""}
-                      className="rounded-xl border border-stone-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-600 focus:border-brand-600"
-                    >
-                      <option value="">Grade</option>
-                      <option value="A">A (10)</option>
-                      <option value="B">B (5)</option>
-                      <option value="C">C (1)</option>
-                    </select>
-                    <input
-                      name={`winner_${pos}_marks`}
-                      type="number"
-                      step="0.01"
-                      inputMode="decimal"
-                      defaultValue={w?.marks?.toString() ?? ""}
-                      placeholder="Marks"
-                      title="Optional — overrides grade default"
-                      className="rounded-xl border border-stone-300 bg-white px-3 py-2 text-sm tabular-nums text-right focus:outline-none focus:ring-2 focus:ring-brand-600 focus:border-brand-600"
-                    />
-                  </div>
-                </fieldset>
+                  <span
+                    className={`col-span-2 md:col-auto inline-flex items-center justify-center rounded-full text-[11px] font-semibold w-12 h-6 ${meta.tone}`}
+                  >
+                    {meta.ordinal}
+                  </span>
+                  <input
+                    name={`winner_${pos}_name_en`}
+                    required={isFirst}
+                    autoFocus={isFirst && !winnersByPos.get(1)}
+                    defaultValue={w?.name_en ?? w?.name_ml ?? ""}
+                    placeholder={isFirst ? "Winner name" : "Name (optional)"}
+                    className="col-span-2 md:col-auto w-full rounded-md border border-stone-300 bg-white px-2.5 py-1.5 text-sm focus:outline-none focus:border-stone-400"
+                  />
+                  <select
+                    name={`winner_${pos}_unit_ml`}
+                    defaultValue={(w?.unit_ml ?? "").toLowerCase()}
+                    className="col-span-1 md:col-auto rounded-md border border-stone-300 bg-white px-2 py-1.5 text-sm focus:outline-none focus:border-stone-400"
+                  >
+                    <option value="">Team —</option>
+                    {TEAMS.map((t) => (
+                      <option key={t.slug} value={t.slug}>
+                        {t.name}
+                      </option>
+                    ))}
+                  </select>
+                  <input
+                    name={`winner_${pos}_marks`}
+                    type="number"
+                    step="0.01"
+                    inputMode="decimal"
+                    defaultValue={w?.marks?.toString() ?? ""}
+                    placeholder="Marks"
+                    className="col-span-1 md:col-auto w-full rounded-md border border-stone-300 bg-white px-2 py-1.5 text-sm tabular-nums text-right focus:outline-none focus:border-stone-400"
+                  />
+                </div>
               );
             })}
 
             {actionData && "error" in actionData && (
-              <p className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-xl px-3 py-2">
+              <p className="text-xs text-red-700 bg-red-50 border border-red-200 rounded-md px-3 py-2">
                 {actionData.error}
               </p>
             )}
             {actionData && "ok" in actionData && (
-              <p className="text-sm text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-xl px-3 py-2">
+              <p className="text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-md px-3 py-2">
                 ✓ Saved
               </p>
             )}
@@ -1046,13 +979,13 @@ function ResultModal({
             )}
           </div>
 
-          {/* Sticky footer (still inside the Form) */}
-          <div className="border-t border-stone-200 px-5 py-3 flex items-center gap-2 bg-white">
+          {/* Footer */}
+          <div className="border-t border-stone-200 px-4 py-2.5 flex items-center gap-2 bg-stone-50/60">
             {neighbors.prev ? (
               <Link
                 to={`/admin?edit=${neighbors.prev.code}`}
                 preventScrollReset
-                className="text-sm text-stone-500 hover:text-stone-900"
+                className="text-xs text-stone-500 hover:text-stone-900"
               >
                 ← {neighbors.prev.code}
               </Link>
@@ -1065,7 +998,7 @@ function ResultModal({
                 name="intent"
                 value="save_draft"
                 disabled={busy}
-                className="rounded-xl border border-stone-300 hover:bg-stone-50 text-stone-700 px-3 py-2 text-sm font-medium disabled:opacity-50"
+                className="rounded-md border border-stone-300 hover:bg-white text-stone-700 px-3 py-1.5 text-sm font-medium disabled:opacity-50"
               >
                 Save draft
               </button>
@@ -1074,7 +1007,7 @@ function ResultModal({
                 name="intent"
                 value={neighbors.next ? "save_publish_next" : "save_publish"}
                 disabled={busy}
-                className="rounded-xl bg-brand-700 hover:bg-brand-800 text-white px-4 py-2 text-sm font-medium disabled:opacity-50"
+                className="rounded-md bg-brand-700 hover:bg-brand-800 text-white px-4 py-1.5 text-sm font-medium disabled:opacity-50"
               >
                 {busy ? "…" : neighbors.next ? "Publish & next" : "Publish"}
               </button>
@@ -1089,10 +1022,13 @@ function ResultModal({
 // ============================================================================
 // Small subcomponents
 // ============================================================================
-const POSITION_META: Record<number, { label: string; icon: string }> = {
-  1: { label: "First", icon: "🥇" },
-  2: { label: "Second", icon: "🥈" },
-  3: { label: "Third", icon: "🥉" },
+const POSITION_META: Record<
+  number,
+  { label: string; ordinal: string; tone: string }
+> = {
+  1: { label: "First", ordinal: "1st", tone: "bg-amber-100 text-amber-800" },
+  2: { label: "Second", ordinal: "2nd", tone: "bg-stone-200 text-stone-700" },
+  3: { label: "Third", ordinal: "3rd", tone: "bg-orange-100 text-orange-800" },
 };
 
 function Stat({
@@ -1122,6 +1058,27 @@ function Stat({
 // New dashboard primitives
 // ─────────────────────────────────────────────────────────────────────
 
+type EditWinner = {
+  position: number;
+  name_ml: string;
+  name_en: string | null;
+  unit_ml: string | null;
+  marks: number | null;
+  grade: string | null;
+};
+
+type EditData = {
+  program: { code: string; name_ml: string; name_en: string | null };
+  level: { code: string; name_ml: string };
+  result: { id: string; status: string; result_no: string | null } | null;
+  winners: EditWinner[];
+  suggestedResultNo: string | null;
+  neighbors: {
+    prev: { code: string; name_ml: string } | null;
+    next: { code: string; name_ml: string } | null;
+  };
+};
+
 type ProgramRow = {
   id: string;
   code: string;
@@ -1135,8 +1092,67 @@ type ProgramRow = {
     status: string;
     result_no: string | null;
     topName: string | null;
+    winners: EditWinner[];
   } | null;
 };
+
+/** Derive the edit-modal payload purely from already-loaded dashboard
+ *  data — no network. Runs in a useMemo so opening the modal is instant. */
+function buildEditData(
+  code: string | null,
+  levels: LevelRow[],
+): EditData | null {
+  if (!code) return null;
+  let program: ProgramRow | undefined;
+  let level: LevelRow | undefined;
+  for (const l of levels) {
+    const p = l.programs.find((pr) => pr.code === code);
+    if (p) {
+      program = p;
+      level = l;
+      break;
+    }
+  }
+  if (!program || !level) return null;
+
+  const r = program.result;
+  let suggestedResultNo: string | null = null;
+  if (!r) {
+    const used = levels
+      .flatMap((l) => l.programs)
+      .map((p) => parseInt(p.result?.result_no ?? "", 10))
+      .filter((n) => Number.isFinite(n) && n > 0);
+    suggestedResultNo = String(
+      (used.length > 0 ? Math.max(...used) : 0) + 1,
+    ).padStart(3, "0");
+  }
+
+  const siblings = level.programs
+    .slice()
+    .sort((a, b) => a.sort_order - b.sort_order || a.code.localeCompare(b.code));
+  const idx = siblings.findIndex((s) => s.code === code);
+  const prev = idx > 0 ? siblings[idx - 1] : null;
+  const next =
+    idx >= 0 && idx + 1 < siblings.length ? siblings[idx + 1] : null;
+
+  return {
+    program: {
+      code: program.code,
+      name_ml: program.name_ml,
+      name_en: program.name_en,
+    },
+    level: { code: level.code, name_ml: level.name_ml },
+    result: r
+      ? { id: r.id, status: r.status, result_no: r.result_no }
+      : null,
+    winners: r?.winners ?? [],
+    suggestedResultNo,
+    neighbors: {
+      prev: prev ? { code: prev.code, name_ml: prev.name_ml } : null,
+      next: next ? { code: next.code, name_ml: next.name_ml } : null,
+    },
+  };
+}
 type LevelRow = {
   id: string;
   code: string;

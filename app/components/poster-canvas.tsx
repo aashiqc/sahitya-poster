@@ -52,14 +52,14 @@ type TemplateLayout = {
   titleColor: string;
   nameColor: string;
   unitColor: string;
-  // Result number badge — round chip beside the decorative "Result" script.
-  // x/y is the chip's top-left corner.
+  // Result number — large, centered inside a box under the "Result"
+  // script. x/y is the box top-left; the digits are centered in boxW.
   resultNo: {
     x: number;
     y: number;
+    boxW: number;
     fontSize: number;
     color: string;
-    bg: string;
   };
 };
 
@@ -74,7 +74,7 @@ const TEMPLATES: TemplateLayout[] = [
     titleColor: "#BF0603",
     nameColor: "#0B090A",
     unitColor: "#6B6566",
-    resultNo: { x: 700, y: 200, fontSize: 44, color: "#E85937", bg: "#FFFFFF" },
+    resultNo: { x: 610, y: 160, boxW: 420, fontSize: 176, color: "#0B090A" },
   },
   // 02 — pink backdrop, landscape right-bottom, white "Result" top-right
   {
@@ -86,7 +86,7 @@ const TEMPLATES: TemplateLayout[] = [
     titleColor: "#9C0503",
     nameColor: "#0B090A",
     unitColor: "#4A3F40",
-    resultNo: { x: 700, y: 200, fontSize: 44, color: "#FFFFFF", bg: "#2B2728" },
+    resultNo: { x: 610, y: 160, boxW: 420, fontSize: 176, color: "#FFFFFF" },
   },
   // 03 — cream backdrop, Matisse cutouts bottom-left, header on the right
   {
@@ -98,7 +98,7 @@ const TEMPLATES: TemplateLayout[] = [
     titleColor: "#BF0603",
     nameColor: "#0B090A",
     unitColor: "#6B6566",
-    resultNo: { x: 200, y: 300, fontSize: 44, color: "#3D5DBF", bg: "#FFFFFF" },
+    resultNo: { x: 50, y: 270, boxW: 360, fontSize: 136, color: "#3D5DBF" },
   },
 ];
 
@@ -132,7 +132,8 @@ function useImage(src: string): HTMLImageElement | null {
  *  10+ are unchanged ("10", "100", "105"). Non-numeric passes through. */
 function formatResultNo(s: string): string {
   const t = s.trim();
-  return /^\d+$/.test(t) ? t.padStart(2, "0") : t;
+  if (!/^\d+$/.test(t)) return t;
+  return String(parseInt(t, 10)).padStart(2, "0");
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -233,32 +234,20 @@ export const PosterCanvas = ({
           {/* Winners list — directly below the title block */}
           <WinnersList winners={data.winners} layout={layout} />
 
-          {/* Result number — round chip beside the "Result" script */}
-          {data.resultNo && (() => {
-            const r = layout.resultNo;
-            const d = Math.round(r.fontSize * 2.3);
-            return (
-              <Group x={r.x} y={r.y}>
-                <Rect
-                  width={d}
-                  height={d}
-                  cornerRadius={d / 2}
-                  fill={r.bg}
-                />
-                <Text
-                  width={d}
-                  height={d}
-                  align="center"
-                  verticalAlign="middle"
-                  text={formatResultNo(data.resultNo)}
-                  fontFamily={ORDINAL_FONT}
-                  fontSize={r.fontSize}
-                  fontStyle="bold"
-                  fill={r.color}
-                />
-              </Group>
-            );
-          })()}
+          {/* Result number — large, centered under the "Result" script */}
+          {data.resultNo && (
+            <Text
+              x={layout.resultNo.x}
+              y={layout.resultNo.y}
+              width={layout.resultNo.boxW}
+              align="center"
+              text={formatResultNo(data.resultNo)}
+              fontFamily={ORDINAL_FONT}
+              fontSize={layout.resultNo.fontSize}
+              fontStyle="bold"
+              fill={layout.resultNo.color}
+            />
+          )}
         </Layer>
       </Stage>
       )}
@@ -271,12 +260,50 @@ export const PosterCanvas = ({
 // ─────────────────────────────────────────────────────────────────────
 
 const SUBTITLE_SIZE = 34;
-const SUBTITLE_LH = 1;
-const SUBTITLE_GAP = 10;
+const SUBTITLE_GAP = 14;
 const TITLE_SIZE = 50;
 const TITLE_LH = 1.05;
 const TITLE_LINE_BUDGET = 2;
 const TITLE_TO_WINNERS_GAP = 38;
+
+// Category highlight pill
+const PILL_PADX = 22;
+const PILL_PADY = 10;
+const PILL_RADIUS = 0;
+const PILL_BG = "#4FB7B2";
+const PILL_TEXT = "#FFFFFF";
+const PILL_H = SUBTITLE_SIZE + PILL_PADY * 2;
+
+/** Level name on a rounded highlight. The pill auto-fits the text by
+ *  measuring the rendered Konva.Text width after mount. */
+function CategoryPill({ text }: { text: string }) {
+  const tref = useRef<Konva.Text | null>(null);
+  const [w, setW] = useState(0);
+  useEffect(() => {
+    const n = tref.current;
+    if (n) setW(Math.ceil(n.getTextWidth()));
+  }, [text]);
+  return (
+    <Group>
+      <Rect
+        width={w + PILL_PADX * 2}
+        height={PILL_H}
+        cornerRadius={PILL_RADIUS}
+        fill={PILL_BG}
+      />
+      <Text
+        ref={tref}
+        x={PILL_PADX}
+        y={PILL_PADY}
+        text={text}
+        fontFamily={BODY_FONT}
+        fontSize={SUBTITLE_SIZE}
+        fontStyle="bold"
+        fill={PILL_TEXT}
+      />
+    </Group>
+  );
+}
 
 function SubtitleTitle({
   data,
@@ -287,20 +314,10 @@ function SubtitleTitle({
 }) {
   return (
     <Group x={layout.contentX} y={layout.contentY}>
+      <CategoryPill text={data.levelName} />
       <Text
         x={0}
-        y={0}
-        width={layout.contentW}
-        text={data.levelName}
-        fontFamily={BODY_FONT}
-        fontSize={SUBTITLE_SIZE}
-        fill={layout.subtitleColor}
-        lineHeight={SUBTITLE_LH}
-        wrap="word"
-      />
-      <Text
-        x={0}
-        y={SUBTITLE_SIZE * SUBTITLE_LH + SUBTITLE_GAP}
+        y={PILL_H + SUBTITLE_GAP}
         width={layout.contentW}
         text={data.programName}
         fontFamily={BODY_FONT}
@@ -327,11 +344,10 @@ const UNIT_SIZE = 25;
 const NAME_TO_UNIT_GAP = 6;
 
 function winnersStartY(layout: TemplateLayout): number {
-  const subtitleH = SUBTITLE_SIZE * SUBTITLE_LH;
   const titleH = TITLE_SIZE * TITLE_LH * TITLE_LINE_BUDGET;
   return (
     layout.contentY +
-    subtitleH +
+    PILL_H +
     SUBTITLE_GAP +
     titleH +
     TITLE_TO_WINNERS_GAP
