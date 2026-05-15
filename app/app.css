@@ -1,0 +1,127 @@
+@import "tailwindcss" source(".");
+
+@theme {
+  --font-sans: "Plus Jakarta Sans", "Manjari", ui-sans-serif, system-ui,
+    sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol";
+  --font-ml: "Manjari", "Noto Sans Malayalam", "AnjaliOldLipi",
+    "Plus Jakarta Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-ml-display: "Manjari", "Noto Sans Malayalam",
+    "Plus Jakarta Sans", ui-sans-serif, system-ui, sans-serif;
+  /* Cooper Black for SSF wordmark. Uses installed Cooper Black on macOS/
+     Windows; falls back to Bowlby One (loaded via Google Fonts) elsewhere. */
+  --font-cooper: "Cooper Black", "Bowlby One", "Alfa Slab One", Georgia, serif;
+
+  /* ─── Core palette ────────────────────────────────────────── */
+  --color-yellow:    #FFCE05;
+  --color-red:       #BF0603;
+  --color-black:     #0B090A;
+  --color-white:     #FFFFFF;
+
+  /* ─── Paper (white surfaces) — remapped to white shades ─── */
+  --color-paper:     #FFFFFF;
+  --color-paper-2:   #FAFAFA;
+  --color-paper-3:   #F0F0F0;
+  --color-paper-4:   #E5E5E5;
+  --color-paper-5:   #D9D9D9;
+
+  /* ─── Brand: red shades ─────────────────────────────────── */
+  --color-brand-50:  #FCE7E7;
+  --color-brand-100: #F4B0B0;
+  --color-brand-200: #E97A78;
+  --color-brand-300: #DC4441;
+  --color-brand-400: #CF1C19;
+  --color-brand-500: #BF0603;
+  --color-brand-600: #9C0503;
+  --color-brand-700: #BF0603;
+  --color-brand-800: #6E0302;
+  --color-brand-900: #470201;
+
+  /* ─── Gold → Yellow shades ───────────────────────────────── */
+  --color-gold-50:   #FFF9D9;
+  --color-gold-100:  #FFEFA6;
+  --color-gold-200:  #FFE072;
+  --color-gold-300:  #FFD43E;
+  --color-gold-400:  #FFCE05;
+  --color-gold-500:  #E5B900;
+  --color-gold-600:  #B08D00;
+  --color-gold-700:  #7A6200;
+  --color-gold-800:  #453800;
+
+  /* ─── Ink (text) — black with opacity-derived greys ─── */
+  --color-ink-900:   #0B090A;
+  --color-ink-800:   #1A1718;
+  --color-ink-700:   #2B2728;
+  --color-ink-500:   #6B6566;
+  --color-ink-400:   #948D8E;
+  --color-ink-300:   #BDB7B8;
+
+  /* ─── Legacy alias buckets (kept so old classes still resolve) ─── */
+  --color-night-300: #BF0603;
+  --color-night-400: #9C0503;
+  --color-night-500: #6E0302;
+  --color-night-600: #470201;
+  --color-night-700: #2A0101;
+  --color-night-800: #0B090A;
+  --color-night-900: #050203;
+
+  --color-saffron-500: #BF0603;
+  --color-saffron-600: #9C0503;
+}
+
+html, body {
+  background-color: var(--color-white);
+  color: var(--color-black);
+  color-scheme: light only;
+  overflow-x: clip;
+  max-width: 100%;
+}
+
+:lang(ml) {
+  font-family: var(--font-ml);
+  font-feature-settings: "kern" on, "liga" on, "calt" on;
+}
+
+h1:lang(ml), h2:lang(ml) {
+  font-family: var(--font-ml-display);
+}
+
+.font-display {
+  font-family: var(--font-sans);
+  letter-spacing: -0.005em;
+}
+
+/* Clean card — used by bot bubbles */
+.card-festive {
+  background: #FFFFFF;
+  border: 1px solid #E8E8E8;
+  box-shadow: 0 1px 2px rgba(11, 9, 10, 0.04);
+  border-radius: 1rem;
+}
+
+.card-festive-gold {
+  background: #FFFFFF;
+  border: 1px solid var(--color-yellow);
+  box-shadow: 0 1px 2px rgba(11, 9, 10, 0.04);
+  border-radius: 1rem;
+}
+
+*:focus-visible {
+  outline: 2px solid var(--color-red);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+/* Tailwind v4 doesn't set cursor:pointer on <button> by default — restore it
+   so every clickable feels clickable. Disabled buttons get a not-allowed. */
+button:not(:disabled),
+[role="button"]:not([aria-disabled="true"]),
+summary {
+  cursor: pointer;
+}
+button:disabled,
+[role="button"][aria-disabled="true"] {
+  cursor: not-allowed;
+}
+
+details > summary { list-style: none; }
+details > summary::-webkit-details-marker { display: none; }

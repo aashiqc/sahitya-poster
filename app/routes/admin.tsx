@@ -1,0 +1,1422 @@
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import {
+  Form,
+  Link,
+  data,
+  redirect,
+  useActionData,
+  useNavigate,
+  useNavigation,
+  useSearchParams,
+} from "react-router";
+import {
+  Ban,
+  Check,
+  Clock,
+  Download,
+  ExternalLink,
+  LayoutGrid,
+  Menu,
+  RefreshCw,
+  Search,
+  Share2,
+  Trophy,
+  X,
+} from "lucide-react";
+import type { Route } from "./+types/admin";
+import { loadEvent, requireAdmin } from "~/lib/supabase.server";
+import {
+  TEAMS,
+  computeStandings,
+  snapshotBucket,
+  winnerPoints,
+} from "~/lib/teams";
+
+export function meta() {
+  return [{ title: "Admin · Sahityotsav" }];
+}
+
+// ============================================================================
+// Loader
+// ============================================================================
+export async function loader({ request }: Route.LoaderArgs) {
+  const url = new URL(request.url);
+  const editCode = url.searchParams.get("edit");
+
+  const { supabase, headers, user, profile } = await requireAdmin(request);
+  const event = await loadEvent(supabase);
+
+  const [levelsRes, programsRes, resultsRes] = await Promise.all([
+    supabase
+      .from("levels")
+      .select("id, code, name_ml, sort_order")
+      .eq("event_id", event.id)
+      .order("sort_order"),
+    supabase
+      .from("programs")
+      .select("id, code, name_ml, name_en, sort_order, level_id, is_active")
+      .eq("event_id", event.id)
+      .order("sort_order")
+      .order("code"),
+    supabase
+      .from("results")
+      .select(
+        `id, program_id, status, result_no, result_winners(position, name_ml, unit_ml, marks, grade)`,
+      )
+      .eq("event_id", event.id),
+  ]);
+
+  const levels = levelsRes.data ?? [];
+  const programs = programsRes.data ?? [];
+  const results = resultsRes.data ?? [];
+
+  // Map programId → result summary; also collect all PUBLISHED winners for standings.
+  type WinnerRow = {
+    position: number;
+    name_ml: string;
+    unit_ml: string | null;
+    marks: number | null;
+    grade: string | null;
+  };
+  const resultByProgram = new Map<
+    string,
+    { id: string; status: string; result_no: string | null; topName: string | null }
+  >();
+  const publishedWinners: WinnerRow[] = [];
+  for (const r of results) {
+    const winners = ((r.result_winners as WinnerRow[]) ?? []).map((w) => ({
+      ...w,
+      marks: w.marks !== null && w.marks !== undefined ? Number(w.marks) : null,
+    }));
+    const top = winners.find((w) => w.position === 1)?.name_ml ?? null;
+    resultByProgram.set(r.program_id, {
+      id: r.id,
+      status: r.status,
+      result_no: r.result_no,
+      topName: top,
+    });
+    if (r.status === "published") publishedWinners.push(...winners);
+  }
+
+  // Enrich levels with their programs (and each program's result status)
+  const enrichedLevels = levels.map((l) => {
+    const lps = programs
+      .filter((p) => p.level_id === l.id)
+      .map((p) => ({ ...p, result: resultByProgram.get(p.id) ?? null }));
+    const active = lps.filter((p) => p.is_active);
+    return {
+      ...l,
+      programs: lps,
+      total: active.length,
+      published: active.filter((p) => p.result?.status === "published").length,
+      drafts: active.filter((p) => p.result?.status === "draft").length,
+      pending: active.filter((p) => !p.result).length,
+      inactive: lps.filter((p) => !p.is_active).length,
+    };
+  });
+
+  const activePrograms = programs.filter((p) => p.is_active);
+  const totalPublished = activePrograms.filter(
+    (p) => resultByProgram.get(p.id)?.status === "published",
+  ).length;
+  const totalDrafts = activePrograms.filter(
+    (p) => resultByProgram.get(p.id)?.status === "draft",
+  ).length;
+  const totalPending = activePrograms.filter((p) => !resultByProgram.get(p.id)).length;
+  const totalInactive = programs.length - activePrograms.length;
+
+  // Edit modal data
+  let editData: {
+    program: { code: string; name_ml: string; name_en: string | null };
+    level: { code: string; name_ml: string };
+    result: { id: string; status: string; result_no: string | null } | null;
+    winners: { position: number; name_ml: string; name_en: string | null; unit_ml: string | null; marks: number | null; grade: string | null }[];
+    suggestedResultNo: string | null;
+    neighbors: {
+      prev: { code: string; name_ml: string } | null;
+      next: { code: string; name_ml: string } | null;
+    };
+  } | null = null;
+
+  if (editCode) {
+    const program = programs.find((p) => p.code === editCode);
+    const level = program?.level_id ? levels.find((l) => l.id === program.level_id) : null;
+    if (program && level) {
+      const result = results.find((r) => r.program_id === program.id) ?? null;
+      let winners: { position: number; name_ml: string; name_en: string | null; unit_ml: string | null; marks: number | null; grade: string | null }[] = [];
+      if (result) {
+        const { data: ws } = await supabase
+          .from("result_winners")
+          .select("position, name_ml, name_en, unit_ml, marks, grade")
+          .eq("result_id", result.id)
+          .order("position");
+        winners = (ws ?? []).map((w) => ({
+          position: w.position,
+          name_ml: w.name_ml,
+          name_en: w.name_en ?? null,
+          unit_ml: w.unit_ml,
+          marks: w.marks !== null ? Number(w.marks) : null,
+          grade: w.grade ?? null,
+        }));
+      }
+      let suggestedResultNo: string | null = null;
+      if (!result) {
+        const used = results
+          .map((r) => parseInt(r.result_no ?? "", 10))
+          .filter((n) => Number.isFinite(n) && n > 0);
+        suggestedResultNo = String((used.length > 0 ? Math.max(...used) : 0) + 1).padStart(3, "0");
+      }
+      const siblings = programs
+        .filter((p) => p.level_id === level.id)
+        .sort((a, b) => a.sort_order - b.sort_order || a.code.localeCompare(b.code));
+      const idx = siblings.findIndex((s) => s.code === program.code);
+      const prev = idx > 0 ? siblings[idx - 1] : null;
+      const next = idx >= 0 && idx + 1 < siblings.length ? siblings[idx + 1] : null;
+
+      editData = {
+        program: { code: program.code, name_ml: program.name_ml, name_en: program.name_en },
+        level: { code: level.code, name_ml: level.name_ml },
+        result: result
+          ? { id: result.id, status: result.status, result_no: result.result_no }
+          : null,
+        winners,
+        suggestedResultNo,
+        neighbors: {
+          prev: prev ? { code: prev.code, name_ml: prev.name_ml } : null,
+          next: next ? { code: next.code, name_ml: next.name_ml } : null,
+        },
+      };
+    }
+  }
+
+  return data(
+    {
+      user: { email: user.email ?? "" },
+      profile,
+      event,
+      levels: enrichedLevels,
+      stats: {
+        totalPrograms: activePrograms.length,
+        totalPublished,
+        totalDrafts,
+        totalPending,
+        totalInactive,
+      },
+      publishedWinners,
+      editData,
+    },
+    { headers: Object.fromEntries(headers) },
+  );
+}
+
+// ============================================================================
+// Action
+// ============================================================================
+export async function action({ request }: Route.ActionArgs) {
+  const { supabase, headers, user } = await requireAdmin(request);
+  const event = await loadEvent(supabase);
+  const fd = await request.formData();
+  const intent = String(fd.get("intent") ?? "");
+
+  if (intent === "logout") {
+    await supabase.auth.signOut();
+    return redirect("/admin/login", { headers: Object.fromEntries(headers) });
+  }
+
+  if (intent === "toggle_publish") {
+    const next = event.status === "published" ? "draft" : "published";
+    const { error } = await supabase.from("events").update({ status: next }).eq("id", event.id);
+    if (error) return data({ error: error.message }, { headers: Object.fromEntries(headers) });
+    return data({ ok: true }, { headers: Object.fromEntries(headers) });
+  }
+
+  // Result-scoped intents need program_code
+  const programCode = String(fd.get("program_code") ?? "");
+  if (!programCode) {
+    return data({ error: "Missing program code." }, { headers: Object.fromEntries(headers) });
+  }
+  const { data: program } = await supabase
+    .from("programs")
+    .select("id, code, level_id")
+    .eq("event_id", event.id)
+    .eq("code", programCode)
+    .maybeSingle();
+  if (!program || !program.level_id) {
+    return data({ error: "Program not found." }, { headers: Object.fromEntries(headers) });
+  }
+
+  if (intent === "delete_result") {
+    const { data: existing } = await supabase
+      .from("results")
+      .select("id")
+      .eq("event_id", event.id)
+      .eq("program_id", program.id)
+      .maybeSingle();
+    if (existing) await supabase.from("results").delete().eq("id", existing.id);
+    return redirect("/admin", { headers: Object.fromEntries(headers) });
+  }
+
+  if (intent === "toggle_active") {
+    // Read current state, flip it.
+    const { data: cur } = await supabase
+      .from("programs")
+      .select("is_active")
+      .eq("id", program.id)
+      .single();
+    const next = !(cur?.is_active ?? true);
+    const { error } = await supabase
+      .from("programs")
+      .update({ is_active: next })
+      .eq("id", program.id);
+    if (error) return data({ error: error.message }, { headers: Object.fromEntries(headers) });
+    // If deactivating, also drop any result so it can't be served publicly.
+    if (next === false) {
+      await supabase.from("results").delete().eq("program_id", program.id);
+    }
+    return data({ ok: true }, { headers: Object.fromEntries(headers) });
+  }
+
+  if (intent === "save_draft" || intent === "save_publish" || intent === "save_publish_next") {
+    const result_no = String(fd.get("result_no") ?? "").trim() || null;
+    const publish = intent !== "save_draft";
+
+    const winners: {
+      position: number;
+      name_ml: string;
+      name_en: string | null;
+      unit_ml: string | null;
+      marks: number | null;
+      grade: string | null;
+    }[] = [];
+    for (const pos of [1, 2, 3]) {
+      const name_ml = String(fd.get(`winner_${pos}_name_ml`) ?? "").trim();
+      if (!name_ml) continue;
+      const marksRaw = String(fd.get(`winner_${pos}_marks`) ?? "").trim();
+      const gradeRaw = String(fd.get(`winner_${pos}_grade`) ?? "").trim().toUpperCase();
+      winners.push({
+        position: pos,
+        name_ml,
+        name_en: String(fd.get(`winner_${pos}_name_en`) ?? "").trim() || null,
+        unit_ml: String(fd.get(`winner_${pos}_unit_ml`) ?? "").trim() || null,
+        marks: marksRaw ? Number(marksRaw) : null,
+        grade: ["A", "B", "C"].includes(gradeRaw) ? gradeRaw : null,
+      });
+    }
+    if (winners.length === 0) {
+      return data(
+        { error: "Enter at least the first-place winner's Malayalam name." },
+        { headers: Object.fromEntries(headers) },
+      );
+    }
+
+    const { data: existing } = await supabase
+      .from("results")
+      .select("id")
+      .eq("event_id", event.id)
+      .eq("program_id", program.id)
+      .maybeSingle();
+
+    const baseFields = {
+      event_id: event.id,
+      program_id: program.id,
+      level_id: program.level_id,
+      result_no,
+      is_tie: false,
+      status: publish ? "published" : "draft",
+      published_at: publish ? new Date().toISOString() : null,
+    };
+
+    let resultId: string;
+    if (existing) {
+      const { error: uErr } = await supabase
+        .from("results")
+        .update(baseFields)
+        .eq("id", existing.id);
+      if (uErr) return data({ error: uErr.message }, { headers: Object.fromEntries(headers) });
+      resultId = existing.id;
+      await supabase.from("result_winners").delete().eq("result_id", resultId);
+    } else {
+      const { data: created, error: iErr } = await supabase
+        .from("results")
+        .insert({ ...baseFields, created_by: user.id })
+        .select("id")
+        .single();
+      if (iErr || !created)
+        return data(
+          { error: iErr?.message ?? "Insert failed" },
+          { headers: Object.fromEntries(headers) },
+        );
+      resultId = created.id;
+    }
+
+    const { error: wErr } = await supabase
+      .from("result_winners")
+      .insert(winners.map((w) => ({ result_id: resultId, ...w })));
+    if (wErr) return data({ error: wErr.message }, { headers: Object.fromEntries(headers) });
+
+    if (intent === "save_publish_next") {
+      const nextCode = String(fd.get("next_code") ?? "");
+      return redirect(nextCode ? `/admin?edit=${nextCode}` : "/admin", {
+        headers: Object.fromEntries(headers),
+      });
+    }
+    // Stay on the modal and show success — no redirect.
+    return data({ ok: true }, { headers: Object.fromEntries(headers) });
+  }
+
+  return data({ error: `Unknown intent: ${intent}` }, { headers: Object.fromEntries(headers) });
+}
+
+// Avoid re-running the loader when only `?edit` changes during the same session
+// — except after a form submit, which should always revalidate.
+export function shouldRevalidate({ formMethod, currentUrl, nextUrl, defaultShouldRevalidate }: {
+  formMethod?: string;
+  currentUrl: URL;
+  nextUrl: URL;
+  defaultShouldRevalidate: boolean;
+}) {
+  if (formMethod) return true; // after action
+  if (currentUrl.pathname !== nextUrl.pathname) return defaultShouldRevalidate;
+  // Same path, only `edit` differs — we still need to revalidate because the
+  // modal's data depends on `?edit`. So defer to default.
+  return defaultShouldRevalidate;
+}
+
+// ============================================================================
+// Component
+// ============================================================================
+export default function Admin({ loaderData }: Route.ComponentProps) {
+  const { user, profile, event, levels, stats, editData, publishedWinners } =
+    loaderData;
+  const orgName = (profile.organizations as { name?: string } | null)?.name ?? "";
+  const eventName = event.name_ml ?? event.name;
+  const isPublished = event.status === "published";
+
+  const [searchParams] = useSearchParams();
+  const view = (searchParams.get("view") ?? "dashboard") as
+    | "dashboard"
+    | "standings";
+
+  const [query, setQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState<
+    "all" | "published" | "pending" | "draft" | "inactive"
+  >("all");
+  const [showInactive, setShowInactive] = useState(false);
+  const [navOpen, setNavOpen] = useState(false);
+
+  // Match programs across all categories.
+  const q = query.trim().toLowerCase();
+  function programVisible(p: ProgramRow): boolean {
+    if (!showInactive && !p.is_active) return false;
+    if (statusFilter === "published" && p.result?.status !== "published") return false;
+    if (statusFilter === "draft" && p.result?.status !== "draft") return false;
+    if (statusFilter === "pending" && p.result) return false;
+    if (statusFilter === "inactive" && p.is_active) return false;
+    if (q) {
+      const hay = `${p.code} ${p.name_ml} ${p.name_en ?? ""}`.toLowerCase();
+      if (!hay.includes(q)) return false;
+    }
+    return true;
+  }
+
+  const filteredLevels = levels
+    .map((l) => ({ ...l, programs: l.programs.filter(programVisible) }))
+    .filter((l) => l.programs.length > 0 || statusFilter === "all");
+
+  const matchCount = filteredLevels.reduce((n, l) => n + l.programs.length, 0);
+
+  return (
+    <div className="min-h-dvh flex bg-stone-50 text-black">
+      {/* ============= Sidebar ============= */}
+      <aside
+        className={`fixed lg:sticky top-0 left-0 z-30 h-dvh w-64 shrink-0 bg-black text-white flex flex-col transition-transform ${
+          navOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"
+        }`}
+      >
+        <div className="px-5 py-4 border-b border-white/10">
+          <p className="text-[10px] font-bold tracking-[0.25em] uppercase text-yellow leading-none">
+            Sahityotsav
+          </p>
+          <p className="text-sm font-medium mt-1.5 truncate">{orgName}</p>
+        </div>
+
+        <nav className="flex-1 overflow-y-auto p-3 space-y-1">
+          <NavItem
+            active={view === "dashboard"}
+            label="Dashboard"
+            icon={<LayoutGrid className="size-4" />}
+            to="/admin"
+          />
+          <NavItem
+            active={view === "standings"}
+            label="Team standings"
+            icon={<Trophy className="size-4" />}
+            to="/admin?view=standings"
+          />
+          <NavItem
+            label="Public site"
+            icon={<ExternalLink className="size-4" />}
+            href="/"
+            external
+          />
+        </nav>
+
+        <div className="p-3 border-t border-white/10 space-y-2">
+          <div className="px-3 py-2 rounded-lg bg-white/5">
+            <p className="text-[10px] uppercase tracking-widest text-yellow/80">
+              Event
+            </p>
+            <p lang="ml" className="text-sm font-semibold mt-0.5 truncate">
+              {eventName}
+            </p>
+            <Form method="post" className="mt-2">
+              <button
+                type="submit"
+                name="intent"
+                value="toggle_publish"
+                className={`w-full rounded-md text-[11px] font-semibold px-2.5 py-1.5 ${
+                  isPublished
+                    ? "bg-white/10 hover:bg-white/15 text-white"
+                    : "bg-yellow text-black hover:bg-yellow/90"
+                }`}
+              >
+                {isPublished ? "● Live — unpublish" : "Publish event"}
+              </button>
+            </Form>
+          </div>
+          <Form method="post">
+            <button
+              type="submit"
+              name="intent"
+              value="logout"
+              className="w-full text-left px-3 py-2 rounded-lg text-xs text-white/60 hover:bg-white/10 hover:text-white"
+              title={user.email}
+            >
+              Sign out · {user.email}
+            </button>
+          </Form>
+        </div>
+      </aside>
+
+      {/* Backdrop for mobile drawer */}
+      {navOpen && (
+        <button
+          type="button"
+          aria-label="Close menu"
+          onClick={() => setNavOpen(false)}
+          className="fixed inset-0 z-20 bg-black/40 lg:hidden"
+        />
+      )}
+
+      {/* ============= Main column ============= */}
+      <div className="flex-1 min-w-0 flex flex-col">
+        {/* Top bar */}
+        <header className="sticky top-0 z-10 bg-white/95 backdrop-blur border-b border-stone-200">
+          <div className="px-4 lg:px-8 py-3 flex items-center gap-3">
+            <button
+              type="button"
+              onClick={() => setNavOpen(true)}
+              aria-label="Open menu"
+              className="lg:hidden size-9 grid place-items-center rounded-lg border border-stone-300"
+            >
+              <Menu className="size-4" />
+            </button>
+            <h1 className="text-base font-semibold tracking-tight">
+              {view === "standings" ? "Team standings" : "Dashboard"}
+            </h1>
+
+            {view === "dashboard" && (
+              <div className="flex-1 max-w-md ml-auto">
+                <SearchInput value={query} onChange={setQuery} />
+              </div>
+            )}
+          </div>
+        </header>
+
+        <main className="flex-1 px-4 lg:px-8 py-6 space-y-6">
+          {view === "standings" && (
+            <StandingsView
+              totalPublished={stats.totalPublished}
+              winners={publishedWinners}
+            />
+          )}
+          {view === "dashboard" && (
+            <DashboardView
+              levels={levels}
+              filteredLevels={filteredLevels}
+              matchCount={matchCount}
+              query={query}
+              setQuery={setQuery}
+              statusFilter={statusFilter}
+              setStatusFilter={setStatusFilter}
+              showInactive={showInactive}
+              setShowInactive={setShowInactive}
+              stats={stats}
+              isPublished={isPublished}
+            />
+          )}
+        </main>
+      </div>
+
+      {editData && <ResultModal editData={editData} />}
+    </div>
+  );
+}
+
+// Dashboard view extracted so admin shell can swap to other views cleanly.
+function DashboardView({
+  filteredLevels,
+  matchCount,
+  query,
+  setQuery,
+  statusFilter,
+  setStatusFilter,
+  showInactive,
+  setShowInactive,
+  stats,
+  isPublished,
+}: {
+  levels: LevelRow[];
+  filteredLevels: LevelRow[];
+  matchCount: number;
+  query: string;
+  setQuery: (v: string) => void;
+  statusFilter: "all" | "published" | "pending" | "draft" | "inactive";
+  setStatusFilter: (v: "all" | "published" | "pending" | "draft" | "inactive") => void;
+  showInactive: boolean;
+  setShowInactive: (v: boolean) => void;
+  stats: {
+    totalPrograms: number;
+    totalPublished: number;
+    totalDrafts: number;
+    totalPending: number;
+    totalInactive: number;
+  };
+  isPublished: boolean;
+}) {
+  return (
+    <>
+      {/* Stats row */}
+      <section className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <StatCard label="Programs" value={stats.totalPrograms} tone="black" icon={<LayoutGrid className="size-4" />} />
+        <StatCard label="Published" value={stats.totalPublished} tone="yellow" icon={<Check className="size-4" />} />
+        <StatCard label="Pending" value={stats.totalPending} tone="muted" icon={<Clock className="size-4" />} />
+        <StatCard label="Inactive" value={stats.totalInactive} tone="red" icon={<Ban className="size-4" />} />
+      </section>
+
+      {/* Filters bar */}
+      <section className="flex flex-wrap items-center gap-2 -mx-1">
+        <FilterChip active={statusFilter === "all"} onClick={() => setStatusFilter("all")}>All</FilterChip>
+        <FilterChip active={statusFilter === "published"} onClick={() => setStatusFilter("published")}>
+          Published · {stats.totalPublished}
+        </FilterChip>
+        <FilterChip active={statusFilter === "pending"} onClick={() => setStatusFilter("pending")}>
+          Pending · {stats.totalPending}
+        </FilterChip>
+        <FilterChip active={statusFilter === "draft"} onClick={() => setStatusFilter("draft")}>
+          Drafts · {stats.totalDrafts}
+        </FilterChip>
+        <FilterChip
+          active={statusFilter === "inactive"}
+          onClick={() => {
+            setStatusFilter("inactive");
+            setShowInactive(true);
+          }}
+        >
+          Inactive · {stats.totalInactive}
+        </FilterChip>
+
+        <div className="ml-auto flex items-center gap-1.5 text-xs">
+          <label className="inline-flex items-center gap-1.5 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={showInactive}
+              onChange={(e) => setShowInactive(e.target.checked)}
+              className="accent-yellow cursor-pointer"
+            />
+            <span className="text-stone-700">Show inactive</span>
+          </label>
+          {query && (
+            <span className="text-stone-500">
+              {matchCount} match{matchCount === 1 ? "" : "es"}
+            </span>
+          )}
+        </div>
+      </section>
+
+      {/* Categories grid */}
+      <section className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+        {filteredLevels.map((l) => (
+          <CategoryCard key={l.id} level={l} />
+        ))}
+        {filteredLevels.length === 0 && (
+          <div className="col-span-full rounded-xl border border-stone-200 bg-white px-6 py-12 text-center">
+            <p className="text-sm text-stone-600">No programs match your filter.</p>
+            <button
+              type="button"
+              onClick={() => {
+                setQuery("");
+                setStatusFilter("all");
+              }}
+              className="mt-3 text-xs font-medium text-black underline cursor-pointer"
+            >
+              Clear search
+            </button>
+          </div>
+        )}
+      </section>
+
+      {!isPublished && (
+        <p className="text-xs text-stone-500">
+          The event is in draft — public results are hidden until you publish.
+        </p>
+      )}
+    </>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Standings view — full leaderboard + per-team breakdown
+// ─────────────────────────────────────────────────────────────────────
+function StandingsView({
+  totalPublished,
+  winners,
+}: {
+  totalPublished: number;
+  winners: ReadonlyArray<{
+    unit_ml: string | null;
+    marks: number | null;
+    grade: string | null;
+  }>;
+}) {
+  const snapshotN = snapshotBucket(totalPublished);
+  const rows = computeStandings(winners);
+  const noResults = snapshotN === 0;
+
+  // Per-team breakdown by grade tier (A/B/C) using the winnerPoints fallback.
+  const breakdown = new Map<
+    string,
+    { firsts: number; seconds: number; thirds: number; aGrade: number; bGrade: number; cGrade: number }
+  >();
+  for (const t of TEAMS) {
+    breakdown.set(t.slug, { firsts: 0, seconds: 0, thirds: 0, aGrade: 0, bGrade: 0, cGrade: 0 });
+  }
+  for (const w of winners) {
+    if (!w.unit_ml) continue;
+    const slug = w.unit_ml.toLowerCase();
+    const b = breakdown.get(slug);
+    if (!b) continue;
+    if (w.grade === "A") b.aGrade++;
+    else if (w.grade === "B") b.bGrade++;
+    else if (w.grade === "C") b.cGrade++;
+  }
+  const totalPoints = rows.reduce((n, r) => n + r.points, 0);
+
+  return (
+    <>
+      <section className="rounded-xl border border-stone-200 bg-white p-5">
+        <div className="flex items-end justify-between gap-3">
+          <div>
+            <p className="text-[11px] font-semibold tracking-widest uppercase text-stone-500">
+              Snapshot
+            </p>
+            <h2 className="text-2xl font-semibold tracking-tight mt-0.5">
+              {noResults
+                ? "Standings open after 5 results"
+                : `After ${snapshotN} results`}
+            </h2>
+            {!noResults && totalPublished > snapshotN && (
+              <p className="text-xs text-stone-500 mt-1">
+                {totalPublished - snapshotN} new since this snapshot · next
+                update at result {snapshotN + 5}
+              </p>
+            )}
+          </div>
+          <div className="text-right">
+            <p className="text-[11px] font-semibold tracking-widest uppercase text-stone-500">
+              Total points
+            </p>
+            <p className="text-2xl font-semibold tabular-nums">{totalPoints}</p>
+          </div>
+        </div>
+      </section>
+
+      <section className="rounded-xl border border-stone-200 bg-white overflow-hidden">
+        <header className="px-5 py-3 border-b border-stone-200 bg-stone-50 flex items-center gap-3">
+          <Trophy className="size-4 text-yellow" strokeWidth={2.5} />
+          <h3 className="text-sm font-semibold">Leaderboard</h3>
+          <span className="ml-auto text-[11px] text-stone-500">
+            {TEAMS.length} teams · {winners.length} winners counted
+          </span>
+        </header>
+        <table className="w-full text-sm">
+          <thead className="text-[11px] uppercase tracking-wider text-stone-500 bg-white">
+            <tr className="border-b border-stone-200">
+              <th className="text-left px-5 py-2.5 font-medium w-16">Rank</th>
+              <th className="text-left px-5 py-2.5 font-medium">Team</th>
+              <th className="text-right px-3 py-2.5 font-medium">A</th>
+              <th className="text-right px-3 py-2.5 font-medium">B</th>
+              <th className="text-right px-3 py-2.5 font-medium">C</th>
+              <th className="text-right px-5 py-2.5 font-medium w-24">Points</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r, i) => {
+              const b = breakdown.get(r.team.slug)!;
+              const isLeader = i === 0 && r.points > 0;
+              return (
+                <tr
+                  key={r.team.slug}
+                  className={`border-b border-stone-100 last:border-0 ${
+                    isLeader ? "bg-yellow/10" : ""
+                  }`}
+                >
+                  <td className="px-5 py-3">
+                    <span
+                      className={`inline-flex items-center justify-center size-7 rounded-full text-[11px] font-semibold tabular-nums ${
+                        i === 0
+                          ? "bg-yellow text-black"
+                          : i === 1
+                          ? "bg-black/10 text-black"
+                          : i === 2
+                          ? "bg-red-600 text-white"
+                          : "bg-stone-100 text-stone-600"
+                      }`}
+                    >
+                      {i + 1}
+                    </span>
+                  </td>
+                  <td className="px-5 py-3 font-medium">{r.team.name}</td>
+                  <td className="px-3 py-3 text-right tabular-nums text-stone-700">
+                    {b.aGrade || ""}
+                  </td>
+                  <td className="px-3 py-3 text-right tabular-nums text-stone-700">
+                    {b.bGrade || ""}
+                  </td>
+                  <td className="px-3 py-3 text-right tabular-nums text-stone-700">
+                    {b.cGrade || ""}
+                  </td>
+                  <td className="px-5 py-3 text-right font-semibold tabular-nums">
+                    {r.points}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </section>
+
+      <section className="text-[11px] text-stone-500">
+        Points: A grade = {winnerPoints({ marks: null, grade: "A" })} ·
+        B grade = {winnerPoints({ marks: null, grade: "B" })} ·
+        C grade = {winnerPoints({ marks: null, grade: "C" })}.
+        If an explicit marks value is set on a winner, that value is used
+        instead of the grade default.
+      </section>
+    </>
+  );
+}
+
+// ============================================================================
+// Result entry modal
+// ============================================================================
+function ResultModal({
+  editData,
+}: {
+  editData: NonNullable<Awaited<ReturnType<typeof loader>>["data"]["editData"]>;
+}) {
+  const navigate = useNavigate();
+  const navigation = useNavigation();
+  const actionData = useActionData<typeof action>();
+  const busy = navigation.state !== "idle";
+
+  const close = () => navigate("/admin", { preventScrollReset: true });
+
+  // Close on Esc
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") close();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Lock body scroll while modal open
+  useEffect(() => {
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = prev;
+    };
+  }, []);
+
+  const { program, level, result, winners, suggestedResultNo, neighbors } = editData;
+  const status = result?.status ?? "none";
+  const winnersByPos = new Map<number, typeof winners[number]>();
+  for (const w of winners) winnersByPos.set(w.position, w);
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="result-modal-title"
+    >
+      {/* Backdrop */}
+      <button
+        type="button"
+        onClick={close}
+        className="absolute inset-0 bg-stone-900/50 backdrop-blur-sm"
+        aria-label="Close"
+      />
+
+      {/* Sheet */}
+      <div className="relative w-full sm:max-w-lg max-h-[92dvh] bg-white sm:rounded-2xl rounded-t-3xl shadow-xl overflow-hidden flex flex-col">
+        {/* Modal header (outside form) */}
+        <div className="px-5 py-4 border-b border-stone-200 flex items-start gap-3">
+          <div className="min-w-0 flex-1">
+            <p className="text-[11px] font-mono tracking-widest text-stone-400">
+              {program.code}
+            </p>
+            <h2
+              id="result-modal-title"
+              lang="ml"
+              className="text-xl font-semibold tracking-tight mt-0.5"
+            >
+              {program.name_ml}
+            </h2>
+            {program.name_en && (
+              <p className="text-xs text-stone-500 mt-0.5">{program.name_en}</p>
+            )}
+            <p lang="ml" className="text-xs text-stone-500 mt-0.5">
+              {level.name_ml}
+            </p>
+          </div>
+          <div className="flex flex-col items-end gap-2 shrink-0">
+            <ProgramStatus status={status} />
+            <button
+              type="button"
+              onClick={close}
+              className="text-stone-400 hover:text-stone-700 text-2xl leading-none"
+              aria-label="Close"
+            >
+              ×
+            </button>
+          </div>
+        </div>
+
+        {/* Single Form wraps body + footer so all inputs submit together */}
+        <Form
+          method="post"
+          key={program.code}
+          className="flex-1 min-h-0 flex flex-col"
+        >
+          <input type="hidden" name="program_code" value={program.code} />
+          {neighbors.next && (
+            <input type="hidden" name="next_code" value={neighbors.next.code} />
+          )}
+
+          {/* Scrollable body */}
+          <div className="flex-1 overflow-auto px-5 py-4 space-y-4">
+            {/* Result number — auto */}
+            <div className="rounded-xl border border-stone-200 bg-stone-50/50 px-4 py-3 flex items-center gap-3">
+              <span className="text-sm font-medium text-stone-700 shrink-0">Result #</span>
+              <input
+                name="result_no"
+                defaultValue={result?.result_no ?? suggestedResultNo ?? ""}
+                placeholder="030"
+                inputMode="numeric"
+                className="w-24 rounded-lg border border-stone-300 bg-white px-3 py-1.5 text-base tabular-nums focus:outline-none focus:ring-2 focus:ring-brand-600 focus:border-brand-600"
+              />
+              {!result && suggestedResultNo && (
+                <span className="text-[11px] text-stone-400 ml-auto">auto</span>
+              )}
+            </div>
+
+            {[1, 2, 3].map((pos) => {
+              const w = winnersByPos.get(pos);
+              const meta = POSITION_META[pos];
+              const isFirst = pos === 1;
+              return (
+                <fieldset
+                  key={pos}
+                  className={
+                    isFirst
+                      ? "rounded-2xl border-2 border-amber-300 bg-amber-50/40 p-4"
+                      : "rounded-2xl border border-stone-200 bg-white p-4"
+                  }
+                >
+                  <div className="flex items-center justify-between mb-2.5">
+                    <div className="flex items-center gap-2.5">
+                      <span className="text-2xl leading-none" aria-hidden>
+                        {meta.icon}
+                      </span>
+                      <span className="text-sm font-medium text-stone-800">
+                        {meta.label} place
+                      </span>
+                    </div>
+                    {!isFirst && (
+                      <span className="text-[10px] text-stone-400 tracking-wider uppercase">
+                        Optional
+                      </span>
+                    )}
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    <input
+                      name={`winner_${pos}_name_ml`}
+                      lang="ml"
+                      required={isFirst}
+                      autoFocus={isFirst && !winnersByPos.get(1)}
+                      defaultValue={w?.name_ml ?? ""}
+                      placeholder="Name (Malayalam)"
+                      className="w-full rounded-xl border border-stone-300 bg-white px-3.5 py-2.5 text-base focus:outline-none focus:ring-2 focus:ring-brand-600 focus:border-brand-600"
+                    />
+                    <input
+                      name={`winner_${pos}_name_en`}
+                      defaultValue={w?.name_en ?? ""}
+                      placeholder="Name (English)"
+                      className="w-full rounded-xl border border-stone-300 bg-white px-3.5 py-2.5 text-base focus:outline-none focus:ring-2 focus:ring-brand-600 focus:border-brand-600"
+                    />
+                  </div>
+                  <div className="grid grid-cols-[1fr_5rem_5rem] gap-2 mt-2">
+                    <select
+                      name={`winner_${pos}_unit_ml`}
+                      defaultValue={(w?.unit_ml ?? "").toLowerCase()}
+                      className="rounded-xl border border-stone-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-600 focus:border-brand-600"
+                    >
+                      <option value="">Team —</option>
+                      {TEAMS.map((t) => (
+                        <option key={t.slug} value={t.slug}>
+                          {t.name}
+                        </option>
+                      ))}
+                    </select>
+                    <select
+                      name={`winner_${pos}_grade`}
+                      defaultValue={w?.grade ?? ""}
+                      className="rounded-xl border border-stone-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-600 focus:border-brand-600"
+                    >
+                      <option value="">Grade</option>
+                      <option value="A">A (10)</option>
+                      <option value="B">B (5)</option>
+                      <option value="C">C (1)</option>
+                    </select>
+                    <input
+                      name={`winner_${pos}_marks`}
+                      type="number"
+                      step="0.01"
+                      inputMode="decimal"
+                      defaultValue={w?.marks?.toString() ?? ""}
+                      placeholder="Marks"
+                      title="Optional — overrides grade default"
+                      className="rounded-xl border border-stone-300 bg-white px-3 py-2 text-sm tabular-nums text-right focus:outline-none focus:ring-2 focus:ring-brand-600 focus:border-brand-600"
+                    />
+                  </div>
+                </fieldset>
+              );
+            })}
+
+            {actionData && "error" in actionData && (
+              <p className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-xl px-3 py-2">
+                {actionData.error}
+              </p>
+            )}
+            {actionData && "ok" in actionData && (
+              <p className="text-sm text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-xl px-3 py-2">
+                ✓ Saved
+              </p>
+            )}
+
+            {result && (
+              <button
+                type="submit"
+                name="intent"
+                value="delete_result"
+                disabled={busy}
+                onClick={(e) => {
+                  if (!confirm("Delete this result? Winners will also be removed.")) {
+                    e.preventDefault();
+                  }
+                }}
+                className="text-xs text-red-600 hover:text-red-700 hover:underline"
+              >
+                Delete result
+              </button>
+            )}
+          </div>
+
+          {/* Sticky footer (still inside the Form) */}
+          <div className="border-t border-stone-200 px-5 py-3 flex items-center gap-2 bg-white">
+            {neighbors.prev ? (
+              <Link
+                to={`/admin?edit=${neighbors.prev.code}`}
+                preventScrollReset
+                className="text-sm text-stone-500 hover:text-stone-900"
+              >
+                ← {neighbors.prev.code}
+              </Link>
+            ) : (
+              <span />
+            )}
+            <div className="ml-auto flex gap-2">
+              <button
+                type="submit"
+                name="intent"
+                value="save_draft"
+                disabled={busy}
+                className="rounded-xl border border-stone-300 hover:bg-stone-50 text-stone-700 px-3 py-2 text-sm font-medium disabled:opacity-50"
+              >
+                Save draft
+              </button>
+              <button
+                type="submit"
+                name="intent"
+                value={neighbors.next ? "save_publish_next" : "save_publish"}
+                disabled={busy}
+                className="rounded-xl bg-brand-700 hover:bg-brand-800 text-white px-4 py-2 text-sm font-medium disabled:opacity-50"
+              >
+                {busy ? "…" : neighbors.next ? "Publish & next" : "Publish"}
+              </button>
+            </div>
+          </div>
+        </Form>
+      </div>
+    </div>
+  );
+}
+
+// ============================================================================
+// Small subcomponents
+// ============================================================================
+const POSITION_META: Record<number, { label: string; icon: string }> = {
+  1: { label: "First", icon: "🥇" },
+  2: { label: "Second", icon: "🥈" },
+  3: { label: "Third", icon: "🥉" },
+};
+
+function Stat({
+  label,
+  value,
+  accent,
+}: {
+  label: string;
+  value: number;
+  accent?: "brand" | "amber";
+}) {
+  const accentClass =
+    accent === "brand"
+      ? "text-brand-700"
+      : accent === "amber"
+      ? "text-amber-700"
+      : "text-stone-900";
+  return (
+    <div className="rounded-xl bg-stone-50 px-3 py-2.5">
+      <p className="text-[11px] tracking-widest text-stone-400 uppercase">{label}</p>
+      <p className={`text-2xl font-semibold tabular-nums mt-0.5 ${accentClass}`}>{value}</p>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// New dashboard primitives
+// ─────────────────────────────────────────────────────────────────────
+
+type ProgramRow = {
+  id: string;
+  code: string;
+  name_ml: string;
+  name_en: string | null;
+  level_id: string | null;
+  sort_order: number;
+  is_active: boolean;
+  result: {
+    id: string;
+    status: string;
+    result_no: string | null;
+    topName: string | null;
+  } | null;
+};
+type LevelRow = {
+  id: string;
+  code: string;
+  name_ml: string;
+  sort_order: number;
+  programs: ProgramRow[];
+  total: number;
+  published: number;
+  drafts: number;
+  pending: number;
+  inactive: number;
+};
+
+function NavItem({
+  active = false,
+  label,
+  icon,
+  href,
+  to,
+  external,
+}: {
+  active?: boolean;
+  label: string;
+  icon: ReactNode;
+  href?: string;
+  to?: string;
+  external?: boolean;
+}) {
+  const cls = `flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition cursor-pointer ${
+    active
+      ? "bg-yellow text-black"
+      : "text-white/80 hover:bg-white/10 hover:text-white"
+  }`;
+  if (to) {
+    return (
+      <Link to={to} className={cls}>
+        <span className="size-4 shrink-0">{icon}</span>
+        <span className="flex-1">{label}</span>
+      </Link>
+    );
+  }
+  if (href) {
+    return (
+      <a href={href} target={external ? "_blank" : undefined} rel="noreferrer" className={cls}>
+        <span className="size-4 shrink-0">{icon}</span>
+        <span className="flex-1">{label}</span>
+        {external && <ExternalLink className="size-3 text-white/50" aria-hidden />}
+      </a>
+    );
+  }
+  return (
+    <div className={cls}>
+      <span className="size-4 shrink-0">{icon}</span>
+      <span className="flex-1">{label}</span>
+    </div>
+  );
+}
+
+function SearchInput({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  return (
+    <div className="relative">
+      <Search
+        className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-stone-400"
+        aria-hidden
+      />
+      <input
+        type="search"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder="Search programs by code or name…"
+        className="w-full rounded-lg border border-stone-300 bg-white pl-9 pr-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-yellow focus:border-yellow"
+      />
+    </div>
+  );
+}
+
+function StatCard({
+  label,
+  value,
+  tone,
+  icon,
+}: {
+  label: string;
+  value: number;
+  tone: "black" | "yellow" | "muted" | "red";
+  icon: ReactNode;
+}) {
+  const toneCls =
+    tone === "black"
+      ? "border-black bg-black text-white"
+      : tone === "yellow"
+      ? "border-yellow bg-yellow text-black"
+      : tone === "red"
+      ? "border-red-200 bg-red-50 text-red-900"
+      : "border-stone-200 bg-white text-black";
+  const iconWrap =
+    tone === "black"
+      ? "bg-white/15 text-white"
+      : tone === "yellow"
+      ? "bg-black/10 text-black"
+      : tone === "red"
+      ? "bg-red-100 text-red-700"
+      : "bg-stone-100 text-stone-600";
+  return (
+    <div className={`rounded-xl border px-4 py-3 ${toneCls}`}>
+      <div className="flex items-start justify-between gap-2">
+        <p className="text-[11px] font-semibold tracking-wider uppercase opacity-80">
+          {label}
+        </p>
+        <span className={`size-7 grid place-items-center rounded-md ${iconWrap}`}>
+          <span className="size-4">{icon}</span>
+        </span>
+      </div>
+      <p className="text-3xl font-semibold tabular-nums mt-1.5 leading-none">
+        {value}
+      </p>
+    </div>
+  );
+}
+
+function FilterChip({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`rounded-full px-3 py-1.5 text-xs font-medium border transition ${
+        active
+          ? "bg-black text-white border-black"
+          : "bg-white text-stone-700 border-stone-300 hover:border-black"
+      }`}
+    >
+      {children}
+    </button>
+  );
+}
+
+function CategoryCard({ level }: { level: LevelRow }) {
+  const pct = level.total === 0 ? 0 : Math.round((level.published / level.total) * 100);
+  return (
+    <article className="rounded-xl border border-stone-200 bg-white overflow-hidden flex flex-col">
+      <header className="px-4 py-3 border-b border-stone-100 bg-stone-50">
+        <div className="flex items-center justify-between gap-2">
+          <p lang="ml" className="font-semibold text-sm truncate">
+            {level.name_ml}
+          </p>
+          <span className="text-[10px] tabular-nums text-stone-500 shrink-0">
+            {level.published}/{level.total}
+          </span>
+        </div>
+        <div className="mt-2 h-1.5 rounded-full bg-stone-200 overflow-hidden">
+          <div className="h-full bg-yellow transition-all" style={{ width: `${pct}%` }} />
+        </div>
+        <div className="mt-1.5 flex items-center gap-3 text-[10px] text-stone-500">
+          {level.drafts > 0 && <span>{level.drafts} draft</span>}
+          {level.pending > 0 && <span>{level.pending} pending</span>}
+          {level.inactive > 0 && <span className="text-red-700">{level.inactive} inactive</span>}
+        </div>
+      </header>
+
+      <ul className="divide-y divide-stone-100 max-h-[420px] overflow-y-auto">
+        {level.programs.map((p) => (
+          <li key={p.id} className="group">
+            <ProgramListItem program={p} />
+          </li>
+        ))}
+      </ul>
+    </article>
+  );
+}
+
+function ProgramListItem({ program: p }: { program: ProgramRow }) {
+  return (
+    <div className={`flex items-center gap-3 px-3 py-2 hover:bg-yellow/10 ${p.is_active ? "" : "opacity-60"}`}>
+      <Link
+        to={`/admin?edit=${p.code}`}
+        preventScrollReset
+        className="flex items-center gap-3 min-w-0 flex-1"
+      >
+        <span className="text-[10px] font-mono text-stone-400 tabular-nums w-10 shrink-0">
+          {p.code}
+        </span>
+        <div className="min-w-0 flex-1">
+          <p lang="ml" className="text-sm font-medium truncate">
+            {p.name_ml}
+          </p>
+          {p.result?.topName && p.result.status === "published" && (
+            <p lang="ml" className="text-[11px] text-stone-500 truncate">
+              🥇 {p.result.topName}
+            </p>
+          )}
+        </div>
+        <ProgramStatus status={p.is_active ? p.result?.status ?? "none" : "inactive"} />
+      </Link>
+      <Form method="post" className="shrink-0">
+        <input type="hidden" name="program_code" value={p.code} />
+        <button
+          type="submit"
+          name="intent"
+          value="toggle_active"
+          title={p.is_active ? "Deactivate program" : "Activate program"}
+          aria-label={p.is_active ? "Deactivate program" : "Activate program"}
+          className={`cursor-pointer size-7 grid place-items-center rounded-md border transition ${
+            p.is_active
+              ? "border-stone-300 text-stone-500 hover:border-red-500 hover:bg-red-50 hover:text-red-700"
+              : "border-yellow bg-yellow text-black hover:bg-yellow/80"
+          }`}
+          onClick={(e) => {
+            if (
+              p.is_active &&
+              !confirm(
+                `Deactivate "${p.name_ml}"? This program (and any result) will be hidden from public results.`,
+              )
+            ) {
+              e.preventDefault();
+            }
+          }}
+        >
+          {p.is_active ? (
+            <Ban className="size-4" strokeWidth={2.25} />
+          ) : (
+            <Check className="size-4" strokeWidth={2.5} />
+          )}
+        </button>
+      </Form>
+    </div>
+  );
+}
+
+
+function StatusBadge({ published }: { published: boolean }) {
+  return published ? (
+    <span className="inline-flex items-center gap-1.5 text-emerald-700">
+      <span className="size-1.5 rounded-full bg-emerald-600" /> Published
+    </span>
+  ) : (
+    <span className="inline-flex items-center gap-1.5 text-amber-700">
+      <span className="size-1.5 rounded-full bg-amber-500" /> Draft
+    </span>
+  );
+}
+
+function ProgramStatus({ status }: { status: string }) {
+  if (status === "published") {
+    return (
+      <span className="text-[10px] font-semibold tracking-wider uppercase text-black bg-yellow rounded-full px-2 py-0.5">
+        Live
+      </span>
+    );
+  }
+  if (status === "draft") {
+    return (
+      <span className="text-[10px] font-semibold tracking-wider uppercase text-yellow bg-black rounded-full px-2 py-0.5">
+        Draft
+      </span>
+    );
+  }
+  if (status === "inactive") {
+    return (
+      <span className="text-[10px] font-semibold tracking-wider uppercase text-red-700 bg-red-50 border border-red-200 rounded-full px-2 py-0.5">
+        Inactive
+      </span>
+    );
+  }
+  return (
+    <span className="text-[10px] font-semibold tracking-wider uppercase text-stone-600 bg-stone-100 border border-stone-200 rounded-full px-2 py-0.5">
+      + Add
+    </span>
+  );
+}
