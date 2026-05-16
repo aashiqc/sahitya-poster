@@ -1,5 +1,15 @@
 @import "tailwindcss" source(".");
 
+/* Self-hosted Cooper Black for the SSF wordmark — guarantees the
+   brand letterform on every device, not just those with it installed. */
+@font-face {
+  font-family: "Cooper Black";
+  src: url("/fonts/cooper-black.ttf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
 @theme {
   --font-sans: "Plus Jakarta Sans", "Manjari", ui-sans-serif, system-ui,
     sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol";
@@ -10,6 +20,11 @@
   /* Cooper Black for SSF wordmark. Uses installed Cooper Black on macOS/
      Windows; falls back to Bowlby One (loaded via Google Fonts) elsewhere. */
   --font-cooper: "Cooper Black", "Bowlby One", "Alfa Slab One", Georgia, serif;
+  /* Editorial serif — the literary-festival voice (greeting headline,
+     brand-name emphasis). Latin only; Malayalam keeps its own stack. */
+  --font-editorial: "Fraunces", "Georgia", "Times New Roman", serif;
+  /* Clean professional sans — header chrome + welcome message. */
+  --font-opensans: "Open Sans", ui-sans-serif, system-ui, sans-serif;
 
   /* ─── Core palette ────────────────────────────────────────── */
   --color-yellow:    #FFCE05;
@@ -88,6 +103,158 @@ h1:lang(ml), h2:lang(ml) {
 .font-display {
   font-family: var(--font-sans);
   letter-spacing: -0.005em;
+}
+
+/* Editorial literary voice */
+.font-editorial {
+  font-family: var(--font-editorial);
+  font-optical-sizing: auto;
+}
+
+/* Clean professional sans */
+.font-opensans {
+  font-family: var(--font-opensans);
+}
+
+/* ─────────────────────────────────────────────────────────────────
+   App backdrop — a warm "festival dawn" that echoes the poster art:
+   a soft sky gradient, a low sun-glow, distant rolling hills, fine
+   paper grain. Pure CSS/SVG, no JS, mobile-first & performant.
+   ───────────────────────────────────────────────────────────────── */
+.app-backdrop {
+  background-color: #FBF4E4;
+  background-image:
+    radial-gradient(58% 42% at 50% 2%, rgba(255, 206, 5, 0.42), transparent 60%),
+    radial-gradient(46% 36% at 50% 0%, rgba(255, 176, 32, 0.30), transparent 55%),
+    radial-gradient(90% 60% at 100% 100%, rgba(191, 6, 3, 0.10), transparent 65%),
+    linear-gradient(180deg, #FFF3D4 0%, #FDEFD6 34%, #FBEAD3 60%, #F4E6D2 100%);
+}
+/* Distant rolling hills pinned to the bottom — ties the chat to the
+   poster's landscape illustration. Soft, muted, behind everything. */
+.app-hills {
+  bottom: 0;
+  height: min(46vh, 420px);
+  background-repeat: no-repeat;
+  background-position: bottom center;
+  background-size: cover;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1440 420' preserveAspectRatio='none'%3E%3Cpath fill='%23EBD9AE' d='M0 250c180-46 320 22 520-6s300-78 520-46 260 64 400 40v182H0z'/%3E%3Cpath fill='%23D9C089' d='M0 320c220-54 360 20 560-2s320-66 520-40 240 52 360 30v112H0z'/%3E%3Cpath fill='%23B79A5E' d='M0 372c260-40 420 14 640-4s320-44 520-26 200 30 280 22v56H0z'/%3E%3C/svg%3E");
+  opacity: 0.55;
+  mask-image: linear-gradient(180deg, transparent 0%, #000 38%);
+  -webkit-mask-image: linear-gradient(180deg, transparent 0%, #000 38%);
+}
+/* Hairline dot lattice — subtle editorial paper texture up top */
+.app-grid {
+  background-image: radial-gradient(rgba(11, 9, 10, 0.05) 1px, transparent 1.4px);
+  background-size: 24px 24px;
+  background-position: -12px -12px;
+  mask-image: radial-gradient(110% 70% at 50% -5%, #000 0%, transparent 70%);
+  -webkit-mask-image: radial-gradient(110% 70% at 50% -5%, #000 0%, transparent 70%);
+}
+/* Tactile film grain */
+.app-grain {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.82' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)' opacity='0.3'/%3E%3C/svg%3E");
+  mix-blend-mode: multiply;
+  opacity: 0.42;
+}
+
+/* SSF wordmark — always Cooper Black, the brand letterform */
+.ssf-mark {
+  font-family: var(--font-cooper);
+  letter-spacing: 0.01em;
+}
+
+/* Chat bubble surfaces — soft, layered, premium */
+.bubble-bot {
+  background: linear-gradient(180deg, #FFFFFF 0%, #FEFDFB 100%);
+  border: 1px solid rgba(11, 9, 10, 0.07);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.9) inset,
+    0 6px 18px -10px rgba(11, 9, 10, 0.18),
+    0 2px 6px -3px rgba(11, 9, 10, 0.08);
+}
+.bubble-user {
+  background: linear-gradient(165deg, #1B1718 0%, #0B090A 100%);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.06) inset,
+    0 8px 20px -10px rgba(11, 9, 10, 0.45);
+}
+
+/* Staggered message entrance */
+@keyframes bubble-in {
+  0%   { opacity: 0; transform: translateY(10px) scale(0.985); }
+  /* Rest at `none` (not an explicit transform): a lingering transform
+     here would make the row a containing block for the position:fixed
+     poster-zoom modal, breaking its full-viewport overlay. */
+  100% { opacity: 1; transform: none; }
+}
+.animate-bubble-in {
+  animation: bubble-in 0.42s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+/* Slow drift for the ambient glows */
+@keyframes glow-drift {
+  0%, 100% { transform: translate3d(0, 0, 0) scale(1); opacity: 0.85; }
+  50%      { transform: translate3d(2%, -3%, 0) scale(1.06); opacity: 1; }
+}
+.animate-glow-drift { animation: glow-drift 16s ease-in-out infinite; }
+
+/* ── Live background: breathing warm sky + rising golden embers ── */
+
+/* Slow warm "sky" breathing — a soft amber pulse over the backdrop. */
+@keyframes sky-breathe {
+  0%, 100% { opacity: 0.55; transform: scale(1); }
+  50%      { opacity: 0.9;  transform: scale(1.08); }
+}
+.app-sky {
+  background:
+    radial-gradient(60% 42% at 50% 4%, rgba(255, 206, 5, 0.30), transparent 60%),
+    radial-gradient(40% 30% at 72% 0%, rgba(255, 150, 30, 0.18), transparent 60%);
+  animation: sky-breathe 14s ease-in-out infinite;
+  transform-origin: 50% 0%;
+}
+
+/* Embers drift up the full viewport, swaying gently as they fade. */
+@keyframes ember-rise {
+  0%   { transform: translate3d(0, 6vh, 0) scale(0.6); opacity: 0; }
+  12%  { opacity: var(--ember-o, 0.5); }
+  50%  { transform: translate3d(var(--ember-x, 1vw), -48vh, 0) scale(1); }
+  88%  { opacity: var(--ember-o, 0.5); }
+  100% { transform: translate3d(0, -104vh, 0) scale(0.7); opacity: 0; }
+}
+.app-embers { contain: strict; }
+.app-embers .ember {
+  position: absolute;
+  bottom: -2vh;
+  left: var(--ember-l, 50%);
+  width: var(--ember-s, 6px);
+  height: var(--ember-s, 6px);
+  border-radius: 9999px;
+  /* Deep amber core so it reads against the warm cream backdrop. */
+  background: radial-gradient(
+    circle,
+    rgba(255, 184, 64, 0.95) 0%,
+    rgba(243, 138, 18, 0.6) 42%,
+    rgba(191, 6, 3, 0) 72%
+  );
+  box-shadow:
+    0 0 18px 5px rgba(243, 138, 18, 0.45),
+    0 0 4px 1px rgba(255, 200, 90, 0.6);
+  filter: blur(1px);
+  animation: ember-rise var(--ember-d, 18s) linear infinite;
+  animation-delay: var(--ember-delay, 0s);
+  will-change: transform, opacity;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-bubble-in,
+  .animate-glow-drift,
+  .app-sky { animation: none !important; }
+  .app-embers { display: none !important; }
+}
+
+/* Restrained, branded scrollbar */
+@supports (scrollbar-width: thin) {
+  html { scrollbar-width: thin; scrollbar-color: rgba(11,9,10,0.22) transparent; }
 }
 
 /* Clean card — used by bot bubbles */

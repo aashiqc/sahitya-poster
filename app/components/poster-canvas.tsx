@@ -312,6 +312,10 @@ function SubtitleTitle({
   data: PosterData;
   layout: TemplateLayout;
 }) {
+  // Girls' programs carry a longer "(Girls)" qualifier, so trim a touch
+  // more so they still fit the title block.
+  const titleSize =
+    TITLE_SIZE - (/girls/i.test(data.programName) ? 6 : 4);
   return (
     <Group x={layout.contentX} y={layout.contentY}>
       <CategoryPill text={data.levelName} />
@@ -321,7 +325,7 @@ function SubtitleTitle({
         width={layout.contentW}
         text={data.programName}
         fontFamily={BODY_FONT}
-        fontSize={TITLE_SIZE}
+        fontSize={titleSize}
         fontStyle="bold"
         fill={layout.titleColor}
         lineHeight={TITLE_LH}

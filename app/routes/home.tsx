@@ -1,4 +1,10 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type ReactNode,
+} from "react";
 import { Link, data } from "react-router";
 import type { Route } from "./+types/home";
 import { createSupabaseServerClient, loadEvent } from "~/lib/supabase.server";
@@ -12,7 +18,15 @@ import {
 } from "~/components/poster-canvas";
 import { PosterZoomModal } from "~/components/poster-modal";
 import { StandingsSheet } from "~/components/standings-sheet";
-import { ArrowLeftRight, Download, Share2, Trophy } from "lucide-react";
+import {
+  ArrowLeftRight,
+  ChevronDown,
+  ChevronRight,
+  Download,
+  Share2,
+  Sparkles,
+  Trophy,
+} from "lucide-react";
 
 export function meta({ data }: Route.MetaArgs) {
   const eventName =
@@ -186,66 +200,87 @@ export default function Home({ loaderData }: Route.ComponentProps) {
   if (!loaderData.published) {
     return <NotYetLive event={loaderData.event} />;
   }
-  const { event, levels, totalPublished, totalPrograms, allWinners } = loaderData;
+  const { event, levels, totalPublished, allWinners } = loaderData;
   const org = (event.organizations as { name?: string } | null)?.name;
   const eventName = event.name ?? event.name_ml;
   const [standingsOpen, setStandingsOpen] = useState(false);
 
+  const sector = (org ? org.replace(/^SSF\s+/i, "") : "") || "Sahityotsav";
+
   return (
     <div className="relative min-h-dvh flex flex-col">
-      {/* Fixed, layered gradient backdrop — calm + brand accent */}
+      {/* Festival-dawn backdrop: sky, breathing glow, embers, hills, grain */}
+      <div aria-hidden className="pointer-events-none fixed inset-0 z-0 app-backdrop" />
+      <div aria-hidden className="pointer-events-none fixed inset-0 z-0 app-grid" />
+      <div aria-hidden className="pointer-events-none fixed inset-0 z-0 app-sky" />
       <div
         aria-hidden
-        className="pointer-events-none fixed inset-0 bg-gradient-to-b from-paper-2 via-white to-paper-3"
+        className="pointer-events-none fixed -top-40 left-1/2 -translate-x-1/2 size-[34rem] z-0 rounded-full bg-yellow/30 blur-[110px] animate-glow-drift"
       />
-      <div
-        aria-hidden
-        className="pointer-events-none fixed -top-40 -left-40 size-[36rem] rounded-full bg-yellow/30 blur-3xl"
-      />
-      <div
-        aria-hidden
-        className="pointer-events-none fixed -bottom-48 -right-32 size-[40rem] rounded-full bg-red/10 blur-3xl"
-      />
-      <div
-        aria-hidden
-        className="pointer-events-none fixed inset-0 bg-[radial-gradient(80%_60%_at_50%_-10%,rgba(255,206,5,0.10),transparent_70%)]"
-      />
+      <div aria-hidden className="pointer-events-none fixed inset-x-0 z-0 app-hills" />
+      <EmberField />
+      <div aria-hidden className="pointer-events-none fixed inset-0 z-0 app-grain" />
 
-      {/* Compact sticky black header */}
-      <header className="sticky top-0 z-20 bg-black text-white shadow-sm">
-        <div className="max-w-2xl md:max-w-3xl lg:max-w-4xl mx-auto px-4 sm:px-5 py-2.5 flex items-center justify-between gap-3">
-          <div className="min-w-0 flex-1">
-            {org && (
-              <p className="flex items-baseline gap-1.5 leading-none">
-                <span
-                  className="font-[var(--font-cooper)] text-yellow text-sm sm:text-base leading-none tracking-tight"
-                  style={{ fontFamily: "var(--font-cooper)" }}
-                >
+      {/* ── Header — compact, mobile-first, sector-led ── */}
+      <header className="sticky top-0 z-20">
+        <div className="relative bg-gradient-to-b from-[#23110F] via-[#160C0D] to-[#0B090A] text-white backdrop-blur-xl shadow-[0_12px_34px_-14px_rgba(11,9,10,0.75)]">
+          <div
+            aria-hidden
+            className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-yellow/70 to-transparent"
+          />
+          <div className="mx-auto max-w-2xl md:max-w-3xl lg:max-w-4xl px-4 sm:px-5">
+            {/* Row 1 — brand + primary action */}
+            <div className="flex items-center justify-between gap-3 pt-3 pb-2">
+              <div className="flex min-w-0 items-center gap-2.5 sm:gap-3">
+                <span className="ssf-mark shrink-0 text-yellow text-[1.6rem] leading-none drop-shadow-[0_2px_10px_rgba(255,206,5,0.4)]">
                   SSF
                 </span>
-                <span className="text-[10px] sm:text-[11px] font-medium tracking-wide uppercase text-white/85">
-                  {org.replace(/^SSF\s+/i, "")}
+                <span aria-hidden className="h-7 w-px shrink-0 bg-white/20" />
+                <img
+                  src="/sahityotsav-logo.png"
+                  alt={eventName ?? "Sahityotsav"}
+                  className="h-[18px] w-auto min-w-0 select-none"
+                  draggable={false}
+                />
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setStandingsOpen(true)}
+                className="font-opensans group shrink-0 inline-flex items-center gap-1.5 rounded-full bg-yellow text-black px-3.5 py-2 text-xs font-bold tracking-wide uppercase shadow-[0_4px_14px_-4px_rgba(255,206,5,0.7)] transition-all duration-200 active:scale-[0.96] hover:shadow-[0_6px_18px_-4px_rgba(255,206,5,0.9)]"
+              >
+                <Trophy
+                  className="size-4 transition-transform duration-200 group-hover:-rotate-12"
+                  strokeWidth={2.5}
+                  aria-hidden
+                />
+                Standings
+              </button>
+            </div>
+
+            {/* Row 2 — sector (full width, prominent) + live heartbeat.
+                On its own line so it never collides with the button. */}
+            <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 pb-2.5 border-t border-white/10 pt-2">
+              <span className="font-opensans text-[13px] font-bold uppercase tracking-[0.16em] text-yellow">
+                {sector}
+              </span>
+              <span className="inline-flex shrink-0 items-center gap-1.5 text-[11px]">
+                <span className="relative flex size-2">
+                  <span className="absolute inline-flex size-full animate-ping rounded-full bg-yellow/70" />
+                  <span className="relative inline-flex size-2 rounded-full bg-yellow" />
                 </span>
-              </p>
-            )}
-            <h1 className="mt-0.5 leading-none">
-              <img
-                src="/sahityotsav-logo.png"
-                alt={eventName ?? "Sahityotsav"}
-                className="h-5 sm:h-6 w-auto select-none"
-                draggable={false}
-              />
-            </h1>
+                <span className="font-bold tracking-[0.14em] uppercase text-yellow/90">
+                  Live
+                </span>
+              </span>
+            </div>
           </div>
 
-          <button
-            type="button"
-            onClick={() => setStandingsOpen(true)}
-            className="shrink-0 inline-flex items-center gap-1.5 rounded-full bg-yellow text-black hover:bg-yellow/90 px-3 py-1.5 text-[11px] font-semibold cursor-pointer"
-          >
-            <Trophy className="size-3.5" strokeWidth={2.5} aria-hidden />
-            Standings
-          </button>
+          {/* Decorative full-bleed brand edge */}
+          <div
+            aria-hidden
+            className="h-[3px] w-full bg-gradient-to-r from-red via-yellow to-red opacity-90"
+          />
         </div>
       </header>
 
@@ -257,14 +292,65 @@ export default function Home({ loaderData }: Route.ComponentProps) {
         />
       )}
 
-      <main className="relative z-10 flex-1 max-w-2xl md:max-w-3xl lg:max-w-4xl w-full mx-auto px-4 sm:px-5 py-6">
+      <main className="relative z-10 flex-1 w-full max-w-2xl md:max-w-3xl lg:max-w-4xl mx-auto px-3.5 sm:px-5 py-6 sm:py-8">
         <ChatFlow
           levels={levels as Level[]}
           eventName={eventName ?? "Sahityotsav"}
-          totalPublished={totalPublished}
-          totalPrograms={totalPrograms}
+          sector={sector}
         />
       </main>
+    </div>
+  );
+}
+
+// SSF wordmark — always rendered in the brand Cooper Black letterform.
+function Ssf({ className = "" }: { className?: string }) {
+  return <span className={`ssf-mark ${className}`}>SSF</span>;
+}
+
+// Live background — deterministic golden embers drifting up the viewport.
+// Fixed list (not random) so SSR and hydration match exactly.
+const EMBERS = [
+  { l: 5, s: 14, d: 20, delay: -3, x: 2, o: 0.6 },
+  { l: 12, s: 10, d: 26, delay: -14, x: -2, o: 0.5 },
+  { l: 19, s: 20, d: 17, delay: -7, x: 3, o: 0.7 },
+  { l: 27, s: 12, d: 23, delay: -19, x: -1, o: 0.55 },
+  { l: 34, s: 16, d: 21, delay: -2, x: 2, o: 0.62 },
+  { l: 41, s: 9, d: 28, delay: -12, x: -3, o: 0.45 },
+  { l: 48, s: 22, d: 16, delay: -9, x: 1, o: 0.72 },
+  { l: 55, s: 12, d: 24, delay: -21, x: -2, o: 0.5 },
+  { l: 62, s: 15, d: 19, delay: -5, x: 3, o: 0.6 },
+  { l: 69, s: 10, d: 27, delay: -15, x: -1, o: 0.48 },
+  { l: 76, s: 18, d: 18, delay: -10, x: 2, o: 0.66 },
+  { l: 82, s: 12, d: 22, delay: -24, x: -3, o: 0.52 },
+  { l: 88, s: 16, d: 20, delay: -6, x: 1, o: 0.6 },
+  { l: 93, s: 10, d: 25, delay: -17, x: -2, o: 0.45 },
+  { l: 23, s: 13, d: 30, delay: -26, x: 2, o: 0.5 },
+  { l: 72, s: 15, d: 29, delay: -13, x: -2, o: 0.55 },
+] as const;
+
+function EmberField() {
+  return (
+    <div
+      aria-hidden
+      className="pointer-events-none fixed inset-0 z-0 overflow-hidden app-embers"
+    >
+      {EMBERS.map((e, i) => (
+        <span
+          key={i}
+          className="ember"
+          style={
+            {
+              "--ember-l": `${e.l}%`,
+              "--ember-s": `${e.s}px`,
+              "--ember-d": `${e.d}s`,
+              "--ember-delay": `${e.delay}s`,
+              "--ember-x": `${e.x}vw`,
+              "--ember-o": e.o,
+            } as CSSProperties
+          }
+        />
+      ))}
     </div>
   );
 }
@@ -284,13 +370,11 @@ type Bubble = {
 function ChatFlow({
   levels,
   eventName,
-  totalPublished,
-  totalPrograms,
+  sector,
 }: {
   levels: Level[];
   eventName: string;
-  totalPublished: number;
-  totalPrograms: number;
+  sector: string;
 }) {
   // Initial bubbles — rendered SSR, hydrated on client.
   const initial: Bubble[] = [
@@ -298,25 +382,38 @@ function ChatFlow({
       id: "greet",
       side: "bot",
       node: (
-        <GreetingBubble
-          eventName={eventName}
-          totalPublished={totalPublished}
-          totalPrograms={totalPrograms}
-        />
+        <GreetingBubble sector={sector} />
       ),
     },
   ];
 
   const [bubbles, setBubbles] = useState<Bubble[]>(initial);
   const [typing, setTyping] = useState(false);
+  const [atBottom, setAtBottom] = useState(true);
   const endRef = useRef<HTMLDivElement | null>(null);
   const seqRef = useRef(0);
   const nextId = (prefix: string) => `${prefix}-${++seqRef.current}`;
 
+  const scrollToEnd = () =>
+    endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+
   // Auto-scroll to bottom on new message
   useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+    scrollToEnd();
   }, [bubbles.length, typing]);
+
+  // Track whether the reader has scrolled up through history
+  useEffect(() => {
+    const onScroll = () => {
+      const nearBottom =
+        window.innerHeight + window.scrollY >=
+        document.body.offsetHeight - 120;
+      setAtBottom(nearBottom);
+    };
+    onScroll();
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
+  }, []);
 
   function push(b: Bubble) {
     setBubbles((prev) => [...prev, b]);
@@ -443,7 +540,24 @@ function ChatFlow({
         </BubbleRow>
       )}
 
-      <div ref={endRef} />
+      <div ref={endRef} className="h-px" />
+
+      {/* Jump-to-latest — appears only while reading back through history */}
+      <button
+        type="button"
+        onClick={scrollToEnd}
+        aria-hidden={atBottom}
+        tabIndex={atBottom ? -1 : 0}
+        className={`fixed bottom-5 left-1/2 z-30 inline-flex items-center gap-1.5 rounded-full bg-black text-white px-4 py-2 text-xs font-semibold shadow-[0_10px_30px_-8px_rgba(11,9,10,0.55)] ring-1 ring-yellow/30 transition-all duration-300 ${
+          atBottom
+            ? "pointer-events-none translate-y-4 opacity-0"
+            : "-translate-x-1/2 opacity-100 hover:-translate-y-0.5"
+        }`}
+        style={atBottom ? { transform: "translate(-50%, 1rem)" } : undefined}
+      >
+        <ChevronDown className="size-4 text-yellow" strokeWidth={2.5} aria-hidden />
+        Latest
+      </button>
     </div>
   );
 }
@@ -466,25 +580,24 @@ function BubbleRow({
   const isBot = side === "bot";
   const widthCls = wide
     ? "w-full md:max-w-[600px]"
-    : "max-w-[88%] sm:max-w-[78%]";
-  const padCls = tight ? "p-1.5" : isBot ? "px-3.5 py-3" : "px-4 py-2.5";
+    : "max-w-[84%] sm:max-w-[76%]";
+  const padCls = tight ? "p-1.5" : isBot ? "px-4 py-3" : "px-4 py-2.5";
+  // Asymmetric radius gives the speech-bubble read without a fragile
+  // clip-path tail (the old tail broke at sub-pixel sizes on mobile).
   const shellCls = isBot
-    ? "bg-white border border-black/10 rounded-2xl rounded-bl-sm shadow-sm"
-    : "bg-black text-white rounded-2xl rounded-br-sm shadow-sm";
-  // Speech-bubble tail at the avatar-facing corner
-  const tailCls = isBot
-    ? "before:content-[''] before:absolute before:-bottom-px before:-left-1.5 before:w-3 before:h-3 before:bg-white before:border-l before:border-b before:border-black/10 before:[clip-path:polygon(100%_0,100%_100%,0_100%)]"
-    : "before:content-[''] before:absolute before:-bottom-px before:-right-1.5 before:w-3 before:h-3 before:bg-black before:[clip-path:polygon(0_0,0_100%,100%_100%)]";
+    ? "bubble-bot text-ink-900 rounded-[1.25rem] rounded-tl-md"
+    : "bubble-user text-white rounded-[1.25rem] rounded-tr-md";
   return (
     <div
-      className={`flex items-end gap-2 ${
+      className={`animate-bubble-in flex items-start gap-2 sm:gap-2.5 ${
         isBot ? "justify-start" : "justify-end"
       }`}
     >
       {isBot && <BotAvatar />}
-      <div className={`relative ${widthCls} ${padCls} ${shellCls} ${tailCls}`}>
+      <div className={`relative ${widthCls} ${padCls} ${shellCls}`}>
         {children}
       </div>
+      {!isBot && <span aria-hidden className="w-1 shrink-0" />}
     </div>
   );
 }
@@ -493,9 +606,9 @@ function BotAvatar() {
   return (
     <div
       aria-hidden
-      className="shrink-0 size-8 grid place-items-center rounded-full bg-red text-white font-semibold text-xs"
+      className="mt-0.5 shrink-0 size-8 sm:size-9 grid place-items-center rounded-full bg-gradient-to-br from-red to-brand-800 text-yellow shadow-[0_4px_12px_-4px_rgba(191,6,3,0.6)] ring-2 ring-white"
     >
-      S
+      <Sparkles className="size-[15px] sm:size-4" strokeWidth={2.5} aria-hidden />
     </div>
   );
 }
@@ -504,11 +617,11 @@ function TypingDots() {
   return (
     <span
       aria-label="Typing"
-      className="inline-flex items-center gap-1 py-1.5 px-1"
+      className="inline-flex items-center gap-1.5 py-1.5 px-1"
     >
-      <span className="size-1.5 rounded-full bg-black/40 animate-bounce [animation-delay:-0.3s]" />
-      <span className="size-1.5 rounded-full bg-black/40 animate-bounce [animation-delay:-0.15s]" />
-      <span className="size-1.5 rounded-full bg-black/40 animate-bounce" />
+      <span className="size-2 rounded-full bg-red/60 animate-bounce [animation-delay:-0.3s]" />
+      <span className="size-2 rounded-full bg-red/60 animate-bounce [animation-delay:-0.15s]" />
+      <span className="size-2 rounded-full bg-red/60 animate-bounce" />
     </span>
   );
 }
@@ -517,23 +630,20 @@ function TypingDots() {
 // Bot bubble contents
 // ─────────────────────────────────────────────────────────────────────
 
-function GreetingBubble({
-  eventName,
-  totalPublished,
-  totalPrograms,
-}: {
-  eventName: string;
-  totalPublished: number;
-  totalPrograms: number;
-}) {
+function GreetingBubble({ sector }: { sector: string }) {
   return (
     <div>
-      <p className="text-sm leading-relaxed text-black">
-        Welcome to{" "}
-        <span className="font-semibold">{eventName}</span> results.
+      <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-red/80">
+        Sahityotsav · Live Results
       </p>
-      <p className="text-xs text-black/60 mt-1 tabular-nums">
-        {totalPublished} of {totalPrograms} published — pick a category to begin.
+      <p className="font-opensans text-xl sm:text-[1.6rem] font-semibold leading-snug text-ink-900 mt-1.5">
+        <span>Welcome to </span>
+        <Ssf className="text-red text-[1.1em] align-baseline mr-1.5" />
+        <span className="font-bold text-red">{sector}</span>
+      </p>
+      <p className="text-[13px] leading-relaxed text-ink-500 mt-2">
+        Pick a category below to see the winners — new results appear here the
+        moment they're announced.
       </p>
     </div>
   );
@@ -548,20 +658,25 @@ function LevelPickerBubble({
 }) {
   return (
     <div>
-      <p className="text-sm text-black">Which category?</p>
-      <div className="mt-2.5 flex flex-wrap gap-1.5">
+      <p className="text-sm font-medium text-ink-800">Which category?</p>
+      <div className="mt-3 flex flex-wrap gap-2">
         {levels.map((l) => (
           <button
             key={l.id}
             type="button"
             onClick={() => onPick(l)}
-            className="inline-flex items-baseline gap-1.5 rounded-full border border-black/15 bg-white hover:bg-yellow/10 hover:border-yellow px-3 py-1.5 transition"
+            className="group inline-flex items-center gap-2 rounded-full border border-black/12 bg-white px-4 py-2.5 transition-all duration-200 hover:border-yellow hover:bg-yellow/10 hover:-translate-y-px hover:shadow-[0_6px_16px_-8px_rgba(11,9,10,0.25)] active:translate-y-0 active:scale-[0.97]"
           >
-            <span className="text-sm font-medium text-black">
+            <span
+              aria-hidden
+              className={`size-1.5 rounded-full ${
+                l.published > 0
+                  ? "bg-green-600 group-hover:bg-green-600"
+                  : "bg-ink-300"
+              }`}
+            />
+            <span className="text-sm font-semibold text-ink-900">
               {levelLabel(l)}
-            </span>
-            <span className="text-[10px] tabular-nums text-black/50">
-              {l.published}/{l.total}
             </span>
           </button>
         ))}
@@ -584,51 +699,69 @@ function ProgramPickerBubble({
 
   return (
     <div>
-      <p className="text-sm text-black">
+      <p className="text-sm text-ink-700">
         Programs in{" "}
-        <span className="font-semibold">{levelLabel(level)}</span>:
+        <span className="font-semibold text-ink-900">{levelLabel(level)}</span>
+        {ready.length > 0 && (
+          <span className="ml-2 inline-flex items-center gap-1 align-middle text-[10px] font-bold uppercase tracking-wide text-green-700">
+            <span className="size-1.5 rounded-full bg-green-600 animate-pulse" />
+            Live
+          </span>
+        )}
       </p>
 
       {ready.length > 0 ? (
-        <div className="mt-2.5 flex flex-col gap-1.5">
+        <div className="mt-3 flex flex-col gap-1.5">
           {ready.map((p) => (
             <button
               key={p.id}
               type="button"
               onClick={() => onPick(level, p)}
-              className="group flex items-center gap-3 rounded-xl border border-black/10 bg-white hover:bg-yellow/10 hover:border-yellow transition px-3 py-2 text-left"
+              className="group flex items-center gap-2.5 rounded-2xl border border-black/[0.08] bg-white px-3 py-3 text-left transition-all duration-200 active:scale-[0.99] hover:border-yellow hover:bg-yellow/[0.07] hover:shadow-[0_8px_18px_-12px_rgba(11,9,10,0.35)]"
             >
-              <span className="size-1.5 rounded-full bg-red shrink-0" aria-hidden />
-              <span className="text-sm font-medium text-black flex-1 truncate">
-                {programLabel(p)}
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-[15px] font-semibold leading-tight text-ink-900">
+                  {programLabel(p)}
+                </span>
+                <span className="mt-0.5 block font-mono text-[10px] font-semibold uppercase tracking-wider text-ink-400">
+                  {p.code}
+                </span>
               </span>
-              <span className="text-[10px] font-semibold tabular-nums text-black/40 shrink-0">
-                {p.code}
-              </span>
-              <span className="text-black/30 group-hover:translate-x-0.5 transition shrink-0">
-                ›
+              <span
+                aria-hidden
+                className="grid size-7 shrink-0 place-items-center rounded-full bg-black/[0.04] text-ink-500 transition-all duration-200 group-hover:bg-yellow group-hover:text-black"
+              >
+                <ChevronRight
+                  className="size-4 transition-transform duration-200 group-hover:translate-x-px"
+                  strokeWidth={2.75}
+                />
               </span>
             </button>
           ))}
         </div>
       ) : (
-        <p className="text-xs text-black/50 mt-2">
+        <p className="text-xs text-ink-400 mt-2">
           No results published yet in this category.
         </p>
       )}
 
       {pending.length > 0 && (
-        <details className="mt-3">
-          <summary className="cursor-pointer text-[11px] text-black/50 font-medium tracking-wide uppercase hover:text-black">
-            + {pending.length} awaiting
+        <details className="mt-3 group">
+          <summary className="inline-flex items-center gap-1 cursor-pointer text-[11px] text-ink-400 font-semibold tracking-wide uppercase hover:text-ink-700 transition-colors">
+            <ChevronDown
+              className="size-3 transition-transform duration-200 group-open:rotate-180"
+              strokeWidth={3}
+              aria-hidden
+            />
+            Programs awaiting results
           </summary>
-          <div className="mt-2 flex flex-wrap gap-1">
+          <div className="mt-2.5 flex flex-wrap gap-1.5">
             {pending.map((p) => (
               <button
                 key={p.id}
                 type="button"
                 onClick={() => onPick(level, p)}
-                className="rounded-full border border-black/10 bg-white px-2.5 py-1 text-[11px] text-black/60 hover:bg-black/5"
+                className="rounded-full border border-dashed border-black/15 bg-paper-2 px-3 py-1 text-[11px] font-medium text-ink-500 transition-colors hover:border-solid hover:border-red/40 hover:text-red"
               >
                 <span>{programLabel(p)}</span>
               </button>
@@ -657,11 +790,11 @@ function AwaitingBubble({
 }) {
   return (
     <div>
-      <p className="text-sm text-black">
-        <span className="font-semibold">{programLabel(program)}</span>{" "}
+      <p className="text-sm text-ink-800">
+        <span className="font-semibold text-ink-900">{programLabel(program)}</span>{" "}
         isn't announced yet.
       </p>
-      <p className="text-xs text-black/60 mt-1">
+      <p className="text-xs text-ink-500 mt-1">
         Try another program — results come in fast.
       </p>
       <ChoiceRow>
@@ -772,7 +905,7 @@ function ResultBubble({
         <button
           type="button"
           onClick={onDifferentLevel}
-          className="rounded-full border border-black/15 bg-white hover:bg-yellow/15 hover:border-yellow text-black px-3 py-2 text-xs font-medium transition shrink-0"
+          className="rounded-full border border-black/15 bg-white px-4 py-2 text-xs font-semibold text-ink-800 shadow-sm transition-all duration-200 hover:-translate-y-px hover:border-yellow hover:bg-yellow/15 active:translate-y-0 active:scale-[0.97] shrink-0"
         >
           Another result
         </button>
@@ -836,7 +969,7 @@ function Spinner() {
 
 function ChoiceRow({ children }: { children: ReactNode }) {
   return (
-    <div className="mt-3 flex flex-wrap gap-1.5 pt-3 border-t border-black/10">
+    <div className="mt-3 flex flex-wrap gap-2 pt-3 border-t border-dashed border-black/10">
       {children}
     </div>
   );
@@ -852,8 +985,8 @@ function ChoiceButton({
   primary?: boolean;
 }) {
   const cls = primary
-    ? "rounded-full bg-red text-white hover:bg-brand-600 px-3 py-1.5 text-xs font-medium shadow-sm"
-    : "rounded-full border border-black/15 bg-white hover:bg-yellow/15 hover:border-yellow text-black px-3 py-1.5 text-xs font-medium transition";
+    ? "rounded-full bg-red text-white px-4 py-2 text-xs font-semibold shadow-[0_4px_14px_-4px_rgba(191,6,3,0.6)] transition-all duration-200 hover:-translate-y-px hover:bg-brand-600 active:translate-y-0 active:scale-[0.97]"
+    : "rounded-full border border-black/15 bg-white text-ink-800 px-4 py-2 text-xs font-semibold transition-all duration-200 hover:-translate-y-px hover:border-yellow hover:bg-yellow/15 active:translate-y-0 active:scale-[0.97]";
   return (
     <button type="button" onClick={onClick} className={cls}>
       {children}
@@ -872,21 +1005,36 @@ function NotYetLive({
 }) {
   const name = event.name ?? event.name_ml;
   return (
-    <div className="min-h-dvh flex items-center justify-center px-4 bg-white">
-      <div className="max-w-md w-full text-center bg-white border border-black/10 rounded-2xl shadow-sm px-8 py-12">
-        <span className="inline-block rounded-full bg-yellow text-black text-[11px] font-semibold tracking-wide uppercase px-3 py-1">
+    <div className="relative min-h-dvh flex items-center justify-center px-4">
+      <div aria-hidden className="pointer-events-none fixed inset-0 z-0 app-backdrop" />
+      <div aria-hidden className="pointer-events-none fixed inset-0 z-0 app-grid" />
+      <div aria-hidden className="pointer-events-none fixed inset-0 z-0 app-sky" />
+      <div
+        aria-hidden
+        className="pointer-events-none fixed -top-40 left-1/2 -translate-x-1/2 size-[34rem] z-0 rounded-full bg-yellow/30 blur-[110px] animate-glow-drift"
+      />
+      <div aria-hidden className="pointer-events-none fixed inset-x-0 z-0 app-hills" />
+      <EmberField />
+      <div aria-hidden className="pointer-events-none fixed inset-0 z-0 app-grain" />
+
+      <div className="animate-bubble-in max-w-md w-full text-center bubble-bot rounded-3xl px-8 py-14">
+        <span className="inline-flex items-center gap-1.5 rounded-full bg-yellow text-black text-[11px] font-bold tracking-[0.18em] uppercase px-3.5 py-1.5 shadow-[0_4px_14px_-4px_rgba(255,206,5,0.7)]">
+          <span className="size-1.5 rounded-full bg-black animate-pulse" />
           Coming soon
         </span>
-        <h1 className="text-3xl font-semibold tracking-tight mt-6 text-black">
+        <h1 className="font-editorial text-4xl font-semibold tracking-tight mt-7 text-ink-900">
           {name}
         </h1>
-        <hr className="mt-5 max-w-[12rem] mx-auto border-black/15" />
-        <p className="text-sm text-black/60 mt-5">
-          The first winners will appear here as they are announced.
+        <div
+          aria-hidden
+          className="mt-6 mx-auto h-px max-w-[10rem] bg-gradient-to-r from-transparent via-red/40 to-transparent"
+        />
+        <p className="text-sm text-ink-500 mt-6 leading-relaxed">
+          The first winners will appear here, live, as they are announced.
         </p>
         <Link
           to="/admin"
-          className="inline-block mt-8 text-xs text-black/50 hover:text-black underline"
+          className="inline-block mt-9 text-xs font-medium text-ink-400 hover:text-red transition-colors underline underline-offset-4"
         >
           Admin
         </Link>

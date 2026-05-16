@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import type Konva from "konva";
 import { Download, Share2, X } from "lucide-react";
 import {
@@ -58,7 +59,10 @@ export function PosterZoomModal({
     }
   }
 
-  return (
+  // Portal to <body> so the fixed overlay is relative to the viewport,
+  // not a transformed/stacking-context ancestor (the chat bubble).
+  if (typeof document === "undefined") return null;
+  return createPortal(
     <div
       role="dialog"
       aria-modal="true"
@@ -115,6 +119,7 @@ export function PosterZoomModal({
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
