@@ -18,4 +18,11 @@ export default defineConfig({
   resolve: {
     tsconfigPaths: true,
   },
+  // konva/react-konva are pulled into the SSR graph by the poster
+  // components. Bundle them into the server output instead of leaving
+  // them as external requires — otherwise Vercel's function tracing
+  // misses konva/lib/Core.js and SSR 500s ("Cannot find module").
+  ssr: {
+    noExternal: ["konva", "react-konva"],
+  },
 });
