@@ -13,3 +13,6 @@
 .dev.vars*
 worker-configuration.d.ts
 
+# Vercel
+/.vercel/
+
