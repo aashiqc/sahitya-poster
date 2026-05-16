@@ -7,7 +7,7 @@
     "cf-typegen": "wrangler types",
     "deploy": "react-router build && wrangler deploy",
     "dev": "react-router dev",
-    "postinstall": "wrangler types",
+    "postinstall": "if [ -z \"$VERCEL\" ]; then wrangler types; fi",
     "preview": "react-router build && vite preview",
     "typecheck": "wrangler types && react-router typegen && tsc -b"
   },
