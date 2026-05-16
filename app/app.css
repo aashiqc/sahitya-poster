@@ -117,44 +117,47 @@ h1:lang(ml), h2:lang(ml) {
 }
 
 /* ─────────────────────────────────────────────────────────────────
-   App backdrop — a warm "festival dawn" that echoes the poster art:
-   a soft sky gradient, a low sun-glow, distant rolling hills, fine
-   paper grain. Pure CSS/SVG, no JS, mobile-first & performant.
+   App background — flowing layered waves. A clean warm base with
+   three bottom-anchored wave bands scrolling horizontally at parallax
+   speeds. Each band is 200% wide with a 2-tile repeating SVG wave;
+   translateX(-50%) loops seamlessly on the GPU (no JS/deps, ~60fps).
    ───────────────────────────────────────────────────────────────── */
 .app-backdrop {
-  background-color: #FBF4E4;
-  background-image:
-    radial-gradient(58% 42% at 50% 2%, rgba(255, 206, 5, 0.42), transparent 60%),
-    radial-gradient(46% 36% at 50% 0%, rgba(255, 176, 32, 0.30), transparent 55%),
-    radial-gradient(90% 60% at 100% 100%, rgba(191, 6, 3, 0.10), transparent 65%),
-    linear-gradient(180deg, #FFF3D4 0%, #FDEFD6 34%, #FBEAD3 60%, #F4E6D2 100%);
+  background:
+    radial-gradient(125% 85% at 50% 0%, #FFF6E0 0%, #FBEDCF 50%, #F3E2C6 100%);
 }
-/* Distant rolling hills pinned to the bottom — ties the chat to the
-   poster's landscape illustration. Soft, muted, behind everything. */
-.app-hills {
+
+@keyframes wave-scroll {
+  from { transform: translate3d(0, 0, 0); }
+  to   { transform: translate3d(-50%, 0, 0); }
+}
+.app-wave {
+  position: absolute;
+  left: 0;
   bottom: 0;
-  height: min(46vh, 420px);
-  background-repeat: no-repeat;
-  background-position: bottom center;
-  background-size: cover;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1440 420' preserveAspectRatio='none'%3E%3Cpath fill='%23EBD9AE' d='M0 250c180-46 320 22 520-6s300-78 520-46 260 64 400 40v182H0z'/%3E%3Cpath fill='%23D9C089' d='M0 320c220-54 360 20 560-2s320-66 520-40 240 52 360 30v112H0z'/%3E%3Cpath fill='%23B79A5E' d='M0 372c260-40 420 14 640-4s320-44 520-26 200 30 280 22v56H0z'/%3E%3C/svg%3E");
-  opacity: 0.55;
-  mask-image: linear-gradient(180deg, transparent 0%, #000 38%);
-  -webkit-mask-image: linear-gradient(180deg, transparent 0%, #000 38%);
+  width: 200%;
+  background-repeat: repeat-x;
+  background-position: left bottom;
+  background-size: 50% 100%;
+  will-change: transform;
 }
-/* Hairline dot lattice — subtle editorial paper texture up top */
-.app-grid {
-  background-image: radial-gradient(rgba(11, 9, 10, 0.05) 1px, transparent 1.4px);
-  background-size: 24px 24px;
-  background-position: -12px -12px;
-  mask-image: radial-gradient(110% 70% at 50% -5%, #000 0%, transparent 70%);
-  -webkit-mask-image: radial-gradient(110% 70% at 50% -5%, #000 0%, transparent 70%);
+.app-wave--back {
+  height: min(48vh, 480px);
+  opacity: 0.30;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 600 220' preserveAspectRatio='none'%3E%3Cpath fill='%23FFCE05' d='M0 112 C100 64 200 64 300 112 S500 160 600 112 L600 220 L0 220 Z'/%3E%3C/svg%3E");
+  animation: wave-scroll 30s linear infinite;
 }
-/* Tactile film grain */
-.app-grain {
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.82' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)' opacity='0.3'/%3E%3C/svg%3E");
-  mix-blend-mode: multiply;
-  opacity: 0.42;
+.app-wave--mid {
+  height: min(38vh, 380px);
+  opacity: 0.45;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 600 220' preserveAspectRatio='none'%3E%3Cpath fill='%23F0A52E' d='M0 118 C100 52 200 52 300 118 S500 184 600 118 L600 220 L0 220 Z'/%3E%3C/svg%3E");
+  animation: wave-scroll 21s linear infinite;
+}
+.app-wave--front {
+  height: min(28vh, 300px);
+  opacity: 0.62;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 600 220' preserveAspectRatio='none'%3E%3Cpath fill='%23C25A2A' d='M0 124 C90 74 210 74 300 124 S510 174 600 124 L600 220 L0 220 Z'/%3E%3C/svg%3E");
+  animation: wave-scroll 14s linear infinite;
 }
 
 /* SSF wordmark — always Cooper Black, the brand letterform */
@@ -191,65 +194,9 @@ h1:lang(ml), h2:lang(ml) {
   animation: bubble-in 0.42s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
-/* Slow drift for the ambient glows */
-@keyframes glow-drift {
-  0%, 100% { transform: translate3d(0, 0, 0) scale(1); opacity: 0.85; }
-  50%      { transform: translate3d(2%, -3%, 0) scale(1.06); opacity: 1; }
-}
-.animate-glow-drift { animation: glow-drift 16s ease-in-out infinite; }
-
-/* ── Live background: breathing warm sky + rising golden embers ── */
-
-/* Slow warm "sky" breathing — a soft amber pulse over the backdrop. */
-@keyframes sky-breathe {
-  0%, 100% { opacity: 0.55; transform: scale(1); }
-  50%      { opacity: 0.9;  transform: scale(1.08); }
-}
-.app-sky {
-  background:
-    radial-gradient(60% 42% at 50% 4%, rgba(255, 206, 5, 0.30), transparent 60%),
-    radial-gradient(40% 30% at 72% 0%, rgba(255, 150, 30, 0.18), transparent 60%);
-  animation: sky-breathe 14s ease-in-out infinite;
-  transform-origin: 50% 0%;
-}
-
-/* Embers drift up the full viewport, swaying gently as they fade. */
-@keyframes ember-rise {
-  0%   { transform: translate3d(0, 6vh, 0) scale(0.6); opacity: 0; }
-  12%  { opacity: var(--ember-o, 0.5); }
-  50%  { transform: translate3d(var(--ember-x, 1vw), -48vh, 0) scale(1); }
-  88%  { opacity: var(--ember-o, 0.5); }
-  100% { transform: translate3d(0, -104vh, 0) scale(0.7); opacity: 0; }
-}
-.app-embers { contain: strict; }
-.app-embers .ember {
-  position: absolute;
-  bottom: -2vh;
-  left: var(--ember-l, 50%);
-  width: var(--ember-s, 6px);
-  height: var(--ember-s, 6px);
-  border-radius: 9999px;
-  /* Deep amber core so it reads against the warm cream backdrop. */
-  background: radial-gradient(
-    circle,
-    rgba(255, 184, 64, 0.95) 0%,
-    rgba(243, 138, 18, 0.6) 42%,
-    rgba(191, 6, 3, 0) 72%
-  );
-  box-shadow:
-    0 0 18px 5px rgba(243, 138, 18, 0.45),
-    0 0 4px 1px rgba(255, 200, 90, 0.6);
-  filter: blur(1px);
-  animation: ember-rise var(--ember-d, 18s) linear infinite;
-  animation-delay: var(--ember-delay, 0s);
-  will-change: transform, opacity;
-}
-
 @media (prefers-reduced-motion: reduce) {
   .animate-bubble-in,
-  .animate-glow-drift,
-  .app-sky { animation: none !important; }
-  .app-embers { display: none !important; }
+  .app-wave { animation: none !important; }
 }
 
 /* Restrained, branded scrollbar */

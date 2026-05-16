@@ -1,18 +1,14 @@
-import {
-  useEffect,
-  useRef,
-  useState,
-  type CSSProperties,
-  type ReactNode,
-} from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Link, data } from "react-router";
 import type { Route } from "./+types/home";
 import { createSupabaseServerClient, loadEvent } from "~/lib/supabase.server";
+import { SITE_URL } from "~/lib/constants";
 import { TEAM_BY_SLUG } from "~/lib/teams";
 import type Konva from "konva";
 import {
   PosterCanvas,
   exportPosterPng,
+  prefetchPosterAssets,
   sharePoster,
   type PosterData,
 } from "~/components/poster-canvas";
@@ -33,11 +29,25 @@ export function meta({ data }: Route.MetaArgs) {
     (data?.event as { name?: string; name_ml?: string } | null)?.name ??
     (data?.event as { name_ml?: string } | null)?.name_ml ??
     "Sahityotsav";
+  const title = `${eventName} · Results`;
+  const description = `Live results from ${eventName} — browse winners by category as they're announced.`;
+  const image = `${SITE_URL}/sahityotsav-logo.png`;
   return [
-    { title: `${eventName} · Results` },
-    { name: "description", content: `Live results from ${eventName}.` },
-    { property: "og:title", content: `${eventName} · Results` },
+    { title },
+    { name: "description", content: description },
+    { tagName: "link", rel: "canonical", href: SITE_URL },
+    { property: "og:title", content: title },
+    { property: "og:description", content: description },
     { property: "og:type", content: "website" },
+    { property: "og:url", content: SITE_URL },
+    { property: "og:site_name", content: "SSF Pantharangadi Sahityotsav" },
+    { property: "og:locale", content: "en_IN" },
+    { property: "og:image", content: image },
+    { property: "og:image:alt", content: `${eventName} logo` },
+    { name: "twitter:card", content: "summary_large_image" },
+    { name: "twitter:title", content: title },
+    { name: "twitter:description", content: description },
+    { name: "twitter:image", content: image },
   ];
 }
 
@@ -209,17 +219,8 @@ export default function Home({ loaderData }: Route.ComponentProps) {
 
   return (
     <div className="relative min-h-dvh flex flex-col">
-      {/* Festival-dawn backdrop: sky, breathing glow, embers, hills, grain */}
-      <div aria-hidden className="pointer-events-none fixed inset-0 z-0 app-backdrop" />
-      <div aria-hidden className="pointer-events-none fixed inset-0 z-0 app-grid" />
-      <div aria-hidden className="pointer-events-none fixed inset-0 z-0 app-sky" />
-      <div
-        aria-hidden
-        className="pointer-events-none fixed -top-40 left-1/2 -translate-x-1/2 size-[34rem] z-0 rounded-full bg-yellow/30 blur-[110px] animate-glow-drift"
-      />
-      <div aria-hidden className="pointer-events-none fixed inset-x-0 z-0 app-hills" />
-      <EmberField />
-      <div aria-hidden className="pointer-events-none fixed inset-0 z-0 app-grain" />
+      {/* Flowing layered waves — clean warm base + parallax wave bands */}
+      <WaveBackground />
 
       {/* ── Header — compact, mobile-first, sector-led ── */}
       <header className="sticky top-0 z-20">
@@ -232,7 +233,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
             {/* Row 1 — brand + primary action */}
             <div className="flex items-center justify-between gap-3 pt-3 pb-2">
               <div className="flex min-w-0 items-center gap-2.5 sm:gap-3">
-                <span className="ssf-mark shrink-0 text-yellow text-[1.6rem] leading-none drop-shadow-[0_2px_10px_rgba(255,206,5,0.4)]">
+                <span className="ssf-mark shrink-0 text-white text-[1.6rem] leading-none drop-shadow-[0_2px_8px_rgba(0,0,0,0.45)]">
                   SSF
                 </span>
                 <span aria-hidden className="h-7 w-px shrink-0 bg-white/20" />
@@ -247,7 +248,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
               <button
                 type="button"
                 onClick={() => setStandingsOpen(true)}
-                className="font-opensans group shrink-0 inline-flex items-center gap-1.5 rounded-full bg-yellow text-black px-3.5 py-2 text-xs font-bold tracking-wide uppercase shadow-[0_4px_14px_-4px_rgba(255,206,5,0.7)] transition-all duration-200 active:scale-[0.96] hover:shadow-[0_6px_18px_-4px_rgba(255,206,5,0.9)]"
+                className="font-opensans group shrink-0 inline-flex items-center gap-1.5 rounded-full bg-white text-black px-3.5 py-2 text-xs font-bold tracking-wide uppercase shadow-[0_4px_14px_-4px_rgba(0,0,0,0.5)] transition-all duration-200 active:scale-[0.96] hover:shadow-[0_6px_18px_-4px_rgba(0,0,0,0.6)]"
               >
                 <Trophy
                   className="size-4 transition-transform duration-200 group-hover:-rotate-12"
@@ -308,49 +309,18 @@ function Ssf({ className = "" }: { className?: string }) {
   return <span className={`ssf-mark ${className}`}>SSF</span>;
 }
 
-// Live background — deterministic golden embers drifting up the viewport.
-// Fixed list (not random) so SSR and hydration match exactly.
-const EMBERS = [
-  { l: 5, s: 14, d: 20, delay: -3, x: 2, o: 0.6 },
-  { l: 12, s: 10, d: 26, delay: -14, x: -2, o: 0.5 },
-  { l: 19, s: 20, d: 17, delay: -7, x: 3, o: 0.7 },
-  { l: 27, s: 12, d: 23, delay: -19, x: -1, o: 0.55 },
-  { l: 34, s: 16, d: 21, delay: -2, x: 2, o: 0.62 },
-  { l: 41, s: 9, d: 28, delay: -12, x: -3, o: 0.45 },
-  { l: 48, s: 22, d: 16, delay: -9, x: 1, o: 0.72 },
-  { l: 55, s: 12, d: 24, delay: -21, x: -2, o: 0.5 },
-  { l: 62, s: 15, d: 19, delay: -5, x: 3, o: 0.6 },
-  { l: 69, s: 10, d: 27, delay: -15, x: -1, o: 0.48 },
-  { l: 76, s: 18, d: 18, delay: -10, x: 2, o: 0.66 },
-  { l: 82, s: 12, d: 22, delay: -24, x: -3, o: 0.52 },
-  { l: 88, s: 16, d: 20, delay: -6, x: 1, o: 0.6 },
-  { l: 93, s: 10, d: 25, delay: -17, x: -2, o: 0.45 },
-  { l: 23, s: 13, d: 30, delay: -26, x: 2, o: 0.5 },
-  { l: 72, s: 15, d: 29, delay: -13, x: -2, o: 0.55 },
-] as const;
-
-function EmberField() {
+// Flowing layered-wave background — a clean warm base with three
+// parallax wave bands scrolling horizontally (CSS/SVG only).
+function WaveBackground() {
   return (
     <div
       aria-hidden
-      className="pointer-events-none fixed inset-0 z-0 overflow-hidden app-embers"
+      className="pointer-events-none fixed inset-0 z-0 overflow-hidden"
     >
-      {EMBERS.map((e, i) => (
-        <span
-          key={i}
-          className="ember"
-          style={
-            {
-              "--ember-l": `${e.l}%`,
-              "--ember-s": `${e.s}px`,
-              "--ember-d": `${e.d}s`,
-              "--ember-delay": `${e.delay}s`,
-              "--ember-x": `${e.x}vw`,
-              "--ember-o": e.o,
-            } as CSSProperties
-          }
-        />
-      ))}
+      <div className="app-backdrop absolute inset-0" />
+      <div className="app-wave app-wave--back" />
+      <div className="app-wave app-wave--mid" />
+      <div className="app-wave app-wave--front" />
     </div>
   );
 }
@@ -396,6 +366,22 @@ function ChatFlow({
 
   const scrollToEnd = () =>
     endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+
+  // Warm the poster-template cache once the chat is interactive so the
+  // first result a user opens renders instantly (idle, low priority).
+  useEffect(() => {
+    const w = window as Window & {
+      requestIdleCallback?: (cb: () => void) => number;
+    };
+    const run = () => prefetchPosterAssets();
+    if (w.requestIdleCallback) {
+      const id = w.requestIdleCallback(run);
+      return () => (w as unknown as { cancelIdleCallback?: (n: number) => void })
+        .cancelIdleCallback?.(id);
+    }
+    const t = window.setTimeout(run, 1200);
+    return () => window.clearTimeout(t);
+  }, []);
 
   // Auto-scroll to bottom on new message
   useEffect(() => {
@@ -711,28 +697,26 @@ function ProgramPickerBubble({
       </p>
 
       {ready.length > 0 ? (
-        <div className="mt-3 flex flex-col gap-1.5">
+        <div className="mt-2.5 flex flex-col gap-1">
           {ready.map((p) => (
             <button
               key={p.id}
               type="button"
               onClick={() => onPick(level, p)}
-              className="group flex items-center gap-2.5 rounded-2xl border border-black/[0.08] bg-white px-3 py-3 text-left transition-all duration-200 active:scale-[0.99] hover:border-yellow hover:bg-yellow/[0.07] hover:shadow-[0_8px_18px_-12px_rgba(11,9,10,0.35)]"
+              className="group flex items-center gap-2 rounded-xl border border-black/[0.08] bg-white px-3 py-2 text-left transition-all duration-200 active:scale-[0.99] hover:border-yellow hover:bg-yellow/[0.07] hover:shadow-[0_6px_14px_-12px_rgba(11,9,10,0.35)]"
             >
-              <span className="min-w-0 flex-1">
-                <span className="block truncate text-[15px] font-semibold leading-tight text-ink-900">
-                  {programLabel(p)}
-                </span>
-                <span className="mt-0.5 block font-mono text-[10px] font-semibold uppercase tracking-wider text-ink-400">
-                  {p.code}
-                </span>
+              <span className="min-w-0 flex-1 truncate text-sm font-semibold leading-snug text-ink-900">
+                {programLabel(p)}
+              </span>
+              <span className="shrink-0 font-mono text-[10px] font-semibold uppercase tracking-wider text-ink-400">
+                {p.code}
               </span>
               <span
                 aria-hidden
-                className="grid size-7 shrink-0 place-items-center rounded-full bg-black/[0.04] text-ink-500 transition-all duration-200 group-hover:bg-yellow group-hover:text-black"
+                className="grid size-6 shrink-0 place-items-center rounded-full bg-black/[0.04] text-ink-500 transition-all duration-200 group-hover:bg-yellow group-hover:text-black"
               >
                 <ChevronRight
-                  className="size-4 transition-transform duration-200 group-hover:translate-x-px"
+                  className="size-3.5 transition-transform duration-200 group-hover:translate-x-px"
                   strokeWidth={2.75}
                 />
               </span>
@@ -1006,16 +990,7 @@ function NotYetLive({
   const name = event.name ?? event.name_ml;
   return (
     <div className="relative min-h-dvh flex items-center justify-center px-4">
-      <div aria-hidden className="pointer-events-none fixed inset-0 z-0 app-backdrop" />
-      <div aria-hidden className="pointer-events-none fixed inset-0 z-0 app-grid" />
-      <div aria-hidden className="pointer-events-none fixed inset-0 z-0 app-sky" />
-      <div
-        aria-hidden
-        className="pointer-events-none fixed -top-40 left-1/2 -translate-x-1/2 size-[34rem] z-0 rounded-full bg-yellow/30 blur-[110px] animate-glow-drift"
-      />
-      <div aria-hidden className="pointer-events-none fixed inset-x-0 z-0 app-hills" />
-      <EmberField />
-      <div aria-hidden className="pointer-events-none fixed inset-0 z-0 app-grain" />
+      <WaveBackground />
 
       <div className="animate-bubble-in max-w-md w-full text-center bubble-bot rounded-3xl px-8 py-14">
         <span className="inline-flex items-center gap-1.5 rounded-full bg-yellow text-black text-[11px] font-bold tracking-[0.18em] uppercase px-3.5 py-1.5 shadow-[0_4px_14px_-4px_rgba(255,206,5,0.7)]">

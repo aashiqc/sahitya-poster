@@ -12,6 +12,8 @@ import {
 import {
   Ban,
   Check,
+  ChevronLeft,
+  ChevronRight,
   Clock,
   Download,
   ExternalLink,
@@ -20,17 +22,31 @@ import {
   RefreshCw,
   Search,
   Share2,
+  Shuffle,
   Trophy,
   X,
 } from "lucide-react";
+import type Konva from "konva";
 import type { Route } from "./+types/admin";
 import { loadEvent, requireAdmin } from "~/lib/supabase.server";
 import {
+  TEAM_BY_SLUG,
   TEAMS,
   computeStandings,
   snapshotBucket,
   winnerPoints,
 } from "~/lib/teams";
+import {
+  PosterCanvas,
+  exportPosterPng,
+  sharePoster,
+  type PosterData,
+} from "~/components/poster-canvas";
+import {
+  StandingsPosterCanvas,
+  exportStandingsPng,
+  shareStandings,
+} from "~/components/standings-poster";
 
 export function meta() {
   return [{ title: "Admin · Sahityotsav" }];
@@ -250,6 +266,30 @@ export async function action({ request }: Route.ActionArgs) {
         grade: null,
       });
     }
+
+    // Extra marks — NOT a podium place, never rendered on the poster or
+    // individual result (stored with position 0), but the marks add to
+    // the team's total points.
+    const extraCount = Math.min(
+      Math.max(parseInt(String(fd.get("extra_count") ?? "0"), 10) || 0, 0),
+      200,
+    );
+    for (let i = 0; i < extraCount; i++) {
+      const unit = String(fd.get(`extra_${i}_unit_ml`) ?? "").trim() || null;
+      const marksRaw = String(fd.get(`extra_${i}_marks`) ?? "").trim();
+      const marks = marksRaw ? Number(marksRaw) : NaN;
+      if (!unit || !Number.isFinite(marks)) continue;
+      const name = String(fd.get(`extra_${i}_name`) ?? "").trim();
+      winners.push({
+        position: 0,
+        name_ml: name || "Extra marks",
+        name_en: name || "Extra marks",
+        unit_ml: unit,
+        marks,
+        grade: null,
+      });
+    }
+
     if (winners.length === 0) {
       return data(
         { error: "Enter at least the first-place winner's name." },
@@ -343,7 +383,8 @@ export default function Admin({ loaderData }: Route.ComponentProps) {
   const [searchParams] = useSearchParams();
   const view = (searchParams.get("view") ?? "dashboard") as
     | "dashboard"
-    | "standings";
+    | "standings"
+    | "share";
 
   const editCode = searchParams.get("edit");
   const editData = useMemo(
@@ -406,6 +447,12 @@ export default function Admin({ loaderData }: Route.ComponentProps) {
             label="Team standings"
             icon={<Trophy className="size-4" />}
             to="/admin?view=standings"
+          />
+          <NavItem
+            active={view === "share"}
+            label="Share posters"
+            icon={<Share2 className="size-4" />}
+            to="/admin?view=share"
           />
           <NavItem
             label="Public site"
@@ -476,7 +523,11 @@ export default function Admin({ loaderData }: Route.ComponentProps) {
               <Menu className="size-4" />
             </button>
             <h1 className="text-base font-semibold tracking-tight">
-              {view === "standings" ? "Team standings" : "Dashboard"}
+              {view === "standings"
+                ? "Team standings"
+                : view === "share"
+                ? "Share posters"
+                : "Dashboard"}
             </h1>
 
             {view === "dashboard" && (
@@ -492,6 +543,12 @@ export default function Admin({ loaderData }: Route.ComponentProps) {
             <StandingsView
               totalPublished={stats.totalPublished}
               winners={publishedWinners}
+            />
+          )}
+          {view === "share" && (
+            <SharePostersView
+              levels={levels as LevelRow[]}
+              eventName={event.name ?? event.name_ml ?? "Sahityotsav"}
             />
           )}
           {view === "dashboard" && (
@@ -772,6 +829,102 @@ function StandingsView({
 }
 
 // ============================================================================
+// Extra marks — marks attributed to a team that aren't a podium place.
+// Not rendered on the poster or individual result; the marks add to the
+// team's total points.
+// ============================================================================
+type ExtraRow = { name: string; unit: string; marks: string };
+
+function ExtraMarkEntries({ initial }: { initial: ExtraRow[] }) {
+  const [rows, setRows] = useState<ExtraRow[]>(initial);
+  const update = (i: number, patch: Partial<ExtraRow>) =>
+    setRows((r) => r.map((x, idx) => (idx === i ? { ...x, ...patch } : x)));
+  const add = () =>
+    setRows((r) => [...r, { name: "", unit: "", marks: "" }]);
+  const remove = (i: number) =>
+    setRows((r) => r.filter((_, idx) => idx !== i));
+
+  const field =
+    "rounded-md border border-stone-300 bg-white px-2 py-1.5 text-sm focus:outline-none focus:border-stone-400";
+
+  return (
+    <div className="rounded-lg border border-stone-200 bg-stone-50/60 p-2.5">
+      <input type="hidden" name="extra_count" value={rows.length} />
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-[11px] font-medium uppercase tracking-wider text-stone-500">
+          Extra marks{" "}
+          <span className="font-normal normal-case text-stone-400">
+            · added to team points, not on poster or result
+          </span>
+        </p>
+        <button
+          type="button"
+          onClick={add}
+          className="shrink-0 rounded-md border border-stone-300 bg-white px-2 py-1 text-xs font-medium text-stone-700 hover:bg-stone-100"
+        >
+          + Add
+        </button>
+      </div>
+
+      {rows.length === 0 ? (
+        <p className="mt-1.5 text-[11px] text-stone-400">
+          Add marks earned by a team that aren't a podium place so they
+          still count toward the team's total points.
+        </p>
+      ) : (
+        <div className="mt-2 space-y-1.5">
+          {rows.map((row, i) => (
+            <div
+              key={i}
+              className="grid grid-cols-[minmax(0,1fr)_9rem_5rem_2rem] gap-2 items-center"
+            >
+              <input
+                name={`extra_${i}_name`}
+                value={row.name}
+                onChange={(e) => update(i, { name: e.target.value })}
+                placeholder="Name / note (optional)"
+                className={`${field} w-full`}
+              />
+              <select
+                name={`extra_${i}_unit_ml`}
+                value={row.unit}
+                onChange={(e) => update(i, { unit: e.target.value })}
+                className={field}
+              >
+                <option value="">Team —</option>
+                {TEAMS.map((t) => (
+                  <option key={t.slug} value={t.slug}>
+                    {t.name}
+                  </option>
+                ))}
+              </select>
+              <input
+                name={`extra_${i}_marks`}
+                type="number"
+                step="0.01"
+                inputMode="decimal"
+                value={row.marks}
+                onChange={(e) => update(i, { marks: e.target.value })}
+                placeholder="Marks"
+                className={`${field} w-full text-right tabular-nums`}
+              />
+              <button
+                type="button"
+                onClick={() => remove(i)}
+                aria-label="Remove entry"
+                className="inline-flex size-7 items-center justify-center rounded-md text-stone-400 hover:bg-stone-200 hover:text-stone-700"
+              >
+                <X className="size-4" />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ============================================================================
 // Result entry modal
 // ============================================================================
 function ResultModal({
@@ -949,6 +1102,17 @@ function ResultModal({
                 </div>
               );
             })}
+
+            <ExtraMarkEntries
+              key={program.code}
+              initial={winners
+                .filter((w) => w.position < 1)
+                .map((w) => ({
+                  name: w.name_en ?? w.name_ml ?? "",
+                  unit: (w.unit_ml ?? "").toLowerCase(),
+                  marks: w.marks != null ? String(w.marks) : "",
+                }))}
+            />
 
             {actionData && "error" in actionData && (
               <p className="text-xs text-red-700 bg-red-50 border border-red-200 rounded-md px-3 py-2">
@@ -1165,6 +1329,259 @@ type LevelRow = {
   pending: number;
   inactive: number;
 };
+
+// ============================================================================
+// Share posters — guided stepper. Published results in result-number
+// order; a team-standings snapshot is injected after every 5th result.
+// ============================================================================
+function levelLabelFromCode(code: string, fallback: string): string {
+  if (!code) return fallback;
+  return code
+    .split(/[-_\s]+/)
+    .filter(Boolean)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+    .join(" ");
+}
+
+type ShareItem =
+  | { kind: "result"; key: string; code: string; programName: string; data: PosterData }
+  | { kind: "standings"; key: string; afterN: number; rows: { name: string; points: number }[] };
+
+function SharePostersView({
+  levels,
+  eventName,
+}: {
+  levels: LevelRow[];
+  eventName: string;
+}) {
+  const items = useMemo<ShareItem[]>(() => {
+    const pubs: { level: LevelRow; program: ProgramRow }[] = [];
+    for (const l of levels) {
+      for (const p of l.programs) {
+        if (p.result?.status === "published") pubs.push({ level: l, program: p });
+      }
+    }
+    const num = (s: string | null | undefined) => {
+      const n = parseInt(String(s ?? "").trim(), 10);
+      return Number.isFinite(n) ? n : Number.POSITIVE_INFINITY;
+    };
+    pubs.sort(
+      (a, b) =>
+        num(a.program.result?.result_no) - num(b.program.result?.result_no) ||
+        a.program.code.localeCompare(b.program.code),
+    );
+
+    const out: ShareItem[] = [];
+    const cumulative: EditWinner[] = [];
+    pubs.forEach(({ level, program }, i) => {
+      const r = program.result!;
+      cumulative.push(...r.winners);
+      const winners = [...r.winners]
+        .filter((w) => w.position >= 1)
+        .sort((a, b) => a.position - b.position)
+        .map((w) => {
+          const slug = w.unit_ml?.toLowerCase() ?? null;
+          const unit = slug ? TEAM_BY_SLUG[slug]?.name ?? w.unit_ml : w.unit_ml;
+          return { position: w.position, name: w.name_en ?? w.name_ml, unit };
+        });
+      const programName = program.name_en ?? program.code;
+      out.push({
+        kind: "result",
+        key: `r-${r.id}`,
+        code: program.code,
+        programName,
+        data: {
+          eventName,
+          levelName: levelLabelFromCode(level.code, level.name_ml),
+          programName,
+          programCode: program.code,
+          resultNo: r.result_no,
+          winners,
+        },
+      });
+      const seq = i + 1;
+      if (seq % 5 === 0) {
+        const rows = computeStandings(cumulative).map((s) => ({
+          name: s.team.name,
+          points: s.points,
+        }));
+        out.push({ kind: "standings", key: `s-${seq}`, afterN: seq, rows });
+      }
+    });
+    return out;
+  }, [levels, eventName]);
+
+  const [idx, setIdx] = useState(0);
+  const [tmplShift, setTmplShift] = useState(0);
+  const [busy, setBusy] = useState<null | "download" | "share">(null);
+  const stageRef = useRef<Konva.Stage | null>(null);
+
+  const total = items.length;
+  const clampedIdx = Math.min(idx, Math.max(total - 1, 0));
+  const item = items[clampedIdx];
+
+  const go = (d: number) => {
+    setBusy(null);
+    setIdx((i) => Math.min(Math.max(i + d, 0), total - 1));
+  };
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "ArrowRight") go(1);
+      if (e.key === "ArrowLeft") go(-1);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [total]);
+
+  if (total === 0) {
+    return (
+      <div className="rounded-xl border border-stone-200 bg-white p-10 text-center">
+        <p className="text-sm text-stone-500">
+          No published results yet. Publish results to share their posters.
+        </p>
+      </div>
+    );
+  }
+
+  async function onDownload() {
+    if (!item) return;
+    setBusy("download");
+    try {
+      if (item.kind === "result") {
+        await exportPosterPng(stageRef.current, `${item.code}_poster.png`);
+      } else {
+        await exportStandingsPng(stageRef.current, `standings_after_${item.afterN}.png`);
+      }
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function onShare() {
+    if (!item) return;
+    setBusy("share");
+    try {
+      if (item.kind === "result") {
+        await sharePoster(stageRef.current, item.data);
+      } else {
+        await shareStandings(stageRef.current, item.afterN);
+      }
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  const resultsSoFar = items
+    .slice(0, clampedIdx + 1)
+    .filter((it) => it.kind === "result").length;
+  const resultsTotal = items.filter((it) => it.kind === "result").length;
+
+  return (
+    <div className="mx-auto max-w-md">
+      {/* Status */}
+      <div className="flex items-center justify-between gap-3 mb-3">
+        <div className="min-w-0">
+          {item?.kind === "result" ? (
+            <>
+              <p className="text-[11px] font-mono uppercase tracking-widest text-stone-400">
+                {item.code} · Result {resultsSoFar} of {resultsTotal}
+              </p>
+              <p className="text-sm font-semibold truncate">{item.programName}</p>
+            </>
+          ) : (
+            <>
+              <p className="text-[11px] font-mono uppercase tracking-widest text-stone-400">
+                Snapshot
+              </p>
+              <p className="text-sm font-semibold">
+                Team standings · after {item?.kind === "standings" ? item.afterN : 0}
+              </p>
+            </>
+          )}
+        </div>
+        <span className="shrink-0 text-xs tabular-nums text-stone-400">
+          {clampedIdx + 1} / {total}
+        </span>
+      </div>
+
+      {/* Poster */}
+      <div className="overflow-hidden rounded-xl ring-1 ring-stone-200 shadow-sm bg-white">
+        {item?.kind === "result" ? (
+          <PosterCanvas
+            key={item.key}
+            data={item.data}
+            templateIndex={(clampedIdx + tmplShift) % 3}
+            stageRef={stageRef}
+          />
+        ) : item ? (
+          <StandingsPosterCanvas
+            key={item.key}
+            data={{ afterN: item.afterN, rows: item.rows }}
+            stageRef={stageRef}
+          />
+        ) : null}
+      </div>
+
+      {/* Controls */}
+      <div className="mt-4 flex items-center gap-2">
+        <button
+          type="button"
+          onClick={() => go(-1)}
+          disabled={clampedIdx === 0}
+          className="inline-flex items-center gap-1 rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm font-medium text-stone-700 disabled:opacity-40 hover:bg-stone-50"
+        >
+          <ChevronLeft className="size-4" /> Prev
+        </button>
+        <button
+          type="button"
+          onClick={() => go(1)}
+          disabled={clampedIdx >= total - 1}
+          className="inline-flex items-center gap-1 rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm font-medium text-stone-700 disabled:opacity-40 hover:bg-stone-50"
+        >
+          Next <ChevronRight className="size-4" />
+        </button>
+
+        <div className="ml-auto flex items-center gap-2">
+          {item?.kind === "result" && (
+            <button
+              type="button"
+              onClick={() => setTmplShift((s) => s + 1)}
+              aria-label="Shuffle template"
+              title="Shuffle template"
+              className="inline-flex size-9 items-center justify-center rounded-lg border border-stone-300 bg-white text-stone-600 hover:bg-stone-50"
+            >
+              <Shuffle className="size-4" />
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={onDownload}
+            disabled={busy !== null}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm font-medium text-stone-700 disabled:opacity-50 hover:bg-stone-50"
+          >
+            <Download className="size-4" />
+            {busy === "download" ? "…" : "Download"}
+          </button>
+          <button
+            type="button"
+            onClick={onShare}
+            disabled={busy !== null}
+            className="inline-flex items-center gap-1.5 rounded-lg bg-stone-900 px-3 py-2 text-sm font-semibold text-white disabled:opacity-50 hover:bg-stone-800"
+          >
+            <Share2 className="size-4" />
+            {busy === "share" ? "…" : "Share"}
+          </button>
+        </div>
+      </div>
+      <p className="mt-2 text-[11px] text-stone-400">
+        In result-number order · team standings every 5 results. Use ← → keys
+        to move.
+      </p>
+    </div>
+  );
+}
 
 function NavItem({
   active = false,

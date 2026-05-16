@@ -103,29 +103,101 @@ const TEMPLATES: TemplateLayout[] = [
 ];
 
 // ─────────────────────────────────────────────────────────────────────
-// useImage — load HTMLImageElement for Konva
+// Image loading — tracks loaded/error + a "slow network" flag, and a
+// module-level cache so a template is decoded only once per session.
 // ─────────────────────────────────────────────────────────────────────
 
-function useImage(src: string): HTMLImageElement | null {
-  const [img, setImg] = useState<HTMLImageElement | null>(null);
+const SLOW_MS = 2400;
+const imgCache = new Map<string, HTMLImageElement>();
+
+/** Warm the browser/decoder cache for every poster template so the
+ *  first result a user opens renders instantly. Safe to call repeatedly;
+ *  best invoked from an idle callback after the chat is interactive. */
+export function prefetchPosterAssets(): void {
+  if (typeof window === "undefined") return;
+  const srcs = [
+    ...TEMPLATES.map((t) => t.src),
+    "/poster/templates/standings.png",
+  ];
+  for (const src of srcs) {
+    if (imgCache.has(src)) continue;
+    const el = new window.Image();
+    el.decoding = "async";
+    el.src = src;
+    el.addEventListener("load", () => imgCache.set(src, el), { once: true });
+  }
+}
+
+export function usePosterImage(src: string): {
+  img: HTMLImageElement | null;
+  done: boolean;
+  slow: boolean;
+} {
+  const cached = imgCache.get(src) ?? null;
+  const [img, setImg] = useState<HTMLImageElement | null>(cached);
+  const [done, setDone] = useState<boolean>(!!cached);
+  const [slow, setSlow] = useState(false);
   useEffect(() => {
     if (typeof window === "undefined") return;
+    const hit = imgCache.get(src);
+    if (hit) {
+      setImg(hit);
+      setDone(true);
+      setSlow(false);
+      return;
+    }
+    let active = true;
+    setImg(null);
+    setDone(false);
+    setSlow(false);
     const el = new window.Image();
     el.crossOrigin = "anonymous";
     el.decoding = "async";
-    el.src = src;
-    let active = true;
-    const onLoad = () => {
-      if (active) setImg(el);
+    const ok = () => {
+      if (!active) return;
+      imgCache.set(src, el);
+      setImg(el);
+      setDone(true);
     };
-    if (el.complete && el.naturalWidth > 0) onLoad();
-    else el.addEventListener("load", onLoad);
+    const fail = () => {
+      // Fail-open: let the poster render with its solid fallback rather
+      // than hang on the skeleton forever.
+      if (active) setDone(true);
+    };
+    el.addEventListener("load", ok);
+    el.addEventListener("error", fail);
+    el.src = src;
+    if (el.complete && el.naturalWidth > 0) ok();
+    const slowTimer = window.setTimeout(() => {
+      if (active) setSlow(true);
+    }, SLOW_MS);
     return () => {
       active = false;
-      el.removeEventListener("load", onLoad);
+      el.removeEventListener("load", ok);
+      el.removeEventListener("error", fail);
+      window.clearTimeout(slowTimer);
     };
   }, [src]);
-  return img;
+  return { img, done, slow };
+}
+
+/** Shared loading state for both posters — warm shimmer, spinner, and
+ *  an honest slow-connection note once it drags. */
+export function PosterSkeleton({ slow }: { slow: boolean }) {
+  return (
+    <div className="relative grid h-full w-full place-items-center overflow-hidden bg-gradient-to-br from-[#FBEFD4] to-[#F2E3C7]">
+      <div className="absolute inset-0 animate-pulse bg-[radial-gradient(60%_50%_at_50%_40%,rgba(255,206,5,0.18),transparent_70%)]" />
+      <div className="relative flex flex-col items-center gap-3 px-6 text-center">
+        <span
+          aria-hidden
+          className="size-7 rounded-full border-[3px] border-red/25 border-t-red animate-spin"
+        />
+        <span className="text-[11px] font-semibold tracking-wide text-ink-500">
+          {slow ? "Slow connection — still loading the poster…" : "Loading poster…"}
+        </span>
+      </div>
+    </div>
+  );
 }
 
 /** Numeric result numbers get a 2-digit minimum (1 → "01", 9 → "09");
@@ -181,12 +253,12 @@ export const PosterCanvas = ({
   }, [displayWidth, mounted]);
 
   const layout = TEMPLATES[templateIndex % TEMPLATES.length];
-  const template = useImage(layout.src);
+  const { img: template, done: imgDone, slow } = usePosterImage(layout.src);
 
   const w = displayWidth ?? autoW;
   const scale = w / STAGE_W;
   const displayHeight = STAGE_H * scale;
-  const ready = mounted && w > 0;
+  const ready = mounted && w > 0 && imgDone;
 
   return (
     <div
@@ -201,9 +273,7 @@ export const PosterCanvas = ({
         touchAction: "pan-y",
       }}
     >
-      {!ready && (
-        <div className="w-full h-full bg-night-800/10 animate-pulse" />
-      )}
+      {!ready && <PosterSkeleton slow={slow} />}
       {ready && (
       <Stage
         ref={stageRef as React.RefObject<Konva.Stage>}
@@ -366,7 +436,12 @@ function WinnersList({
   layout: TemplateLayout;
 }) {
   const startY = winnersStartY(layout);
-  const sorted = [...winners].sort((a, b) => a.position - b.position).slice(0, 4);
+  // position < 1 ⇒ grade-only entries (counted for team points, never
+  // shown on the poster). Only ranked places 1–4 render here.
+  const sorted = [...winners]
+    .filter((w) => w.position >= 1)
+    .sort((a, b) => a.position - b.position)
+    .slice(0, 4);
 
   return (
     <Group x={layout.contentX} y={startY}>

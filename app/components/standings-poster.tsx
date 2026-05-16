@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type Konva from "konva";
 import { Stage, Layer, Image as KImage, Text, Rect, Group } from "react-konva";
+import { PosterSkeleton, usePosterImage } from "./poster-canvas";
 
 // ─────────────────────────────────────────────────────────────────────
 // Standings poster — overlays the "after N" number and the team/points
@@ -59,27 +60,6 @@ const RANK_STYLE: Record<number, { color: string; size: number }> = {
   3: { color: "#1A1718", size: 40 },
 };
 
-function useImage(src: string): HTMLImageElement | null {
-  const [img, setImg] = useState<HTMLImageElement | null>(null);
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const el = new window.Image();
-    el.crossOrigin = "anonymous";
-    el.decoding = "async";
-    el.src = src;
-    let active = true;
-    const onLoad = () => {
-      if (active) setImg(el);
-    };
-    if (el.complete && el.naturalWidth > 0) onLoad();
-    else el.addEventListener("load", onLoad);
-    return () => {
-      active = false;
-      el.removeEventListener("load", onLoad);
-    };
-  }, [src]);
-  return img;
-}
 
 export const StandingsPosterCanvas = ({
   data,
@@ -118,12 +98,12 @@ export const StandingsPosterCanvas = ({
     return () => ro.disconnect();
   }, [displayWidth, mounted]);
 
-  const template = useImage(TEMPLATE_SRC);
+  const { img: template, done: imgDone, slow } = usePosterImage(TEMPLATE_SRC);
 
   const w = displayWidth ?? autoW;
   const scale = w / STAGE_W;
   const displayHeight = STAGE_H * scale;
-  const ready = mounted && w > 0;
+  const ready = mounted && w > 0 && imgDone;
 
   const rows = data.rows.slice(0, LAYOUT.maxRows);
 
@@ -138,7 +118,7 @@ export const StandingsPosterCanvas = ({
         touchAction: "pan-y",
       }}
     >
-      {!ready && <div className="w-full h-full bg-night-800/10 animate-pulse" />}
+      {!ready && <PosterSkeleton slow={slow} />}
       {ready && (
         <Stage
           ref={stageRef as React.RefObject<Konva.Stage>}

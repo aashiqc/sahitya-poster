@@ -1,6 +1,7 @@
 import { Link, data } from "react-router";
 import type { Route } from "./+types/result.$programCode";
 import { createSupabaseServerClient, loadEvent } from "~/lib/supabase.server";
+import { SITE_URL } from "~/lib/constants";
 import {
   CornerLeaf,
   Diamond,
@@ -9,7 +10,7 @@ import {
   Selvage,
 } from "~/components/ornaments";
 
-export function meta({ data }: Route.MetaArgs) {
+export function meta({ data, params }: Route.MetaArgs) {
   if (!data?.program) return [{ title: "Result not found" }];
   const eventName = (data.event as { name_ml?: string; name?: string } | null)?.name_ml ??
     (data.event as { name?: string } | null)?.name ?? "Sahityotsav";
@@ -20,12 +21,23 @@ export function meta({ data }: Route.MetaArgs) {
     (w) => w.position === 1,
   )?.name_ml;
   const description = top ? `1st: ${top}` : `${title} · ${eventName}`;
+  const url = `${SITE_URL}/result/${params.programCode ?? ""}`;
+  const image = `${SITE_URL}/sahityotsav-logo.png`;
   return [
     { title: `${title} · ${eventName}` },
     { name: "description", content: description },
+    { tagName: "link", rel: "canonical", href: url },
     { property: "og:title", content: title },
     { property: "og:description", content: description },
     { property: "og:type", content: "article" },
+    { property: "og:url", content: url },
+    { property: "og:site_name", content: "SSF Pantharangadi Sahityotsav" },
+    { property: "og:locale", content: "en_IN" },
+    { property: "og:image", content: image },
+    { name: "twitter:card", content: "summary_large_image" },
+    { name: "twitter:title", content: title },
+    { name: "twitter:description", content: description },
+    { name: "twitter:image", content: image },
   ];
 }
 
@@ -57,6 +69,9 @@ export async function loader({ request, params }: Route.LoaderArgs) {
     .from("result_winners")
     .select("position, name_ml, name_en, unit_ml, marks")
     .eq("result_id", result.id)
+    // position < 1 ⇒ extra team-points marks; never shown on the
+    // individual result page (nor the poster).
+    .gte("position", 1)
     .order("position");
 
   return data(
