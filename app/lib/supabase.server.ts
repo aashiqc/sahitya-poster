@@ -31,7 +31,7 @@ export function createSupabaseServerClient(request: Request) {
 export async function loadEvent(supabase: SupabaseClient) {
   const { data, error } = await supabase
     .from("events")
-    .select("id, slug, name, name_ml, status, starts_on, ends_on, organization_id, standings_template, organizations(name, slug)")
+    .select("id, slug, name, name_ml, status, starts_on, ends_on, organization_id, standings_template, final_poster_url, organizations(name, slug)")
     .eq("slug", EVENT_SLUG)
     .single();
   if (error || !data) {

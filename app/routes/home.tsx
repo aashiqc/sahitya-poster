@@ -263,6 +263,8 @@ export default function Home({ loaderData }: Route.ComponentProps) {
   const { event, levels, standings, standingsHistory } = loaderData;
   const org = (event.organizations as { name?: string } | null)?.name;
   const eventName = event.name ?? event.name_ml;
+  const finalPosterUrl =
+    (event as { final_poster_url?: string | null }).final_poster_url ?? null;
 
   const sector = (org ? org.replace(/^SSF\s+/i, "") : "") || "Sahityotsav";
 
@@ -347,6 +349,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
           eventName={eventName ?? "Sahityotsav"}
           sector={sector}
           standings={standings}
+          finalPosterUrl={finalPosterUrl}
           onOpenStandings={() => setStandingsOpen(true)}
         />
       </main>
@@ -429,19 +432,32 @@ function ChatFlow({
   eventName,
   sector,
   standings,
+  finalPosterUrl,
   onOpenStandings,
 }: {
   levels: Level[];
   eventName: string;
   sector: string;
   standings: Standings | null;
+  finalPosterUrl: string | null;
   onOpenStandings: () => void;
 }) {
-  // Initial bubbles — rendered SSR, hydrated on client. The standings
-  // snapshot leads with the current top three so the reader sees who's
-  // ahead before drilling into any single program.
+  // Initial bubbles — rendered SSR, hydrated on client. When a final
+  // poster is published it leads the conversation (the event's finale);
+  // then the greeting, then the live standings top three.
   const hasStandings = !!standings && standings.rows.length > 0;
   const initial: Bubble[] = [
+    ...(finalPosterUrl
+      ? [
+          {
+            id: "final-poster",
+            side: "bot" as const,
+            wide: true,
+            tight: true,
+            node: <FinalPosterBubble url={finalPosterUrl} />,
+          },
+        ]
+      : []),
     {
       id: "greet",
       side: "bot",
@@ -668,6 +684,14 @@ function ChatFlow({
     });
   }, [levels]);
 
+  // One-time party-popper when a final poster leads the chat. Gated on
+  // a mount effect so it's client-only — SSR renders nothing, so there's
+  // no hydration mismatch from the randomised pieces.
+  const [celebrate, setCelebrate] = useState(false);
+  useEffect(() => {
+    if (finalPosterUrl) setCelebrate(true);
+  }, [finalPosterUrl]);
+
   // Render
   return (
     <div
@@ -675,6 +699,7 @@ function ChatFlow({
       aria-relevant="additions"
       className="space-y-3.5 pb-2"
     >
+      {celebrate && <Confetti onDone={() => setCelebrate(false)} />}
       {bubbles.map((b) => (
         <BubbleRow key={b.id} side={b.side} wide={b.wide} tight={b.tight}>
           {b.node}
@@ -875,6 +900,243 @@ function StandingsBubble({
         />
       </button>
     </div>
+  );
+}
+
+// The published final standings poster — a finished image (real data
+// baked in, no template) that leads the chat. Tap to view full size;
+// download / share the image as-is.
+function FinalPosterBubble({ url }: { url: string }) {
+  const [zoom, setZoom] = useState(false);
+  const [busy, setBusy] = useState<null | "download" | "share">(null);
+
+  async function fetchBlob(): Promise<Blob | null> {
+    try {
+      const r = await fetch(url, { mode: "cors" });
+      if (!r.ok) return null;
+      return await r.blob();
+    } catch {
+      return null;
+    }
+  }
+
+  async function onDownload() {
+    setBusy("download");
+    try {
+      const blob = await fetchBlob();
+      if (!blob) {
+        window.open(url, "_blank", "noopener");
+        return;
+      }
+      const href = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = href;
+      a.download = "final-standings.png";
+      a.click();
+      URL.revokeObjectURL(href);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function onShare() {
+    setBusy("share");
+    try {
+      const blob = await fetchBlob();
+      const nav = navigator as Navigator & {
+        canShare?: (d: ShareData) => boolean;
+      };
+      const title = "Final standings";
+      if (blob && nav.share) {
+        const file = new File([blob], "final-standings.png", {
+          type: blob.type || "image/png",
+        });
+        if (nav.canShare?.({ files: [file] })) {
+          try {
+            await nav.share({ title, files: [file] });
+            return;
+          } catch {
+            /* dismissed — fall through */
+          }
+        }
+      }
+      if (nav.share) {
+        try {
+          await nav.share({ title, url });
+          return;
+        } catch {
+          /* dismissed */
+        }
+      }
+      window.open(url, "_blank", "noopener");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => setZoom(true)}
+        aria-label="View final standings poster full size"
+        style={{ touchAction: "manipulation" }}
+        className="block w-full overflow-hidden rounded-2xl focus:outline-none focus-visible:ring-2 focus-visible:ring-yellow"
+      >
+        <img
+          src={url}
+          alt="Final team standings"
+          className="block w-full h-auto select-none"
+          draggable={false}
+        />
+      </button>
+
+      <div className="mt-2 px-1 flex items-center gap-1.5">
+        <IconButton
+          label="Download final poster"
+          onClick={onDownload}
+          disabled={busy !== null}
+          tone="brand"
+        >
+          {busy === "download" ? <Spinner /> : <DownloadIcon />}
+        </IconButton>
+        <IconButton
+          label="Share final poster"
+          onClick={onShare}
+          disabled={busy !== null}
+          tone="brand"
+        >
+          {busy === "share" ? <Spinner /> : <ShareIcon />}
+        </IconButton>
+        <span className="ml-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-ink-400">
+          Final standings
+        </span>
+      </div>
+
+      {zoom && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Final standings poster"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4"
+          onClick={() => setZoom(false)}
+        >
+          <img
+            src={url}
+            alt="Final team standings"
+            className="max-h-[92vh] max-w-full w-auto rounded-xl shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          />
+          <button
+            type="button"
+            onClick={() => setZoom(false)}
+            aria-label="Close"
+            className="absolute top-4 right-4 size-10 grid place-items-center rounded-full bg-white/15 text-white hover:bg-white/25 transition-colors"
+          >
+            <span aria-hidden className="text-xl leading-none">
+              ✕
+            </span>
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Dependency-free party-popper. Renders a fixed, non-interactive layer
+// of pieces animated with the Web Animations API, then unmounts itself.
+// Honours prefers-reduced-motion (skips straight to done).
+function Confetti({ onDone }: { onDone: () => void }) {
+  const hostRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const host = hostRef.current;
+    if (!host) return;
+    const reduce = window.matchMedia?.(
+      "(prefers-reduced-motion: reduce)",
+    ).matches;
+    if (reduce) {
+      onDone();
+      return;
+    }
+
+    const COLORS = [
+      "#BF0603",
+      "#FFCE05",
+      "#E58C2A",
+      "#2BB3A3",
+      "#E84E8A",
+      "#FFFFFF",
+    ];
+    const W = window.innerWidth;
+    const H = window.innerHeight;
+    const COUNT = Math.min(90, Math.max(46, Math.round(W / 9)));
+    const anims: Animation[] = [];
+
+    for (let i = 0; i < COUNT; i++) {
+      const piece = document.createElement("span");
+      const size = 6 + Math.random() * 8;
+      const round = Math.random() < 0.35;
+      piece.style.cssText = `position:absolute;top:-24px;left:${
+        Math.random() * 100
+      }vw;width:${size}px;height:${size * (round ? 1 : 1.6)}px;background:${
+        COLORS[(Math.random() * COLORS.length) | 0]
+      };border-radius:${round ? "50%" : "1px"};will-change:transform,opacity;`;
+      host.appendChild(piece);
+
+      const driftX = (Math.random() - 0.5) * 280;
+      const fallY = H + 80;
+      const spin = (Math.random() < 0.5 ? -1 : 1) * (360 + Math.random() * 900);
+      const duration = 2400 + Math.random() * 1400;
+      const delay = Math.random() * 450;
+      const a = piece.animate(
+        [
+          { transform: "translate3d(0,0,0) rotate(0deg)", opacity: 1 },
+          {
+            transform: `translate3d(${driftX * 0.4}px, ${
+              fallY * 0.55
+            }px, 0) rotate(${spin * 0.6}deg)`,
+            opacity: 1,
+            offset: 0.7,
+          },
+          {
+            transform: `translate3d(${driftX}px, ${fallY}px, 0) rotate(${spin}deg)`,
+            opacity: 0,
+          },
+        ],
+        {
+          duration,
+          delay,
+          easing: "cubic-bezier(.18,.7,.42,1)",
+          fill: "forwards",
+        },
+      );
+      anims.push(a);
+    }
+
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      onDone();
+    };
+    const last = anims[anims.length - 1];
+    if (last) last.addEventListener("finish", finish);
+    const t = window.setTimeout(finish, 4200);
+
+    return () => {
+      window.clearTimeout(t);
+      anims.forEach((a) => a.cancel());
+      host.replaceChildren();
+    };
+  }, [onDone]);
+
+  return (
+    <div
+      ref={hostRef}
+      aria-hidden
+      className="pointer-events-none fixed inset-0 z-[60] overflow-hidden"
+    />
   );
 }
 

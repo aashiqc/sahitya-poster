@@ -385,6 +385,76 @@ export async function action({ request }: Route.ActionArgs) {
     );
   }
 
+  if (intent === "upload_final_poster") {
+    const file = fd.get("final_poster");
+    if (!(file instanceof File) || file.size === 0) {
+      return data(
+        { error: "Choose an image file to upload." },
+        { headers: Object.fromEntries(headers) },
+      );
+    }
+    if (!file.type.startsWith("image/")) {
+      return data(
+        { error: "That's not an image. Upload a PNG or JPG poster." },
+        { headers: Object.fromEntries(headers) },
+      );
+    }
+    if (file.size > 4 * 1024 * 1024) {
+      return data(
+        {
+          error: `Image is ${(file.size / 1024 / 1024).toFixed(1)} MB — keep it under 4 MB (compress or export at a lower scale).`,
+        },
+        { headers: Object.fromEntries(headers) },
+      );
+    }
+    const ext =
+      file.type === "image/png"
+        ? "png"
+        : file.type === "image/jpeg"
+        ? "jpg"
+        : file.type === "image/webp"
+        ? "webp"
+        : (file.name.split(".").pop() || "png").toLowerCase();
+    const path = `final/${event.id}.${ext}`;
+    const up = await supabase.storage
+      .from("posters")
+      .upload(path, file, { upsert: true, contentType: file.type });
+    if (up.error) {
+      return data(
+        { error: `Upload failed: ${up.error.message}` },
+        { headers: Object.fromEntries(headers) },
+      );
+    }
+    const {
+      data: { publicUrl },
+    } = supabase.storage.from("posters").getPublicUrl(path);
+    // Cache-bust: the path is stable (upsert), so version the URL.
+    const versioned = `${publicUrl}?v=${Date.now()}`;
+    const { error: updErr } = await supabase
+      .from("events")
+      .update({ final_poster_url: versioned })
+      .eq("id", event.id);
+    if (updErr) {
+      return data({ error: updErr.message }, { headers: Object.fromEntries(headers) });
+    }
+    return data(
+      { ok: true, message: "Final poster published — it now leads the public chat." },
+      { headers: Object.fromEntries(headers) },
+    );
+  }
+
+  if (intent === "clear_final_poster") {
+    const { error } = await supabase
+      .from("events")
+      .update({ final_poster_url: null })
+      .eq("id", event.id);
+    if (error) return data({ error: error.message }, { headers: Object.fromEntries(headers) });
+    return data(
+      { ok: true, message: "Final poster removed." },
+      { headers: Object.fromEntries(headers) },
+    );
+  }
+
   // Result-scoped intents need program_code
   const programCode = String(fd.get("program_code") ?? "");
   if (!programCode) {
@@ -715,6 +785,10 @@ export default function Admin({ loaderData }: Route.ComponentProps) {
             <StandingsView
               snapshots={standings}
               defaultTemplate={standingsTemplate}
+              finalPosterUrl={
+                (event as { final_poster_url?: string | null })
+                  .final_poster_url ?? null
+              }
             />
           )}
           {view === "share" && (
@@ -941,14 +1015,17 @@ function StandingsShareCard({
 function StandingsView({
   snapshots,
   defaultTemplate,
+  finalPosterUrl,
 }: {
   snapshots: StandingsSnapshot[];
   defaultTemplate: number;
+  finalPosterUrl: string | null;
 }) {
   const actionData = useActionData<typeof action>();
   const navigation = useNavigation();
   const busy = navigation.state !== "idle";
   const [csv, setCsv] = useState("");
+  const [finalName, setFinalName] = useState("");
 
   const onPickFile = (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -960,6 +1037,82 @@ function StandingsView({
 
   return (
     <div className="space-y-6 max-w-3xl">
+      {/* Final standings poster — a finished image with real data,
+          uploaded as-is (no template). It leads the public chat with
+          a celebration the moment it's published. */}
+      <section className="rounded-xl border border-stone-200 bg-white p-5">
+        <h2 className="text-lg font-semibold tracking-tight">
+          Final standings poster
+        </h2>
+        <p className="text-xs text-stone-500 mt-1">
+          Upload the finished poster image (PNG/JPG, real data baked in —
+          no template). It appears first in the public chat with a
+          party-popper. Re-upload anytime to replace it. Keep under 4 MB.
+        </p>
+
+        {finalPosterUrl && (
+          <div className="mt-4 flex flex-wrap items-start gap-4">
+            <img
+              src={finalPosterUrl}
+              alt="Current final poster"
+              className="w-40 rounded-lg border border-stone-200 shadow-sm"
+            />
+            <div className="space-y-2">
+              <p className="text-xs font-medium text-emerald-700">
+                ● Live on the public site
+              </p>
+              <Form method="post">
+                <input
+                  type="hidden"
+                  name="intent"
+                  value="clear_final_poster"
+                />
+                <button
+                  type="submit"
+                  disabled={busy}
+                  className="inline-flex items-center gap-2 rounded-lg border border-red-300 px-3 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-50 disabled:opacity-50"
+                >
+                  Remove final poster
+                </button>
+              </Form>
+            </div>
+          </div>
+        )}
+
+        <Form
+          method="post"
+          encType="multipart/form-data"
+          className="mt-4 space-y-3"
+        >
+          <input type="hidden" name="intent" value="upload_final_poster" />
+          <div className="flex flex-wrap items-center gap-3">
+            <label className="inline-flex items-center gap-2 rounded-md border border-stone-300 bg-white px-3 py-1.5 text-xs font-medium text-stone-700 hover:bg-stone-50 cursor-pointer">
+              <input
+                type="file"
+                name="final_poster"
+                accept="image/png,image/jpeg,image/webp"
+                required
+                onChange={(e) =>
+                  setFinalName(e.target.files?.[0]?.name ?? "")
+                }
+                className="sr-only"
+              />
+              Choose poster image
+            </label>
+            <span className="text-[11px] text-stone-500 truncate max-w-[16rem]">
+              {finalName || "No file chosen"}
+            </span>
+          </div>
+          <button
+            type="submit"
+            disabled={busy}
+            className="inline-flex items-center gap-2 rounded-lg bg-stone-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50 hover:bg-stone-800"
+          >
+            {busy ? "Publishing…" : finalPosterUrl ? "Replace poster" : "Publish final poster"}
+          </button>
+        </Form>
+      </section>
+
       {/* Upload */}
       <section className="rounded-xl border border-stone-200 bg-white p-5">
         <h2 className="text-lg font-semibold tracking-tight">
