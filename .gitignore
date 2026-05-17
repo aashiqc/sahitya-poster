@@ -16,3 +16,4 @@ worker-configuration.d.ts
 # Vercel
 /.vercel/
 
+.vercel

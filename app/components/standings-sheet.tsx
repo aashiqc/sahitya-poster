@@ -14,9 +14,11 @@ export type StandingsSnapshot = {
 
 export function StandingsSheet({
   snapshot,
+  templateIndex = 0,
   onClose,
 }: {
   snapshot: StandingsSnapshot | null;
+  templateIndex?: number;
   onClose: () => void;
 }) {
   const hasData = !!snapshot && snapshot.rows.length > 0;
@@ -106,6 +108,7 @@ export function StandingsSheet({
               <div className="overflow-hidden rounded-2xl ring-1 ring-black/10 shadow-[0_12px_30px_-16px_rgba(11,9,10,0.4)]">
                 <StandingsPosterCanvas
                   data={{ afterN, rows: snapshot!.rows }}
+                  templateIndex={templateIndex}
                   stageRef={stageRef}
                 />
               </div>

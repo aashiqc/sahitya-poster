@@ -118,6 +118,8 @@ export function prefetchPosterAssets(): void {
   const srcs = [
     ...TEMPLATES.map((t) => t.src),
     "/poster/templates/standings.png",
+    "/poster/templates/standings-light.png",
+    "/poster/templates/standings-dark.png",
   ];
   for (const src of srcs) {
     if (imgCache.has(src)) continue;

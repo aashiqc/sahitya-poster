@@ -44,6 +44,7 @@ import {
   type PosterData,
 } from "~/components/poster-canvas";
 import {
+  STANDINGS_TEMPLATE_NAMES,
   StandingsPosterCanvas,
   exportStandingsPng,
   shareStandings,
@@ -234,6 +235,8 @@ export async function loader({ request }: Route.LoaderArgs) {
       },
       publishedWinners,
       standings,
+      standingsTemplate:
+        (event as { standings_template?: number }).standings_template ?? 0,
     },
     { headers: Object.fromEntries(headers) },
   );
@@ -258,6 +261,26 @@ export async function action({ request }: Route.ActionArgs) {
     const { error } = await supabase.from("events").update({ status: next }).eq("id", event.id);
     if (error) return data({ error: error.message }, { headers: Object.fromEntries(headers) });
     return data({ ok: true }, { headers: Object.fromEntries(headers) });
+  }
+
+  if (intent === "set_standings_template") {
+    const t = parseInt(String(fd.get("standings_template") ?? ""), 10);
+    if (
+      !Number.isFinite(t) ||
+      t < 0 ||
+      t >= STANDINGS_TEMPLATE_NAMES.length
+    ) {
+      return data({ error: "Invalid template." }, { headers: Object.fromEntries(headers) });
+    }
+    const { error } = await supabase
+      .from("events")
+      .update({ standings_template: t })
+      .eq("id", event.id);
+    if (error) return data({ error: error.message }, { headers: Object.fromEntries(headers) });
+    return data(
+      { ok: true, message: `Template set: ${STANDINGS_TEMPLATE_NAMES[t]}` },
+      { headers: Object.fromEntries(headers) },
+    );
   }
 
   if (intent === "delete_standings") {
@@ -496,8 +519,16 @@ export function shouldRevalidate({ formMethod, currentUrl, nextUrl, defaultShoul
 // Component
 // ============================================================================
 export default function Admin({ loaderData }: Route.ComponentProps) {
-  const { user, profile, event, levels, stats, publishedWinners, standings } =
-    loaderData;
+  const {
+    user,
+    profile,
+    event,
+    levels,
+    stats,
+    publishedWinners,
+    standings,
+    standingsTemplate,
+  } = loaderData;
   const orgName = (profile.organizations as { name?: string } | null)?.name ?? "";
   const eventName = event.name_ml ?? event.name;
   const isPublished = event.status === "published";
@@ -662,13 +693,15 @@ export default function Admin({ loaderData }: Route.ComponentProps) {
 
         <main className="flex-1 px-4 lg:px-8 py-6 space-y-6">
           {view === "standings" && (
-            <StandingsView snapshots={standings} />
+            <StandingsView
+              snapshots={standings}
+              templateIndex={standingsTemplate}
+            />
           )}
           {view === "share" && (
             <SharePostersView
               levels={levels as LevelRow[]}
               eventName={event.name ?? event.name_ml ?? "Sahityotsav"}
-              snapshots={standings}
             />
           )}
           {view === "dashboard" && (
@@ -814,7 +847,84 @@ type StandingsSnapshot = {
   rows: { rank: number; team_name: string; points: number }[];
 };
 
-function StandingsView({ snapshots }: { snapshots: StandingsSnapshot[] }) {
+// One snapshot's standings poster + Download / Share, using the
+// currently-selected template.
+function StandingsShareCard({
+  snapshot,
+  templateIndex,
+}: {
+  snapshot: StandingsSnapshot;
+  templateIndex: number;
+}) {
+  const stageRef = useRef<Konva.Stage | null>(null);
+  const [busy, setBusy] = useState<null | "download" | "share">(null);
+
+  async function onDownload() {
+    setBusy("download");
+    try {
+      await exportStandingsPng(
+        stageRef.current,
+        `standings_after_${snapshot.afterN}.png`,
+      );
+    } finally {
+      setBusy(null);
+    }
+  }
+  async function onShare() {
+    setBusy("share");
+    try {
+      await shareStandings(stageRef.current, snapshot.afterN);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  return (
+    <div className="border-t border-stone-200 p-4">
+      <div className="mx-auto max-w-xs overflow-hidden rounded-lg ring-1 ring-stone-200">
+        <StandingsPosterCanvas
+          data={{
+            afterN: snapshot.afterN,
+            rows: snapshot.rows.map((r) => ({
+              name: r.team_name,
+              points: r.points,
+            })),
+          }}
+          templateIndex={templateIndex}
+          stageRef={stageRef}
+        />
+      </div>
+      <div className="mt-3 flex items-center justify-center gap-2">
+        <button
+          type="button"
+          onClick={onDownload}
+          disabled={busy !== null}
+          className="inline-flex items-center gap-1.5 rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm font-medium text-stone-700 disabled:opacity-50 hover:bg-stone-50"
+        >
+          <Download className="size-4" />
+          {busy === "download" ? "…" : "Download"}
+        </button>
+        <button
+          type="button"
+          onClick={onShare}
+          disabled={busy !== null}
+          className="inline-flex items-center gap-1.5 rounded-lg bg-stone-900 px-3 py-2 text-sm font-semibold text-white disabled:opacity-50 hover:bg-stone-800"
+        >
+          <Share2 className="size-4" />
+          {busy === "share" ? "…" : "Share"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function StandingsView({
+  snapshots,
+  templateIndex,
+}: {
+  snapshots: StandingsSnapshot[];
+  templateIndex: number;
+}) {
   const actionData = useActionData<typeof action>();
   const navigation = useNavigation();
   const busy = navigation.state !== "idle";
@@ -907,6 +1017,40 @@ function StandingsView({ snapshots }: { snapshots: StandingsSnapshot[] }) {
         </Form>
       </section>
 
+      {/* Poster template */}
+      <section className="rounded-xl border border-stone-200 bg-white p-5">
+        <h2 className="text-lg font-semibold tracking-tight">
+          Standings poster template
+        </h2>
+        <p className="text-xs text-stone-500 mt-1">
+          Applies to the public standings poster and the share posters below.
+        </p>
+        <Form method="post" className="mt-3 flex flex-wrap items-center gap-2">
+          <input
+            type="hidden"
+            name="intent"
+            value="set_standings_template"
+          />
+          {STANDINGS_TEMPLATE_NAMES.map((nm, i) => (
+            <button
+              key={nm}
+              type="submit"
+              name="standings_template"
+              value={i}
+              disabled={busy}
+              className={`rounded-lg border px-3 py-1.5 text-sm font-medium disabled:opacity-50 ${
+                i === templateIndex
+                  ? "border-stone-900 bg-stone-900 text-white"
+                  : "border-stone-300 bg-white text-stone-700 hover:bg-stone-50"
+              }`}
+            >
+              {i === templateIndex ? "✓ " : ""}
+              {nm}
+            </button>
+          ))}
+        </Form>
+      </section>
+
       {/* Existing snapshots */}
       {snapshots.length === 0 ? (
         <section className="rounded-xl border border-dashed border-stone-300 bg-white p-8 text-center text-sm text-stone-500">
@@ -971,6 +1115,11 @@ function StandingsView({ snapshots }: { snapshots: StandingsSnapshot[] }) {
                   ))}
                 </tbody>
               </table>
+              <StandingsShareCard
+                key={`poster-${s.afterN}-${templateIndex}`}
+                snapshot={s}
+                templateIndex={templateIndex}
+              />
             </section>
           ))
       )}
@@ -1493,18 +1642,19 @@ function levelLabelFromCode(code: string, fallback: string): string {
     .join(" ");
 }
 
-type ShareItem =
-  | { kind: "result"; key: string; code: string; programName: string; data: PosterData }
-  | { kind: "standings"; key: string; afterN: number; rows: { name: string; points: number }[] };
+type ShareItem = {
+  key: string;
+  code: string;
+  programName: string;
+  data: PosterData;
+};
 
 function SharePostersView({
   levels,
   eventName,
-  snapshots,
 }: {
   levels: LevelRow[];
   eventName: string;
-  snapshots: StandingsSnapshot[];
 }) {
   const items = useMemo<ShareItem[]>(() => {
     const pubs: { level: LevelRow; program: ProgramRow }[] = [];
@@ -1523,10 +1673,8 @@ function SharePostersView({
         a.program.code.localeCompare(b.program.code),
     );
 
-    const byAfter = new Map(snapshots.map((s) => [s.afterN, s]));
-
     const out: ShareItem[] = [];
-    pubs.forEach(({ level, program }, i) => {
+    pubs.forEach(({ level, program }) => {
       const r = program.result!;
       const winners = [...r.winners]
         .filter((w) => w.position >= 1)
@@ -1536,45 +1684,26 @@ function SharePostersView({
           const unit = slug ? TEAM_BY_SLUG[slug]?.name ?? w.unit_ml : w.unit_ml;
           return { position: w.position, name: w.name_en ?? w.name_ml, unit };
         });
-      const programName = program.name_en ?? program.code;
       // Skip the poster for <2-winner results — still published, they
       // count via the uploaded standings, just no poster.
-      if (winners.length >= 2) {
-        out.push({
-          kind: "result",
-          key: `r-${r.id}`,
-          code: program.code,
+      if (winners.length < 2) return;
+      const programName = program.name_en ?? program.code;
+      out.push({
+        key: `r-${r.id}`,
+        code: program.code,
+        programName,
+        data: {
+          eventName,
+          levelName: levelLabelFromCode(level.code, level.name_ml),
           programName,
-          data: {
-            eventName,
-            levelName: levelLabelFromCode(level.code, level.name_ml),
-            programName,
-            programCode: program.code,
-            resultNo: r.result_no,
-            winners,
-          },
-        });
-      }
-      const seq = i + 1;
-      // Standings every 5 results — only if the admin uploaded that
-      // snapshot (taken straight from the CSV, not computed).
-      if (seq % 5 === 0) {
-        const snap = byAfter.get(seq);
-        if (snap) {
-          out.push({
-            kind: "standings",
-            key: `s-${seq}`,
-            afterN: seq,
-            rows: snap.rows.map((row) => ({
-              name: row.team_name,
-              points: row.points,
-            })),
-          });
-        }
-      }
+          programCode: program.code,
+          resultNo: r.result_no,
+          winners,
+        },
+      });
     });
     return out;
-  }, [levels, eventName, snapshots]);
+  }, [levels, eventName]);
 
   const [idx, setIdx] = useState(0);
   const [tmplShift, setTmplShift] = useState(0);
@@ -1604,7 +1733,9 @@ function SharePostersView({
     return (
       <div className="rounded-xl border border-stone-200 bg-white p-10 text-center">
         <p className="text-sm text-stone-500">
-          No published results yet. Publish results to share their posters.
+          No shareable result posters yet. Publish results (2+ winners) to
+          share their posters. Team-standings posters live in the Team
+          standings tab.
         </p>
       </div>
     );
@@ -1614,11 +1745,7 @@ function SharePostersView({
     if (!item) return;
     setBusy("download");
     try {
-      if (item.kind === "result") {
-        await exportPosterPng(stageRef.current, `${item.code}_poster.png`);
-      } else {
-        await exportStandingsPng(stageRef.current, `standings_after_${item.afterN}.png`);
-      }
+      await exportPosterPng(stageRef.current, `${item.code}_poster.png`);
     } finally {
       setBusy(null);
     }
@@ -1628,43 +1755,23 @@ function SharePostersView({
     if (!item) return;
     setBusy("share");
     try {
-      if (item.kind === "result") {
-        await sharePoster(stageRef.current, item.data);
-      } else {
-        await shareStandings(stageRef.current, item.afterN);
-      }
+      await sharePoster(stageRef.current, item.data);
     } finally {
       setBusy(null);
     }
   }
-
-  const resultsSoFar = items
-    .slice(0, clampedIdx + 1)
-    .filter((it) => it.kind === "result").length;
-  const resultsTotal = items.filter((it) => it.kind === "result").length;
 
   return (
     <div className="mx-auto max-w-md">
       {/* Status */}
       <div className="flex items-center justify-between gap-3 mb-3">
         <div className="min-w-0">
-          {item?.kind === "result" ? (
-            <>
-              <p className="text-[11px] font-mono uppercase tracking-widest text-stone-400">
-                {item.code} · Result {resultsSoFar} of {resultsTotal}
-              </p>
-              <p className="text-sm font-semibold truncate">{item.programName}</p>
-            </>
-          ) : (
-            <>
-              <p className="text-[11px] font-mono uppercase tracking-widest text-stone-400">
-                Snapshot
-              </p>
-              <p className="text-sm font-semibold">
-                Team standings · after {item?.kind === "standings" ? item.afterN : 0}
-              </p>
-            </>
-          )}
+          <p className="text-[11px] font-mono uppercase tracking-widest text-stone-400">
+            {item?.code} · Result {clampedIdx + 1} of {total}
+          </p>
+          <p className="text-sm font-semibold truncate">
+            {item?.programName}
+          </p>
         </div>
         <span className="shrink-0 text-xs tabular-nums text-stone-400">
           {clampedIdx + 1} / {total}
@@ -1673,20 +1780,14 @@ function SharePostersView({
 
       {/* Poster */}
       <div className="overflow-hidden rounded-xl ring-1 ring-stone-200 shadow-sm bg-white">
-        {item?.kind === "result" ? (
+        {item && (
           <PosterCanvas
             key={item.key}
             data={item.data}
             templateIndex={(clampedIdx + tmplShift) % 3}
             stageRef={stageRef}
           />
-        ) : item ? (
-          <StandingsPosterCanvas
-            key={item.key}
-            data={{ afterN: item.afterN, rows: item.rows }}
-            stageRef={stageRef}
-          />
-        ) : null}
+        )}
       </div>
 
       {/* Controls */}
@@ -1709,17 +1810,15 @@ function SharePostersView({
         </button>
 
         <div className="ml-auto flex items-center gap-2">
-          {item?.kind === "result" && (
-            <button
-              type="button"
-              onClick={() => setTmplShift((s) => s + 1)}
-              aria-label="Shuffle template"
-              title="Shuffle template"
-              className="inline-flex size-9 items-center justify-center rounded-lg border border-stone-300 bg-white text-stone-600 hover:bg-stone-50"
-            >
-              <Shuffle className="size-4" />
-            </button>
-          )}
+          <button
+            type="button"
+            onClick={() => setTmplShift((s) => s + 1)}
+            aria-label="Shuffle template"
+            title="Shuffle template"
+            className="inline-flex size-9 items-center justify-center rounded-lg border border-stone-300 bg-white text-stone-600 hover:bg-stone-50"
+          >
+            <Shuffle className="size-4" />
+          </button>
           <button
             type="button"
             onClick={onDownload}
@@ -1741,8 +1840,8 @@ function SharePostersView({
         </div>
       </div>
       <p className="mt-2 text-[11px] text-stone-400">
-        In result-number order · team standings every 5 results. Use ← → keys
-        to move.
+        Result posters only, in result-number order. Use ← → keys to move.
+        Team-standings posters are in the Team standings tab.
       </p>
     </div>
   );

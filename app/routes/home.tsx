@@ -164,6 +164,8 @@ export async function loader({ request }: Route.LoaderArgs) {
       totalPrograms: programs.length,
       allWinners,
       standings,
+      standingsTemplate:
+        (event as { standings_template?: number }).standings_template ?? 0,
     },
     {
       headers: {
@@ -236,7 +238,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
   if (!loaderData.published) {
     return <NotYetLive event={loaderData.event} />;
   }
-  const { event, levels, standings } = loaderData;
+  const { event, levels, standings, standingsTemplate } = loaderData;
   const org = (event.organizations as { name?: string } | null)?.name;
   const eventName = event.name ?? event.name_ml;
   const [standingsOpen, setStandingsOpen] = useState(false);
@@ -314,6 +316,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
       {standingsOpen && (
         <StandingsSheet
           snapshot={standings}
+          templateIndex={standingsTemplate}
           onClose={() => setStandingsOpen(false)}
         />
       )}
