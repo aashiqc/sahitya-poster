@@ -38,6 +38,7 @@ import type { Route } from "./+types/admin";
 import { loadEvent, requireAdmin } from "~/lib/supabase.server";
 import { TEAM_BY_SLUG, TEAMS } from "~/lib/teams";
 import {
+  POSTER_TEMPLATE_COUNT,
   PosterCanvas,
   exportPosterPng,
   sharePoster,
@@ -122,7 +123,7 @@ export async function loader({ request }: Route.LoaderArgs) {
       .eq("event_id", event.id),
     supabase
       .from("team_standings")
-      .select("after_n, rank, team_name, points")
+      .select("after_n, rank, team_name, points, template")
       .eq("event_id", event.id)
       .order("after_n", { ascending: true })
       .order("rank", { ascending: true }),
@@ -202,21 +203,37 @@ export async function loader({ request }: Route.LoaderArgs) {
   const totalPending = activePrograms.filter((p) => !resultByProgram.get(p.id)).length;
   const totalInactive = programs.length - activePrograms.length;
 
-  // Group uploaded standings rows into per-after_n snapshots.
-  type SRow = { after_n: number; rank: number; team_name: string; points: number };
+  // Group uploaded standings rows into per-after_n snapshots, each
+  // carrying its own poster template.
+  type SRow = {
+    after_n: number;
+    rank: number;
+    team_name: string;
+    points: number;
+    template: number | null;
+  };
   const standingsMap = new Map<
     number,
-    { rank: number; team_name: string; points: number }[]
+    { template: number; rows: { rank: number; team_name: string; points: number }[] }
   >();
   for (const r of (standingsRes.data ?? []) as SRow[]) {
-    const arr = standingsMap.get(r.after_n) ?? [];
-    arr.push({ rank: r.rank, team_name: r.team_name, points: Number(r.points) });
-    standingsMap.set(r.after_n, arr);
+    const g = standingsMap.get(r.after_n) ?? {
+      template: r.template ?? 0,
+      rows: [],
+    };
+    g.template = r.template ?? 0;
+    g.rows.push({
+      rank: r.rank,
+      team_name: r.team_name,
+      points: Number(r.points),
+    });
+    standingsMap.set(r.after_n, g);
   }
   const standings = [...standingsMap.entries()]
-    .map(([afterN, rows]) => ({
+    .map(([afterN, g]) => ({
       afterN,
-      rows: rows.sort((a, b) => a.rank - b.rank),
+      template: g.template,
+      rows: g.rows.sort((a, b) => a.rank - b.rank),
     }))
     .sort((a, b) => a.afterN - b.afterN);
 
@@ -263,25 +280,6 @@ export async function action({ request }: Route.ActionArgs) {
     return data({ ok: true }, { headers: Object.fromEntries(headers) });
   }
 
-  if (intent === "set_standings_template") {
-    const t = parseInt(String(fd.get("standings_template") ?? ""), 10);
-    if (
-      !Number.isFinite(t) ||
-      t < 0 ||
-      t >= STANDINGS_TEMPLATE_NAMES.length
-    ) {
-      return data({ error: "Invalid template." }, { headers: Object.fromEntries(headers) });
-    }
-    const { error } = await supabase
-      .from("events")
-      .update({ standings_template: t })
-      .eq("id", event.id);
-    if (error) return data({ error: error.message }, { headers: Object.fromEntries(headers) });
-    return data(
-      { ok: true, message: `Template set: ${STANDINGS_TEMPLATE_NAMES[t]}` },
-      { headers: Object.fromEntries(headers) },
-    );
-  }
 
   if (intent === "delete_standings") {
     const afterN = parseInt(String(fd.get("after_n") ?? ""), 10);
@@ -305,6 +303,11 @@ export async function action({ request }: Route.ActionArgs) {
         { headers: Object.fromEntries(headers) },
       );
     }
+    const tRaw = parseInt(String(fd.get("template") ?? "0"), 10);
+    const template =
+      Number.isFinite(tRaw) && tRaw >= 0 && tRaw < STANDINGS_TEMPLATE_NAMES.length
+        ? tRaw
+        : 0;
     const csv = String(fd.get("csv") ?? "");
     const parsed = parseStandingsCsv(csv);
     if (parsed.length === 0) {
@@ -329,11 +332,44 @@ export async function action({ request }: Route.ActionArgs) {
         rank: r.rank,
         team_name: r.team_name,
         points: r.points,
+        template,
       })),
     );
     if (insErr) return data({ error: insErr.message }, { headers: Object.fromEntries(headers) });
+    // Remember this as the default template for the next upload.
+    await supabase
+      .from("events")
+      .update({ standings_template: template })
+      .eq("id", event.id);
     return data(
-      { ok: true, message: `Saved ${parsed.length} teams · after ${afterN}` },
+      {
+        ok: true,
+        message: `Saved ${parsed.length} teams · after ${afterN} · ${STANDINGS_TEMPLATE_NAMES[template]}`,
+      },
+      { headers: Object.fromEntries(headers) },
+    );
+  }
+
+  if (intent === "set_snapshot_template") {
+    const afterN = parseInt(String(fd.get("after_n") ?? ""), 10);
+    const t = parseInt(String(fd.get("template") ?? ""), 10);
+    if (!Number.isFinite(afterN)) {
+      return data({ error: "Invalid snapshot." }, { headers: Object.fromEntries(headers) });
+    }
+    if (!Number.isFinite(t) || t < 0 || t >= STANDINGS_TEMPLATE_NAMES.length) {
+      return data({ error: "Invalid template." }, { headers: Object.fromEntries(headers) });
+    }
+    const { error } = await supabase
+      .from("team_standings")
+      .update({ template: t })
+      .eq("event_id", event.id)
+      .eq("after_n", afterN);
+    if (error) return data({ error: error.message }, { headers: Object.fromEntries(headers) });
+    return data(
+      {
+        ok: true,
+        message: `after ${afterN}: ${STANDINGS_TEMPLATE_NAMES[t]} template`,
+      },
       { headers: Object.fromEntries(headers) },
     );
   }
@@ -695,7 +731,7 @@ export default function Admin({ loaderData }: Route.ComponentProps) {
           {view === "standings" && (
             <StandingsView
               snapshots={standings}
-              templateIndex={standingsTemplate}
+              defaultTemplate={standingsTemplate}
             />
           )}
           {view === "share" && (
@@ -844,6 +880,7 @@ function DashboardView({
 // ─────────────────────────────────────────────────────────────────────
 type StandingsSnapshot = {
   afterN: number;
+  template: number;
   rows: { rank: number; team_name: string; points: number }[];
 };
 
@@ -920,10 +957,10 @@ function StandingsShareCard({
 
 function StandingsView({
   snapshots,
-  templateIndex,
+  defaultTemplate,
 }: {
   snapshots: StandingsSnapshot[];
-  templateIndex: number;
+  defaultTemplate: number;
 }) {
   const actionData = useActionData<typeof action>();
   const navigation = useNavigation();
@@ -971,6 +1008,24 @@ function StandingsView({
             />
             <span className="text-sm text-stone-600">results</span>
           </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-sm font-medium mr-1">Template</span>
+            {STANDINGS_TEMPLATE_NAMES.map((nm, i) => (
+              <label
+                key={nm}
+                className="inline-flex items-center gap-1.5 rounded-md border border-stone-300 bg-white px-2.5 py-1.5 text-xs font-medium text-stone-700 cursor-pointer has-[:checked]:border-stone-900 has-[:checked]:bg-stone-900 has-[:checked]:text-white"
+              >
+                <input
+                  type="radio"
+                  name="template"
+                  value={i}
+                  defaultChecked={i === defaultTemplate}
+                  className="sr-only"
+                />
+                {nm}
+              </label>
+            ))}
+          </div>
           <div className="flex items-center gap-3">
             <label className="inline-flex items-center gap-2 rounded-md border border-stone-300 bg-white px-3 py-1.5 text-xs font-medium text-stone-700 hover:bg-stone-50 cursor-pointer">
               <input
@@ -1014,40 +1069,6 @@ function StandingsView({
           >
             {busy ? "Saving…" : "Upload standings"}
           </button>
-        </Form>
-      </section>
-
-      {/* Poster template */}
-      <section className="rounded-xl border border-stone-200 bg-white p-5">
-        <h2 className="text-lg font-semibold tracking-tight">
-          Standings poster template
-        </h2>
-        <p className="text-xs text-stone-500 mt-1">
-          Applies to the public standings poster and the share posters below.
-        </p>
-        <Form method="post" className="mt-3 flex flex-wrap items-center gap-2">
-          <input
-            type="hidden"
-            name="intent"
-            value="set_standings_template"
-          />
-          {STANDINGS_TEMPLATE_NAMES.map((nm, i) => (
-            <button
-              key={nm}
-              type="submit"
-              name="standings_template"
-              value={i}
-              disabled={busy}
-              className={`rounded-lg border px-3 py-1.5 text-sm font-medium disabled:opacity-50 ${
-                i === templateIndex
-                  ? "border-stone-900 bg-stone-900 text-white"
-                  : "border-stone-300 bg-white text-stone-700 hover:bg-stone-50"
-              }`}
-            >
-              {i === templateIndex ? "✓ " : ""}
-              {nm}
-            </button>
-          ))}
         </Form>
       </section>
 
@@ -1115,10 +1136,38 @@ function StandingsView({
                   ))}
                 </tbody>
               </table>
+              <div className="flex flex-wrap items-center gap-2 border-t border-stone-200 px-5 py-3">
+                <span className="text-xs font-medium text-stone-600 mr-1">
+                  Template
+                </span>
+                {STANDINGS_TEMPLATE_NAMES.map((nm, i) => (
+                  <Form method="post" key={nm}>
+                    <input
+                      type="hidden"
+                      name="intent"
+                      value="set_snapshot_template"
+                    />
+                    <input type="hidden" name="after_n" value={s.afterN} />
+                    <input type="hidden" name="template" value={i} />
+                    <button
+                      type="submit"
+                      disabled={busy}
+                      className={`rounded-md border px-2.5 py-1 text-xs font-medium disabled:opacity-50 ${
+                        i === s.template
+                          ? "border-stone-900 bg-stone-900 text-white"
+                          : "border-stone-300 bg-white text-stone-700 hover:bg-stone-50"
+                      }`}
+                    >
+                      {i === s.template ? "✓ " : ""}
+                      {nm}
+                    </button>
+                  </Form>
+                ))}
+              </div>
               <StandingsShareCard
-                key={`poster-${s.afterN}-${templateIndex}`}
+                key={`poster-${s.afterN}-${s.template}`}
                 snapshot={s}
-                templateIndex={templateIndex}
+                templateIndex={s.template}
               />
             </section>
           ))
@@ -1784,7 +1833,7 @@ function SharePostersView({
           <PosterCanvas
             key={item.key}
             data={item.data}
-            templateIndex={(clampedIdx + tmplShift) % 3}
+            templateIndex={(clampedIdx + tmplShift) % POSTER_TEMPLATE_COUNT}
             stageRef={stageRef}
           />
         )}

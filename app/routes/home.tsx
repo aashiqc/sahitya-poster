@@ -6,6 +6,7 @@ import { SITE_URL } from "~/lib/constants";
 import { TEAM_BY_SLUG } from "~/lib/teams";
 import type Konva from "konva";
 import {
+  POSTER_TEMPLATE_COUNT,
   PosterCanvas,
   exportPosterPng,
   prefetchPosterAssets,
@@ -24,13 +25,10 @@ import {
   Trophy,
 } from "lucide-react";
 
-export function meta({ data }: Route.MetaArgs) {
-  const eventName =
-    (data?.event as { name?: string; name_ml?: string } | null)?.name ??
-    (data?.event as { name_ml?: string } | null)?.name_ml ??
-    "Sahityotsav";
-  const title = `${eventName} · Results`;
-  const description = `Live results from ${eventName} — browse winners by category as they're announced.`;
+export function meta(_: Route.MetaArgs) {
+  const brand = "Pantharangadi Sector Sahityotsav";
+  const title = `${brand} · Results`;
+  const description = `Live results from ${brand} — browse winners by category as they're announced.`;
   const image = `${SITE_URL}/sahityotsav-logo.png`;
   return [
     { title },
@@ -40,10 +38,10 @@ export function meta({ data }: Route.MetaArgs) {
     { property: "og:description", content: description },
     { property: "og:type", content: "website" },
     { property: "og:url", content: SITE_URL },
-    { property: "og:site_name", content: "SSF Pantharangadi Sahityotsav" },
+    { property: "og:site_name", content: brand },
     { property: "og:locale", content: "en_IN" },
     { property: "og:image", content: image },
-    { property: "og:image:alt", content: `${eventName} logo` },
+    { property: "og:image:alt", content: `${brand} logo` },
     { name: "twitter:card", content: "summary_large_image" },
     { name: "twitter:title", content: title },
     { name: "twitter:description", content: description },
@@ -84,7 +82,7 @@ export async function loader({ request }: Route.LoaderArgs) {
       .eq("status", "published"),
     supabase
       .from("team_standings")
-      .select("after_n, rank, team_name, points")
+      .select("after_n, rank, team_name, points, template")
       .eq("event_id", event.id)
       .order("after_n", { ascending: false })
       .order("rank", { ascending: true }),
@@ -138,16 +136,27 @@ export async function loader({ request }: Route.LoaderArgs) {
 
   // Latest admin-uploaded standings snapshot (rows are ordered after_n
   // desc, rank asc — so the first group is the most recent checkpoint).
-  type SRow = { after_n: number; rank: number; team_name: string; points: number };
+  type SRow = {
+    after_n: number;
+    rank: number;
+    team_name: string;
+    points: number;
+    template: number | null;
+  };
   const sRows = (standingsRes.data ?? []) as SRow[];
   const latestN = sRows.length > 0 ? sRows[0].after_n : null;
+  const latestRows =
+    latestN === null ? [] : sRows.filter((r) => r.after_n === latestN);
   const standings =
     latestN === null
       ? null
       : {
           afterN: latestN,
-          rows: sRows
-            .filter((r) => r.after_n === latestN)
+          // Each checkpoint carries its own template (uniform across its
+          // rows) — the public poster uses the latest snapshot's choice.
+          template: latestRows[0]?.template ?? 0,
+          rows: latestRows
+            .slice()
             .sort((a, b) => a.rank - b.rank)
             .map((r) => ({
               name: r.team_name,
@@ -164,8 +173,6 @@ export async function loader({ request }: Route.LoaderArgs) {
       totalPrograms: programs.length,
       allWinners,
       standings,
-      standingsTemplate:
-        (event as { standings_template?: number }).standings_template ?? 0,
     },
     {
       headers: {
@@ -238,7 +245,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
   if (!loaderData.published) {
     return <NotYetLive event={loaderData.event} />;
   }
-  const { event, levels, standings, standingsTemplate } = loaderData;
+  const { event, levels, standings } = loaderData;
   const org = (event.organizations as { name?: string } | null)?.name;
   const eventName = event.name ?? event.name_ml;
   const [standingsOpen, setStandingsOpen] = useState(false);
@@ -316,7 +323,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
       {standingsOpen && (
         <StandingsSheet
           snapshot={standings}
-          templateIndex={standingsTemplate}
+          templateIndex={standings?.template ?? 0}
           onClose={() => setStandingsOpen(false)}
         />
       )}
@@ -924,7 +931,9 @@ function ResultBubble({
   const stageRef = useRef<Konva.Stage | null>(null);
   const [busy, setBusy] = useState<null | "download" | "share">(null);
   const [zoom, setZoom] = useState(false);
-  const [tmpl, setTmpl] = useState(() => Math.floor(Math.random() * 3));
+  const [tmpl, setTmpl] = useState(() =>
+    Math.floor(Math.random() * POSTER_TEMPLATE_COUNT),
+  );
 
   const posterData: PosterData = {
     eventName,
@@ -993,7 +1002,7 @@ function ResultBubble({
           </IconButton>
           <IconButton
             label="Switch template"
-            onClick={() => setTmpl((t) => (t + 1) % 3)}
+            onClick={() => setTmpl((t) => (t + 1) % POSTER_TEMPLATE_COUNT)}
             tone="ghost"
           >
             <SwapIcon />

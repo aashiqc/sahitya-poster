@@ -100,7 +100,37 @@ const TEMPLATES: TemplateLayout[] = [
     unitColor: "#6B6566",
     resultNo: { x: 50, y: 270, boxW: 360, fontSize: 136, color: "#3D5DBF" },
   },
+  // 04 — dark navy, "Result" script top-left, sage "Sahityotsav"
+  // wordmark top-right, flowers bottom-left. Content sits in the open
+  // navy band on the right; light text.
+  {
+    src: "/poster/templates/result-04.png",
+    contentX: 560,
+    contentY: 470,
+    contentW: 470,
+    subtitleColor: "#E9E1CF",
+    titleColor: "#F3ECDC",
+    nameColor: "#FFFFFF",
+    unitColor: "#B7BECC",
+    resultNo: { x: 90, y: 292, boxW: 360, fontSize: 150, color: "#EFE6D2" },
+  },
+  // 05 — dark maroon, pink "Result" script top-right, cyan
+  // "Sahityotsav" wordmark top-left, lantern bottom-right. Content
+  // sits in the open maroon band on the left; light text.
+  {
+    src: "/poster/templates/result-05.png",
+    contentX: 90,
+    contentY: 470,
+    contentW: 480,
+    subtitleColor: "#F0E4DA",
+    titleColor: "#F4E8DC",
+    nameColor: "#FFFFFF",
+    unitColor: "#CDB8C6",
+    resultNo: { x: 700, y: 210, boxW: 340, fontSize: 150, color: "#F4A9C4" },
+  },
 ];
+
+export const POSTER_TEMPLATE_COUNT = TEMPLATES.length;
 
 // ─────────────────────────────────────────────────────────────────────
 // Image loading — tracks loaded/error + a "slow network" flag, and a

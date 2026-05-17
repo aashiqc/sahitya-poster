@@ -1,7 +1,7 @@
 {
-  "name": "SSF Pantharangadi Sahityotsav — Results",
+  "name": "Pantharangadi Sector Sahityotsav — Results",
   "short_name": "Sahityotsav",
-  "description": "Live results from SSF Pantharangadi Sector Sahityotsav.",
+  "description": "Live results from Pantharangadi Sector Sahityotsav.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
