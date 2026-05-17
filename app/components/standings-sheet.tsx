@@ -9,18 +9,21 @@ import {
 
 export type StandingsSnapshot = {
   afterN: number;
+  template: number;
   rows: { name: string; points: number }[];
 };
 
 export function StandingsSheet({
-  snapshot,
-  templateIndex = 0,
+  history,
   onClose,
 }: {
-  snapshot: StandingsSnapshot | null;
-  templateIndex?: number;
+  // Newest checkpoint first (loader sorts after_n desc).
+  history: StandingsSnapshot[];
   onClose: () => void;
 }) {
+  // Index into `history`; 0 is always the latest checkpoint.
+  const [sel, setSel] = useState(0);
+  const snapshot = history[sel] ?? null;
   const hasData = !!snapshot && snapshot.rows.length > 0;
   const afterN = snapshot?.afterN ?? 0;
 
@@ -99,6 +102,41 @@ export function StandingsSheet({
           </button>
         </div>
 
+        {/* Checkpoint selector — step through the standings history.
+            Only shown when there's more than one checkpoint. */}
+        {history.length > 1 && (
+          <div className="border-b border-black/10 bg-paper/60 px-3 py-2.5">
+            <p className="px-1 pb-1.5 text-[10px] font-bold uppercase tracking-[0.18em] text-ink-400">
+              Checkpoint
+            </p>
+            <div
+              role="tablist"
+              aria-label="Standings checkpoint"
+              className="flex gap-1.5 overflow-x-auto pb-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+            >
+              {history.map((s, i) => {
+                const active = i === sel;
+                return (
+                  <button
+                    key={s.afterN}
+                    type="button"
+                    role="tab"
+                    aria-selected={active}
+                    onClick={() => setSel(i)}
+                    className={`shrink-0 rounded-full px-3.5 py-1.5 text-xs font-semibold whitespace-nowrap transition-all duration-200 ${
+                      active
+                        ? "bg-red text-white shadow-[0_4px_12px_-4px_rgba(191,6,3,0.55)]"
+                        : "bg-white text-ink-700 ring-1 ring-black/10 hover:ring-yellow hover:bg-yellow/10"
+                    }`}
+                  >
+                    {i === 0 ? "Latest" : `After ${s.afterN}`}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
         {/* Body */}
         <div className="overflow-y-auto p-4 sm:p-5">
           {!hasData ? (
@@ -107,8 +145,9 @@ export function StandingsSheet({
             <>
               <div className="overflow-hidden rounded-2xl ring-1 ring-black/10 shadow-[0_12px_30px_-16px_rgba(11,9,10,0.4)]">
                 <StandingsPosterCanvas
+                  key={snapshot!.afterN}
                   data={{ afterN, rows: snapshot!.rows }}
-                  templateIndex={templateIndex}
+                  templateIndex={snapshot!.template}
                   stageRef={stageRef}
                 />
               </div>

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { Link, data } from "react-router";
+import { Link, data, useRevalidator } from "react-router";
 import type { Route } from "./+types/home";
 import { createSupabaseServerClient, loadEvent } from "~/lib/supabase.server";
 import { SITE_URL } from "~/lib/constants";
@@ -144,25 +144,27 @@ export async function loader({ request }: Route.LoaderArgs) {
     template: number | null;
   };
   const sRows = (standingsRes.data ?? []) as SRow[];
-  const latestN = sRows.length > 0 ? sRows[0].after_n : null;
-  const latestRows =
-    latestN === null ? [] : sRows.filter((r) => r.after_n === latestN);
-  const standings =
-    latestN === null
-      ? null
-      : {
-          afterN: latestN,
-          // Each checkpoint carries its own template (uniform across its
-          // rows) — the public poster uses the latest snapshot's choice.
-          template: latestRows[0]?.template ?? 0,
-          rows: latestRows
-            .slice()
-            .sort((a, b) => a.rank - b.rank)
-            .map((r) => ({
-              name: r.team_name,
-              points: Number(r.points),
-            })),
-        };
+  // Group every uploaded checkpoint by its `after_n` so the UI can let
+  // the reader step through the standings history. Newest first.
+  const byN = new Map<number, SRow[]>();
+  for (const r of sRows) {
+    const g = byN.get(r.after_n);
+    if (g) g.push(r);
+    else byN.set(r.after_n, [r]);
+  }
+  const standingsHistory = [...byN.entries()]
+    .sort((a, b) => b[0] - a[0])
+    .map(([afterN, rows]) => ({
+      afterN,
+      // Each checkpoint carries its own template (uniform across its
+      // rows) — the poster uses that checkpoint's own choice.
+      template: rows[0]?.template ?? 0,
+      rows: rows
+        .slice()
+        .sort((a, b) => a.rank - b.rank)
+        .map((r) => ({ name: r.team_name, points: Number(r.points) })),
+    }));
+  const standings = standingsHistory[0] ?? null;
 
   return data(
     {
@@ -173,6 +175,7 @@ export async function loader({ request }: Route.LoaderArgs) {
       totalPrograms: programs.length,
       allWinners,
       standings,
+      standingsHistory,
     },
     {
       headers: {
@@ -219,6 +222,12 @@ type Level = {
   total: number;
 };
 
+type Standings = {
+  afterN: number;
+  template: number;
+  rows: { name: string; points: number }[];
+};
+
 // ─────────────────────────────────────────────────────────────────────
 // English display helpers — the bot speaks English. Levels carry no
 // name_en, so the slug code is title-cased (high-school → High School).
@@ -242,13 +251,18 @@ function programLabel(program: { name_en: string | null; code: string }): string
 // ─────────────────────────────────────────────────────────────────────
 
 export default function Home({ loaderData }: Route.ComponentProps) {
+  // Live auto-refresh: silently re-runs the loader so newly published
+  // results surface without a manual reload. Called before any early
+  // return so hook order stays stable if `published` flips false→true.
+  useLiveRefresh();
+  const [standingsOpen, setStandingsOpen] = useState(false);
+
   if (!loaderData.published) {
     return <NotYetLive event={loaderData.event} />;
   }
-  const { event, levels, standings } = loaderData;
+  const { event, levels, standings, standingsHistory } = loaderData;
   const org = (event.organizations as { name?: string } | null)?.name;
   const eventName = event.name ?? event.name_ml;
-  const [standingsOpen, setStandingsOpen] = useState(false);
 
   const sector = (org ? org.replace(/^SSF\s+/i, "") : "") || "Sahityotsav";
 
@@ -322,8 +336,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
 
       {standingsOpen && (
         <StandingsSheet
-          snapshot={standings}
-          templateIndex={standings?.template ?? 0}
+          history={standingsHistory}
           onClose={() => setStandingsOpen(false)}
         />
       )}
@@ -333,10 +346,49 @@ export default function Home({ loaderData }: Route.ComponentProps) {
           levels={levels as Level[]}
           eventName={eventName ?? "Sahityotsav"}
           sector={sector}
+          standings={standings}
+          onOpenStandings={() => setStandingsOpen(true)}
         />
       </main>
     </div>
   );
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Live auto-refresh — polls the loader on an interval and on tab
+// refocus / reconnect. Revalidation does NOT remount the route, so the
+// chat (its useState) is preserved: no flicker, no scroll jump, no lost
+// place. Pauses while the tab is hidden or offline to stay light.
+// ─────────────────────────────────────────────────────────────────────
+function useLiveRefresh(intervalMs = 60_000) {
+  const revalidator = useRevalidator();
+  const revalidateRef = useRef(revalidator.revalidate);
+  revalidateRef.current = revalidator.revalidate;
+  const stateRef = useRef(revalidator.state);
+  stateRef.current = revalidator.state;
+
+  useEffect(() => {
+    const tick = () => {
+      if (
+        document.visibilityState === "visible" &&
+        navigator.onLine !== false &&
+        stateRef.current === "idle"
+      ) {
+        revalidateRef.current();
+      }
+    };
+    const id = window.setInterval(tick, intervalMs);
+    const onVisible = () => {
+      if (document.visibilityState === "visible") tick();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("online", tick);
+    return () => {
+      window.clearInterval(id);
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("online", tick);
+    };
+  }, [intervalMs]);
 }
 
 // SSF wordmark — always rendered in the brand Cooper Black letterform.
@@ -376,12 +428,19 @@ function ChatFlow({
   levels,
   eventName,
   sector,
+  standings,
+  onOpenStandings,
 }: {
   levels: Level[];
   eventName: string;
   sector: string;
+  standings: Standings | null;
+  onOpenStandings: () => void;
 }) {
-  // Initial bubbles — rendered SSR, hydrated on client.
+  // Initial bubbles — rendered SSR, hydrated on client. The standings
+  // snapshot leads with the current top three so the reader sees who's
+  // ahead before drilling into any single program.
+  const hasStandings = !!standings && standings.rows.length > 0;
   const initial: Bubble[] = [
     {
       id: "greet",
@@ -390,6 +449,20 @@ function ChatFlow({
         <GreetingBubble sector={sector} />
       ),
     },
+    ...(hasStandings
+      ? [
+          {
+            id: "standings",
+            side: "bot" as const,
+            node: (
+              <StandingsBubble
+                standings={standings!}
+                onOpenFull={onOpenStandings}
+              />
+            ),
+          },
+        ]
+      : []),
   ];
 
   const [bubbles, setBubbles] = useState<Bubble[]>(initial);
@@ -398,6 +471,10 @@ function ChatFlow({
   const endRef = useRef<HTMLDivElement | null>(null);
   const seqRef = useRef(0);
   const nextId = (prefix: string) => `${prefix}-${++seqRef.current}`;
+  // Mirrors `atBottom` for synchronous reads inside effects — lets us
+  // follow new bubbles only when the reader is already at the bottom,
+  // so an auto-announced result never yanks them out of history.
+  const atBottomRef = useRef(true);
 
   const scrollToEnd = () =>
     endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
@@ -418,9 +495,11 @@ function ChatFlow({
     return () => window.clearTimeout(t);
   }, []);
 
-  // Auto-scroll to bottom on new message
+  // Auto-scroll to bottom on new message — but only if the reader is
+  // following along. If they've scrolled up, the "Latest" pill (which
+  // shows whenever !atBottom) is their cue instead.
   useEffect(() => {
-    scrollToEnd();
+    if (atBottomRef.current) scrollToEnd();
   }, [bubbles.length, typing]);
 
   // Track whether the reader has scrolled up through history
@@ -429,6 +508,7 @@ function ChatFlow({
       const nearBottom =
         window.innerHeight + window.scrollY >=
         document.body.offsetHeight - 120;
+      atBottomRef.current = nearBottom;
       setAtBottom(nearBottom);
     };
     onScroll();
@@ -552,6 +632,42 @@ function ChatFlow({
     });
   }
 
+  // Surface results that get published while the page is open. Auto-
+  // refresh keeps `levels` fresh; here we diff against what we've
+  // already seen and append a chat-native "just announced" bubble.
+  // Append-only — existing bubbles are never mutated.
+  const seenResultsRef = useRef<Set<string> | null>(null);
+  useEffect(() => {
+    // First run: snapshot everything already published so we don't
+    // announce the backlog that was present on page load.
+    if (seenResultsRef.current === null) {
+      const seed = new Set<string>();
+      for (const lv of levels)
+        for (const p of lv.programs) if (p.result) seed.add(p.id);
+      seenResultsRef.current = seed;
+      return;
+    }
+    const seen = seenResultsRef.current;
+    const fresh: { level: Level; program: Program }[] = [];
+    for (const lv of levels)
+      for (const p of lv.programs)
+        if (p.result && !seen.has(p.id)) {
+          seen.add(p.id);
+          fresh.push({ level: lv, program: p });
+        }
+    if (fresh.length === 0) return;
+    push({
+      id: nextId("new"),
+      side: "bot",
+      node: (
+        <NewResultsBubble
+          items={fresh}
+          onView={(lv, p) => handlePickProgram(lv, p)}
+        />
+      ),
+    });
+  }, [levels]);
+
   // Render
   return (
     <div
@@ -565,8 +681,9 @@ function ChatFlow({
         </BubbleRow>
       ))}
 
-      {/* The seeded first interaction prompt — always shown initially, then user can re-enter via Different category */}
-      {bubbles.length === 1 && !typing && (
+      {/* The seeded first interaction prompt — shown until the reader
+          takes their first action, then re-enterable via Different category */}
+      {bubbles.length === initial.length && !typing && (
         <BubbleRow side="bot">
           <LevelPickerBubble levels={levels} onPick={handlePickLevel} />
         </BubbleRow>
@@ -683,6 +800,139 @@ function GreetingBubble({ sector }: { sector: string }) {
         Pick a category below to see the winners — new results appear here the
         moment they're announced.
       </p>
+    </div>
+  );
+}
+
+// Initial chat card — the current top three teams with points, plus a
+// way into the full poster + checkpoint history. Mirrors the bot
+// bubble visual language so it reads as the bot opening with the
+// headline standings.
+function StandingsBubble({
+  standings,
+  onOpenFull,
+}: {
+  standings: Standings;
+  onOpenFull: () => void;
+}) {
+  const top = standings.rows.slice(0, 3);
+  const TIER = [
+    { ring: "ring-yellow/60", chip: "bg-yellow text-black", label: "1st" },
+    { ring: "ring-ink-300", chip: "bg-ink-200 text-ink-800", label: "2nd" },
+    { ring: "ring-[#d8a26a]/60", chip: "bg-[#caa06a] text-white", label: "3rd" },
+  ] as const;
+  return (
+    <div>
+      <p className="inline-flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-[0.22em] text-red/80">
+        <Trophy className="size-3.5 text-red" strokeWidth={2.5} aria-hidden />
+        Team standings
+      </p>
+      <p className="text-[12px] leading-relaxed text-ink-500 mt-1">
+        Current top three after{" "}
+        <span className="font-semibold text-ink-700">
+          {standings.afterN} {standings.afterN === 1 ? "result" : "results"}
+        </span>
+        .
+      </p>
+
+      <ol className="mt-2.5 flex flex-col gap-1.5">
+        {top.map((t, i) => {
+          const tier = TIER[i] ?? TIER[2];
+          return (
+            <li
+              key={`${t.name}-${i}`}
+              className={`flex items-center gap-3 rounded-xl bg-white px-3 py-2.5 shadow-sm ring-1 ${tier.ring}`}
+            >
+              <span
+                className={`grid size-7 shrink-0 place-items-center rounded-full text-[11px] font-bold ${tier.chip}`}
+              >
+                {tier.label}
+              </span>
+              <span className="min-w-0 flex-1 truncate text-sm font-semibold text-ink-900">
+                {t.name}
+              </span>
+              <span className="shrink-0 font-opensans text-sm font-bold tabular-nums text-ink-900">
+                {t.points}
+                <span className="ml-1 text-[10px] font-semibold uppercase tracking-wide text-ink-400">
+                  pts
+                </span>
+              </span>
+            </li>
+          );
+        })}
+      </ol>
+
+      <button
+        type="button"
+        onClick={onOpenFull}
+        className="group mt-2.5 inline-flex items-center gap-1.5 rounded-full border border-black/15 bg-white px-4 py-2 text-xs font-semibold text-ink-800 shadow-sm transition-all duration-200 hover:-translate-y-px hover:border-yellow hover:bg-yellow/15 active:translate-y-0 active:scale-[0.97]"
+      >
+        Full standings &amp; history
+        <ChevronRight
+          className="size-3.5 text-ink-400 transition-transform duration-200 group-hover:translate-x-0.5 group-hover:text-red"
+          strokeWidth={2.5}
+          aria-hidden
+        />
+      </button>
+    </div>
+  );
+}
+
+// Auto-injected when a result is published while the page is open.
+// Visual language matches the other bot bubbles (rounded rows, the
+// red/yellow palette, ChevronRight) so it never reads as a "system"
+// interruption — it's the bot continuing the conversation.
+function NewResultsBubble({
+  items,
+  onView,
+}: {
+  items: { level: Level; program: Program }[];
+  onView: (level: Level, program: Program) => void;
+}) {
+  const shown = items.slice(0, 6);
+  return (
+    <div>
+      <p className="inline-flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-[0.22em] text-red/80">
+        <span className="relative flex size-1.5">
+          <span className="absolute inline-flex size-full animate-ping rounded-full bg-red/70" />
+          <span className="relative inline-flex size-1.5 rounded-full bg-red" />
+        </span>
+        Just announced
+      </p>
+      <p className="font-opensans text-[15px] font-semibold text-ink-900 mt-1.5">
+        {items.length === 1
+          ? "A new result is in"
+          : `${items.length} new results are in`}
+      </p>
+      <div className="mt-2.5 flex flex-col gap-1.5">
+        {shown.map(({ level, program }) => (
+          <button
+            key={program.id}
+            type="button"
+            onClick={() => onView(level, program)}
+            className="group flex items-center justify-between gap-3 rounded-xl border border-black/10 bg-white px-3.5 py-2.5 text-left shadow-sm transition-all duration-200 hover:-translate-y-px hover:border-yellow hover:bg-yellow/10 active:translate-y-0 active:scale-[0.99]"
+          >
+            <span className="min-w-0">
+              <span className="block truncate text-sm font-semibold text-ink-900">
+                {programLabel(program)}
+              </span>
+              <span className="block truncate text-[11px] text-ink-500">
+                {levelLabel(level)}
+              </span>
+            </span>
+            <ChevronRight
+              className="size-4 shrink-0 text-ink-400 transition-transform duration-200 group-hover:translate-x-0.5 group-hover:text-red"
+              strokeWidth={2.5}
+              aria-hidden
+            />
+          </button>
+        ))}
+        {items.length > shown.length && (
+          <span className="px-1 pt-0.5 text-[11px] text-ink-500">
+            +{items.length - shown.length} more — pick a category to see all
+          </span>
+        )}
+      </div>
     </div>
   );
 }
