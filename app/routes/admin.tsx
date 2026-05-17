@@ -1,4 +1,11 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ChangeEvent,
+  type ReactNode,
+} from "react";
 import {
   Form,
   Link,
@@ -29,13 +36,7 @@ import {
 import type Konva from "konva";
 import type { Route } from "./+types/admin";
 import { loadEvent, requireAdmin } from "~/lib/supabase.server";
-import {
-  TEAM_BY_SLUG,
-  TEAMS,
-  computeStandings,
-  snapshotBucket,
-  winnerPoints,
-} from "~/lib/teams";
+import { TEAM_BY_SLUG, TEAMS } from "~/lib/teams";
 import {
   PosterCanvas,
   exportPosterPng,
@@ -52,6 +53,47 @@ export function meta() {
   return [{ title: "Admin · Sahityotsav" }];
 }
 
+// ── Standings CSV parsing (header: Rank,Team Name,Points) ────────────
+function csvCells(line: string): string[] {
+  const out: string[] = [];
+  let cur = "";
+  let inQ = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (inQ) {
+      if (ch === '"') {
+        if (line[i + 1] === '"') {
+          cur += '"';
+          i++;
+        } else inQ = false;
+      } else cur += ch;
+    } else if (ch === '"') inQ = true;
+    else if (ch === ",") {
+      out.push(cur);
+      cur = "";
+    } else cur += ch;
+  }
+  out.push(cur);
+  return out.map((s) => s.trim());
+}
+
+export function parseStandingsCsv(
+  text: string,
+): { rank: number; team_name: string; points: number }[] {
+  const rows: { rank: number; team_name: string; points: number }[] = [];
+  for (const line of text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean)) {
+    const c = csvCells(line);
+    if (c.length < 2) continue;
+    const rank = parseInt(c[0], 10);
+    if (!Number.isFinite(rank)) continue; // skips the header row
+    const name = (c[1] ?? "").replace(/\s*\bunit\b\s*$/i, "").trim();
+    if (!name) continue;
+    const points = Number(c[2] ?? "");
+    rows.push({ rank, team_name: name, points: Number.isFinite(points) ? points : 0 });
+  }
+  return rows;
+}
+
 // ============================================================================
 // Loader
 // ============================================================================
@@ -59,7 +101,7 @@ export async function loader({ request }: Route.LoaderArgs) {
   const { supabase, headers, user, profile } = await requireAdmin(request);
   const event = await loadEvent(supabase);
 
-  const [levelsRes, programsRes, resultsRes] = await Promise.all([
+  const [levelsRes, programsRes, resultsRes, standingsRes] = await Promise.all([
     supabase
       .from("levels")
       .select("id, code, name_ml, sort_order")
@@ -77,6 +119,12 @@ export async function loader({ request }: Route.LoaderArgs) {
         `id, program_id, status, result_no, result_winners(position, name_ml, name_en, unit_ml, marks, grade)`,
       )
       .eq("event_id", event.id),
+    supabase
+      .from("team_standings")
+      .select("after_n, rank, team_name, points")
+      .eq("event_id", event.id)
+      .order("after_n", { ascending: true })
+      .order("rank", { ascending: true }),
   ]);
 
   const levels = levelsRes.data ?? [];
@@ -153,6 +201,24 @@ export async function loader({ request }: Route.LoaderArgs) {
   const totalPending = activePrograms.filter((p) => !resultByProgram.get(p.id)).length;
   const totalInactive = programs.length - activePrograms.length;
 
+  // Group uploaded standings rows into per-after_n snapshots.
+  type SRow = { after_n: number; rank: number; team_name: string; points: number };
+  const standingsMap = new Map<
+    number,
+    { rank: number; team_name: string; points: number }[]
+  >();
+  for (const r of (standingsRes.data ?? []) as SRow[]) {
+    const arr = standingsMap.get(r.after_n) ?? [];
+    arr.push({ rank: r.rank, team_name: r.team_name, points: Number(r.points) });
+    standingsMap.set(r.after_n, arr);
+  }
+  const standings = [...standingsMap.entries()]
+    .map(([afterN, rows]) => ({
+      afterN,
+      rows: rows.sort((a, b) => a.rank - b.rank),
+    }))
+    .sort((a, b) => a.afterN - b.afterN);
+
   return data(
     {
       user: { email: user.email ?? "" },
@@ -167,6 +233,7 @@ export async function loader({ request }: Route.LoaderArgs) {
         totalInactive,
       },
       publishedWinners,
+      standings,
     },
     { headers: Object.fromEntries(headers) },
   );
@@ -191,6 +258,61 @@ export async function action({ request }: Route.ActionArgs) {
     const { error } = await supabase.from("events").update({ status: next }).eq("id", event.id);
     if (error) return data({ error: error.message }, { headers: Object.fromEntries(headers) });
     return data({ ok: true }, { headers: Object.fromEntries(headers) });
+  }
+
+  if (intent === "delete_standings") {
+    const afterN = parseInt(String(fd.get("after_n") ?? ""), 10);
+    if (!Number.isFinite(afterN)) {
+      return data({ error: "Invalid snapshot." }, { headers: Object.fromEntries(headers) });
+    }
+    const { error } = await supabase
+      .from("team_standings")
+      .delete()
+      .eq("event_id", event.id)
+      .eq("after_n", afterN);
+    if (error) return data({ error: error.message }, { headers: Object.fromEntries(headers) });
+    return data({ ok: true }, { headers: Object.fromEntries(headers) });
+  }
+
+  if (intent === "upload_standings") {
+    const afterN = parseInt(String(fd.get("after_n") ?? "").trim(), 10);
+    if (!Number.isFinite(afterN) || afterN < 0) {
+      return data(
+        { error: "Enter a valid 'after N results' number." },
+        { headers: Object.fromEntries(headers) },
+      );
+    }
+    const csv = String(fd.get("csv") ?? "");
+    const parsed = parseStandingsCsv(csv);
+    if (parsed.length === 0) {
+      return data(
+        { error: "No valid rows found. Expected: Rank,Team Name,Points" },
+        { headers: Object.fromEntries(headers) },
+      );
+    }
+    // Replace this snapshot atomically-ish: delete then insert.
+    const del = await supabase
+      .from("team_standings")
+      .delete()
+      .eq("event_id", event.id)
+      .eq("after_n", afterN);
+    if (del.error) {
+      return data({ error: del.error.message }, { headers: Object.fromEntries(headers) });
+    }
+    const { error: insErr } = await supabase.from("team_standings").insert(
+      parsed.map((r) => ({
+        event_id: event.id,
+        after_n: afterN,
+        rank: r.rank,
+        team_name: r.team_name,
+        points: r.points,
+      })),
+    );
+    if (insErr) return data({ error: insErr.message }, { headers: Object.fromEntries(headers) });
+    return data(
+      { ok: true, message: `Saved ${parsed.length} teams · after ${afterN}` },
+      { headers: Object.fromEntries(headers) },
+    );
   }
 
   // Result-scoped intents need program_code
@@ -374,7 +496,7 @@ export function shouldRevalidate({ formMethod, currentUrl, nextUrl, defaultShoul
 // Component
 // ============================================================================
 export default function Admin({ loaderData }: Route.ComponentProps) {
-  const { user, profile, event, levels, stats, publishedWinners } =
+  const { user, profile, event, levels, stats, publishedWinners, standings } =
     loaderData;
   const orgName = (profile.organizations as { name?: string } | null)?.name ?? "";
   const eventName = event.name_ml ?? event.name;
@@ -540,15 +662,13 @@ export default function Admin({ loaderData }: Route.ComponentProps) {
 
         <main className="flex-1 px-4 lg:px-8 py-6 space-y-6">
           {view === "standings" && (
-            <StandingsView
-              totalPublished={stats.totalPublished}
-              winners={publishedWinners}
-            />
+            <StandingsView snapshots={standings} />
           )}
           {view === "share" && (
             <SharePostersView
               levels={levels as LevelRow[]}
               eventName={event.name ?? event.name_ml ?? "Sahityotsav"}
+              snapshots={standings}
             />
           )}
           {view === "dashboard" && (
@@ -689,142 +809,172 @@ function DashboardView({
 // ─────────────────────────────────────────────────────────────────────
 // Standings view — full leaderboard + per-team breakdown
 // ─────────────────────────────────────────────────────────────────────
-function StandingsView({
-  totalPublished,
-  winners,
-}: {
-  totalPublished: number;
-  winners: ReadonlyArray<{
-    unit_ml: string | null;
-    marks: number | null;
-    grade: string | null;
-  }>;
-}) {
-  const snapshotN = snapshotBucket(totalPublished);
-  const rows = computeStandings(winners);
-  const noResults = snapshotN === 0;
+type StandingsSnapshot = {
+  afterN: number;
+  rows: { rank: number; team_name: string; points: number }[];
+};
 
-  // Per-team breakdown by grade tier (A/B/C) using the winnerPoints fallback.
-  const breakdown = new Map<
-    string,
-    { firsts: number; seconds: number; thirds: number; aGrade: number; bGrade: number; cGrade: number }
-  >();
-  for (const t of TEAMS) {
-    breakdown.set(t.slug, { firsts: 0, seconds: 0, thirds: 0, aGrade: 0, bGrade: 0, cGrade: 0 });
-  }
-  for (const w of winners) {
-    if (!w.unit_ml) continue;
-    const slug = w.unit_ml.toLowerCase();
-    const b = breakdown.get(slug);
-    if (!b) continue;
-    if (w.grade === "A") b.aGrade++;
-    else if (w.grade === "B") b.bGrade++;
-    else if (w.grade === "C") b.cGrade++;
-  }
-  const totalPoints = rows.reduce((n, r) => n + r.points, 0);
+function StandingsView({ snapshots }: { snapshots: StandingsSnapshot[] }) {
+  const actionData = useActionData<typeof action>();
+  const navigation = useNavigation();
+  const busy = navigation.state !== "idle";
+  const [csv, setCsv] = useState("");
+
+  const onPickFile = (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => setCsv(String(reader.result ?? ""));
+    reader.readAsText(file);
+  };
 
   return (
-    <>
+    <div className="space-y-6 max-w-3xl">
+      {/* Upload */}
       <section className="rounded-xl border border-stone-200 bg-white p-5">
-        <div className="flex items-end justify-between gap-3">
-          <div>
-            <p className="text-[11px] font-semibold tracking-widest uppercase text-stone-500">
-              Snapshot
-            </p>
-            <h2 className="text-2xl font-semibold tracking-tight mt-0.5">
-              {noResults
-                ? "Standings open after 5 results"
-                : `After ${snapshotN} results`}
-            </h2>
-            {!noResults && totalPublished > snapshotN && (
-              <p className="text-xs text-stone-500 mt-1">
-                {totalPublished - snapshotN} new since this snapshot · next
-                update at result {snapshotN + 5}
-              </p>
-            )}
+        <h2 className="text-lg font-semibold tracking-tight">
+          Upload team standings
+        </h2>
+        <p className="text-xs text-stone-500 mt-1">
+          Standings are taken straight from your CSV — not computed from
+          results. Paste the official sheet for a checkpoint. Format:
+          <code className="mx-1 rounded bg-stone-100 px-1.5 py-0.5">
+            Rank,Team Name,Points
+          </code>
+          (a header row is fine). Uploading replaces the snapshot for that N.
+        </p>
+
+        <Form method="post" className="mt-4 space-y-3">
+          <input type="hidden" name="intent" value="upload_standings" />
+          <div className="flex items-center gap-2">
+            <label htmlFor="after_n" className="text-sm font-medium">
+              After
+            </label>
+            <input
+              id="after_n"
+              name="after_n"
+              type="number"
+              min={0}
+              required
+              placeholder="10"
+              className="w-24 rounded-md border border-stone-300 bg-white px-2.5 py-1.5 text-sm tabular-nums focus:outline-none focus:border-stone-400"
+            />
+            <span className="text-sm text-stone-600">results</span>
           </div>
-          <div className="text-right">
-            <p className="text-[11px] font-semibold tracking-widest uppercase text-stone-500">
-              Total points
-            </p>
-            <p className="text-2xl font-semibold tabular-nums">{totalPoints}</p>
+          <div className="flex items-center gap-3">
+            <label className="inline-flex items-center gap-2 rounded-md border border-stone-300 bg-white px-3 py-1.5 text-xs font-medium text-stone-700 hover:bg-stone-50 cursor-pointer">
+              <input
+                type="file"
+                accept=".csv,text/csv,text/plain"
+                onChange={onPickFile}
+                className="sr-only"
+              />
+              Choose .csv file
+            </label>
+            <span className="text-[11px] text-stone-400">
+              or paste below — the file fills the box; you can still edit it.
+            </span>
           </div>
-        </div>
+          <textarea
+            name="csv"
+            required
+            rows={9}
+            spellCheck={false}
+            value={csv}
+            onChange={(e) => setCsv(e.target.value)}
+            placeholder={
+              "Rank,Team Name,Points\n1,Anithara Unit,143\n2,Vidya Nagar Unit,100\n3,Cheerpingal Unit,59"
+            }
+            className="w-full rounded-md border border-stone-300 bg-white px-3 py-2 font-mono text-xs leading-relaxed focus:outline-none focus:border-stone-400"
+          />
+          {actionData && "error" in actionData && (
+            <p className="text-xs text-red-700 bg-red-50 border border-red-200 rounded-md px-3 py-2">
+              {actionData.error}
+            </p>
+          )}
+          {actionData && "ok" in actionData && (
+            <p className="text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-md px-3 py-2">
+              ✓ {"message" in actionData ? String(actionData.message) : "Saved"}
+            </p>
+          )}
+          <button
+            type="submit"
+            disabled={busy}
+            className="inline-flex items-center gap-2 rounded-lg bg-stone-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50 hover:bg-stone-800"
+          >
+            {busy ? "Saving…" : "Upload standings"}
+          </button>
+        </Form>
       </section>
 
-      <section className="rounded-xl border border-stone-200 bg-white overflow-hidden">
-        <header className="px-5 py-3 border-b border-stone-200 bg-stone-50 flex items-center gap-3">
-          <Trophy className="size-4 text-yellow" strokeWidth={2.5} />
-          <h3 className="text-sm font-semibold">Leaderboard</h3>
-          <span className="ml-auto text-[11px] text-stone-500">
-            {TEAMS.length} teams · {winners.length} winners counted
-          </span>
-        </header>
-        <table className="w-full text-sm">
-          <thead className="text-[11px] uppercase tracking-wider text-stone-500 bg-white">
-            <tr className="border-b border-stone-200">
-              <th className="text-left px-5 py-2.5 font-medium w-16">Rank</th>
-              <th className="text-left px-5 py-2.5 font-medium">Team</th>
-              <th className="text-right px-3 py-2.5 font-medium">A</th>
-              <th className="text-right px-3 py-2.5 font-medium">B</th>
-              <th className="text-right px-3 py-2.5 font-medium">C</th>
-              <th className="text-right px-5 py-2.5 font-medium w-24">Points</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((r, i) => {
-              const b = breakdown.get(r.team.slug)!;
-              const isLeader = i === 0 && r.points > 0;
-              return (
-                <tr
-                  key={r.team.slug}
-                  className={`border-b border-stone-100 last:border-0 ${
-                    isLeader ? "bg-yellow/10" : ""
-                  }`}
-                >
-                  <td className="px-5 py-3">
-                    <span
-                      className={`inline-flex items-center justify-center size-7 rounded-full text-[11px] font-semibold tabular-nums ${
-                        i === 0
-                          ? "bg-yellow text-black"
-                          : i === 1
-                          ? "bg-black/10 text-black"
-                          : i === 2
-                          ? "bg-red-600 text-white"
-                          : "bg-stone-100 text-stone-600"
-                      }`}
+      {/* Existing snapshots */}
+      {snapshots.length === 0 ? (
+        <section className="rounded-xl border border-dashed border-stone-300 bg-white p-8 text-center text-sm text-stone-500">
+          No standings uploaded yet. The public standings poster appears once
+          you upload at least one snapshot.
+        </section>
+      ) : (
+        snapshots
+          .slice()
+          .sort((a, b) => b.afterN - a.afterN)
+          .map((s) => (
+            <section
+              key={s.afterN}
+              className="rounded-xl border border-stone-200 bg-white overflow-hidden"
+            >
+              <header className="px-5 py-3 border-b border-stone-200 bg-stone-50 flex items-center gap-3">
+                <Trophy className="size-4 text-yellow" strokeWidth={2.5} />
+                <h3 className="text-sm font-semibold">After {s.afterN} results</h3>
+                <span className="text-[11px] text-stone-500">
+                  {s.rows.length} teams
+                </span>
+                <Form method="post" className="ml-auto">
+                  <input type="hidden" name="intent" value="delete_standings" />
+                  <input type="hidden" name="after_n" value={s.afterN} />
+                  <button
+                    type="submit"
+                    disabled={busy}
+                    onClick={(e) => {
+                      if (!confirm(`Delete the "after ${s.afterN}" snapshot?`))
+                        e.preventDefault();
+                    }}
+                    className="text-xs text-red-600 hover:text-red-700 hover:underline disabled:opacity-50"
+                  >
+                    Delete
+                  </button>
+                </Form>
+              </header>
+              <table className="w-full text-sm">
+                <thead className="text-[11px] uppercase tracking-wider text-stone-500">
+                  <tr className="border-b border-stone-200">
+                    <th className="text-left px-5 py-2 font-medium w-16">Rank</th>
+                    <th className="text-left px-5 py-2 font-medium">Team</th>
+                    <th className="text-right px-5 py-2 font-medium w-24">
+                      Points
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {s.rows.map((r) => (
+                    <tr
+                      key={`${r.rank}-${r.team_name}`}
+                      className="border-b border-stone-100 last:border-0"
                     >
-                      {i + 1}
-                    </span>
-                  </td>
-                  <td className="px-5 py-3 font-medium">{r.team.name}</td>
-                  <td className="px-3 py-3 text-right tabular-nums text-stone-700">
-                    {b.aGrade || ""}
-                  </td>
-                  <td className="px-3 py-3 text-right tabular-nums text-stone-700">
-                    {b.bGrade || ""}
-                  </td>
-                  <td className="px-3 py-3 text-right tabular-nums text-stone-700">
-                    {b.cGrade || ""}
-                  </td>
-                  <td className="px-5 py-3 text-right font-semibold tabular-nums">
-                    {r.points}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </section>
-
-      <section className="text-[11px] text-stone-500">
-        Points: A grade = {winnerPoints({ marks: null, grade: "A" })} ·
-        B grade = {winnerPoints({ marks: null, grade: "B" })} ·
-        C grade = {winnerPoints({ marks: null, grade: "C" })}.
-        If an explicit marks value is set on a winner, that value is used
-        instead of the grade default.
-      </section>
-    </>
+                      <td className="px-5 py-2.5 tabular-nums text-stone-600">
+                        {r.rank}
+                      </td>
+                      <td className="px-5 py-2.5 font-medium">{r.team_name}</td>
+                      <td className="px-5 py-2.5 text-right font-semibold tabular-nums">
+                        {r.points}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </section>
+          ))
+      )}
+    </div>
   );
 }
 
@@ -1350,9 +1500,11 @@ type ShareItem =
 function SharePostersView({
   levels,
   eventName,
+  snapshots,
 }: {
   levels: LevelRow[];
   eventName: string;
+  snapshots: StandingsSnapshot[];
 }) {
   const items = useMemo<ShareItem[]>(() => {
     const pubs: { level: LevelRow; program: ProgramRow }[] = [];
@@ -1371,11 +1523,11 @@ function SharePostersView({
         a.program.code.localeCompare(b.program.code),
     );
 
+    const byAfter = new Map(snapshots.map((s) => [s.afterN, s]));
+
     const out: ShareItem[] = [];
-    const cumulative: EditWinner[] = [];
     pubs.forEach(({ level, program }, i) => {
       const r = program.result!;
-      cumulative.push(...r.winners);
       const winners = [...r.winners]
         .filter((w) => w.position >= 1)
         .sort((a, b) => a.position - b.position)
@@ -1385,31 +1537,44 @@ function SharePostersView({
           return { position: w.position, name: w.name_en ?? w.name_ml, unit };
         });
       const programName = program.name_en ?? program.code;
-      out.push({
-        kind: "result",
-        key: `r-${r.id}`,
-        code: program.code,
-        programName,
-        data: {
-          eventName,
-          levelName: levelLabelFromCode(level.code, level.name_ml),
+      // Skip the poster for thin results (1–2 participants) — they
+      // still count via the uploaded standings, just no poster.
+      if (winners.length >= 3) {
+        out.push({
+          kind: "result",
+          key: `r-${r.id}`,
+          code: program.code,
           programName,
-          programCode: program.code,
-          resultNo: r.result_no,
-          winners,
-        },
-      });
+          data: {
+            eventName,
+            levelName: levelLabelFromCode(level.code, level.name_ml),
+            programName,
+            programCode: program.code,
+            resultNo: r.result_no,
+            winners,
+          },
+        });
+      }
       const seq = i + 1;
+      // Standings every 5 results — only if the admin uploaded that
+      // snapshot (taken straight from the CSV, not computed).
       if (seq % 5 === 0) {
-        const rows = computeStandings(cumulative).map((s) => ({
-          name: s.team.name,
-          points: s.points,
-        }));
-        out.push({ kind: "standings", key: `s-${seq}`, afterN: seq, rows });
+        const snap = byAfter.get(seq);
+        if (snap) {
+          out.push({
+            kind: "standings",
+            key: `s-${seq}`,
+            afterN: seq,
+            rows: snap.rows.map((row) => ({
+              name: row.team_name,
+              points: row.points,
+            })),
+          });
+        }
       }
     });
     return out;
-  }, [levels, eventName]);
+  }, [levels, eventName, snapshots]);
 
   const [idx, setIdx] = useState(0);
   const [tmplShift, setTmplShift] = useState(0);

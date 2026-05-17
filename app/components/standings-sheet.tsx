@@ -2,34 +2,25 @@ import { useEffect, useRef, useState } from "react";
 import { Download, Share2, X } from "lucide-react";
 import type Konva from "konva";
 import {
-  TEAMS,
-  computeStandings,
-  snapshotBucket,
-} from "~/lib/teams";
-import {
   StandingsPosterCanvas,
   exportStandingsPng,
   shareStandings,
 } from "./standings-poster";
 
-export type StandingsWinner = {
-  unit_ml: string | null;
-  marks: number | null;
-  grade: string | null;
+export type StandingsSnapshot = {
+  afterN: number;
+  rows: { name: string; points: number }[];
 };
 
 export function StandingsSheet({
-  totalPublished,
-  winners,
+  snapshot,
   onClose,
 }: {
-  totalPublished: number;
-  winners: ReadonlyArray<StandingsWinner>;
+  snapshot: StandingsSnapshot | null;
   onClose: () => void;
 }) {
-  const snapshotN = snapshotBucket(totalPublished);
-  const rows = computeStandings(winners);
-  const noResults = snapshotN === 0;
+  const hasData = !!snapshot && snapshot.rows.length > 0;
+  const afterN = snapshot?.afterN ?? 0;
 
   const stageRef = useRef<Konva.Stage | null>(null);
   const [busy, setBusy] = useState<null | "download" | "share">(null);
@@ -53,7 +44,7 @@ export function StandingsSheet({
   async function onDownload() {
     setBusy("download");
     try {
-      await exportStandingsPng(stageRef.current, `standings_after_${snapshotN}.png`);
+      await exportStandingsPng(stageRef.current, `standings_after_${afterN}.png`);
     } finally {
       setBusy(null);
     }
@@ -62,7 +53,7 @@ export function StandingsSheet({
   async function onShare() {
     setBusy("share");
     try {
-      await shareStandings(stageRef.current, snapshotN);
+      await shareStandings(stageRef.current, afterN);
     } finally {
       setBusy(null);
     }
@@ -91,9 +82,9 @@ export function StandingsSheet({
           <div>
             <h2 className="text-lg font-bold">Team Standings</h2>
             <p className="text-xs text-white/70 mt-0.5">
-              {noResults
-                ? "Standings open after the first 5 results."
-                : `Snapshot after ${snapshotN} ${snapshotN === 1 ? "result" : "results"}`}
+              {hasData
+                ? `Snapshot after ${afterN} ${afterN === 1 ? "result" : "results"}`
+                : "Standings not published yet."}
             </p>
           </div>
           <button
@@ -108,19 +99,13 @@ export function StandingsSheet({
 
         {/* Body */}
         <div className="overflow-y-auto p-4 sm:p-5">
-          {noResults ? (
+          {!hasData ? (
             <EmptyState />
           ) : (
             <>
               <div className="overflow-hidden rounded-2xl ring-1 ring-black/10 shadow-[0_12px_30px_-16px_rgba(11,9,10,0.4)]">
                 <StandingsPosterCanvas
-                  data={{
-                    afterN: snapshotN,
-                    rows: rows.map((r) => ({
-                      name: r.team.name,
-                      points: r.points,
-                    })),
-                  }}
+                  data={{ afterN, rows: snapshot!.rows }}
                   stageRef={stageRef}
                 />
               </div>
@@ -145,12 +130,6 @@ export function StandingsSheet({
                   Share
                 </button>
               </div>
-
-              {totalPublished > snapshotN && (
-                <p className="text-[11px] text-ink-400 mt-3 text-center">
-                  Figures refresh at the next multiple of 5 results.
-                </p>
-              )}
             </>
           )}
         </div>
@@ -170,21 +149,14 @@ function Spinner() {
 
 function EmptyState() {
   return (
-    <div className="py-8 text-center">
+    <div className="py-10 text-center">
       <p className="text-sm text-ink-700">
-        No standings yet. Once 5 results are published, the first standings
-        poster will appear here.
+        Team standings haven't been published yet.
       </p>
-      <ul className="mt-4 grid grid-cols-2 gap-1.5 text-left">
-        {TEAMS.map((t) => (
-          <li
-            key={t.slug}
-            className="text-xs text-ink-500 px-2.5 py-1.5 border border-black/10 rounded-lg"
-          >
-            {t.name}
-          </li>
-        ))}
-      </ul>
+      <p className="text-xs text-ink-400 mt-2">
+        They'll appear here as soon as the organisers post the latest
+        standings.
+      </p>
     </div>
   );
 }

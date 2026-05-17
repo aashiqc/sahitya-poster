@@ -61,7 +61,7 @@ export async function loader({ request }: Route.LoaderArgs) {
     );
   }
 
-  const [levelsRes, programsRes, resultsRes] = await Promise.all([
+  const [levelsRes, programsRes, resultsRes, standingsRes] = await Promise.all([
     supabase
       .from("levels")
       .select("id, code, name_ml, sort_order")
@@ -82,6 +82,12 @@ export async function loader({ request }: Route.LoaderArgs) {
       `)
       .eq("event_id", event.id)
       .eq("status", "published"),
+    supabase
+      .from("team_standings")
+      .select("after_n, rank, team_name, points")
+      .eq("event_id", event.id)
+      .order("after_n", { ascending: false })
+      .order("rank", { ascending: true }),
   ]);
 
   const levels = levelsRes.data ?? [];
@@ -130,6 +136,25 @@ export async function loader({ request }: Route.LoaderArgs) {
     };
   });
 
+  // Latest admin-uploaded standings snapshot (rows are ordered after_n
+  // desc, rank asc — so the first group is the most recent checkpoint).
+  type SRow = { after_n: number; rank: number; team_name: string; points: number };
+  const sRows = (standingsRes.data ?? []) as SRow[];
+  const latestN = sRows.length > 0 ? sRows[0].after_n : null;
+  const standings =
+    latestN === null
+      ? null
+      : {
+          afterN: latestN,
+          rows: sRows
+            .filter((r) => r.after_n === latestN)
+            .sort((a, b) => a.rank - b.rank)
+            .map((r) => ({
+              name: r.team_name,
+              points: Number(r.points),
+            })),
+        };
+
   return data(
     {
       event,
@@ -138,6 +163,7 @@ export async function loader({ request }: Route.LoaderArgs) {
       totalPublished: results.length,
       totalPrograms: programs.length,
       allWinners,
+      standings,
     },
     {
       headers: {
@@ -210,7 +236,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
   if (!loaderData.published) {
     return <NotYetLive event={loaderData.event} />;
   }
-  const { event, levels, totalPublished, allWinners } = loaderData;
+  const { event, levels, standings } = loaderData;
   const org = (event.organizations as { name?: string } | null)?.name;
   const eventName = event.name ?? event.name_ml;
   const [standingsOpen, setStandingsOpen] = useState(false);
@@ -287,8 +313,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
 
       {standingsOpen && (
         <StandingsSheet
-          totalPublished={totalPublished}
-          winners={allWinners}
+          snapshot={standings}
           onClose={() => setStandingsOpen(false)}
         />
       )}
@@ -434,8 +459,10 @@ function ChatFlow({
       side: "user",
       node: <span>{programLabel(program)}</span>,
     });
+    const ranked =
+      program.result?.winners.filter((w) => w.position >= 1) ?? [];
     withTyping(program.result ? 480 : 280, () => {
-      if (program.result) {
+      if (program.result && ranked.length >= 3) {
         push({
           id: nextId("b"),
           side: "bot",
@@ -448,6 +475,21 @@ function ChatFlow({
               program={program}
               winners={program.result.winners}
               resultNo={program.result.result_no}
+              onAnotherInLevel={() => handleAnotherInLevel(level)}
+              onDifferentLevel={handleDifferentLevel}
+            />
+          ),
+        });
+      } else if (program.result) {
+        // 1–2 participant results: no poster, just a compact text card.
+        push({
+          id: nextId("b"),
+          side: "bot",
+          node: (
+            <ResultTextBubble
+              level={level}
+              program={program}
+              winners={ranked}
               onAnotherInLevel={() => handleAnotherInLevel(level)}
               onDifferentLevel={handleDifferentLevel}
             />
@@ -780,6 +822,74 @@ function AwaitingBubble({
       </p>
       <p className="text-xs text-ink-500 mt-1">
         Try another program — results come in fast.
+      </p>
+      <ChoiceRow>
+        <ChoiceButton onClick={onAnotherInLevel}>
+          Another in {levelLabel(level)}
+        </ChoiceButton>
+        <ChoiceButton onClick={onDifferentLevel}>Different category</ChoiceButton>
+      </ChoiceRow>
+    </div>
+  );
+}
+
+// Compact, poster-less result — used when a program has fewer than 3
+// ranked winners (1–2 participants). Points come from the uploaded
+// standings, so no poster is generated for these.
+function ResultTextBubble({
+  level,
+  program,
+  winners,
+  onAnotherInLevel,
+  onDifferentLevel,
+}: {
+  level: Level;
+  program: Program;
+  winners: Winner[];
+  onAnotherInLevel: () => void;
+  onDifferentLevel: () => void;
+}) {
+  const ranked = [...winners]
+    .filter((w) => w.position >= 1)
+    .sort((a, b) => a.position - b.position);
+  const ordinal = ["1st", "2nd", "3rd", "4th"];
+  return (
+    <div>
+      <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-red/80">
+        {levelLabel(level)}
+      </p>
+      <p className="text-base font-semibold text-ink-900 mt-1">
+        {programLabel(program)}
+      </p>
+      {ranked.length === 0 ? (
+        <p className="text-xs text-ink-500 mt-1.5">Result published.</p>
+      ) : (
+        <ul className="mt-2 space-y-1.5">
+          {ranked.map((w, i) => {
+            const slug = w.unit_ml?.toLowerCase() ?? null;
+            const unit = slug
+              ? TEAM_BY_SLUG[slug]?.name ?? w.unit_ml
+              : w.unit_ml;
+            return (
+              <li key={i} className="flex items-baseline gap-2 text-sm">
+                <span className="shrink-0 inline-flex w-9 justify-center rounded-full bg-red/10 py-0.5 text-[10px] font-bold text-red">
+                  {ordinal[Math.min(Math.max(w.position, 1), 4) - 1] ??
+                    w.position}
+                </span>
+                <span className="font-semibold text-ink-900">
+                  {w.name_en ?? w.name_ml}
+                </span>
+                {unit && (
+                  <span className="text-xs text-ink-500">· {unit}</span>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      <p className="text-[11px] text-ink-400 mt-2.5">
+        Small program — no poster for this one; points are in the team
+        standings.
       </p>
       <ChoiceRow>
         <ChoiceButton onClick={onAnotherInLevel}>
