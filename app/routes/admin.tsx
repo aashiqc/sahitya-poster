@@ -420,10 +420,12 @@ export async function action({ request }: Route.ActionArgs) {
     return data({ ok: true }, { headers: Object.fromEntries(headers) });
   }
 
-  if (intent === "save_draft" || intent === "save_publish" || intent === "save_publish_next") {
+  if (intent === "save_draft" || intent === "save_publish") {
     const result_no = String(fd.get("result_no") ?? "").trim() || null;
     const publish = intent !== "save_draft";
 
+    // Only 1st/2nd/3rd, name + team. Team points come from the
+    // separate standings CSV, so no marks/grade are collected here.
     const winners: {
       position: number;
       name_ml: string;
@@ -435,38 +437,13 @@ export async function action({ request }: Route.ActionArgs) {
     for (const pos of [1, 2, 3]) {
       const name = String(fd.get(`winner_${pos}_name_en`) ?? "").trim();
       if (!name) continue;
-      const marksRaw = String(fd.get(`winner_${pos}_marks`) ?? "").trim();
       winners.push({
         position: pos,
-        // name_ml is NOT NULL in the DB; English name is the only one
-        // collected now, so it backs both columns.
+        // name_ml is NOT NULL in the DB; English name backs both columns.
         name_ml: name,
         name_en: name,
         unit_ml: String(fd.get(`winner_${pos}_unit_ml`) ?? "").trim() || null,
-        marks: marksRaw ? Number(marksRaw) : null,
-        grade: null,
-      });
-    }
-
-    // Extra marks — NOT a podium place, never rendered on the poster or
-    // individual result (stored with position 0), but the marks add to
-    // the team's total points.
-    const extraCount = Math.min(
-      Math.max(parseInt(String(fd.get("extra_count") ?? "0"), 10) || 0, 0),
-      200,
-    );
-    for (let i = 0; i < extraCount; i++) {
-      const unit = String(fd.get(`extra_${i}_unit_ml`) ?? "").trim() || null;
-      const marksRaw = String(fd.get(`extra_${i}_marks`) ?? "").trim();
-      const marks = marksRaw ? Number(marksRaw) : NaN;
-      if (!unit || !Number.isFinite(marks)) continue;
-      const name = String(fd.get(`extra_${i}_name`) ?? "").trim();
-      winners.push({
-        position: 0,
-        name_ml: name || "Extra marks",
-        name_en: name || "Extra marks",
-        unit_ml: unit,
-        marks,
+        marks: null,
         grade: null,
       });
     }
@@ -523,12 +500,6 @@ export async function action({ request }: Route.ActionArgs) {
       .insert(winners.map((w) => ({ result_id: resultId, ...w })));
     if (wErr) return data({ error: wErr.message }, { headers: Object.fromEntries(headers) });
 
-    if (intent === "save_publish_next") {
-      const nextCode = String(fd.get("next_code") ?? "");
-      return redirect(nextCode ? `/admin?edit=${nextCode}` : "/admin", {
-        headers: Object.fromEntries(headers),
-      });
-    }
     // Stay on the modal and show success — no redirect.
     return data({ ok: true }, { headers: Object.fromEntries(headers) });
   }
@@ -1177,102 +1148,6 @@ function StandingsView({
 }
 
 // ============================================================================
-// Extra marks — marks attributed to a team that aren't a podium place.
-// Not rendered on the poster or individual result; the marks add to the
-// team's total points.
-// ============================================================================
-type ExtraRow = { name: string; unit: string; marks: string };
-
-function ExtraMarkEntries({ initial }: { initial: ExtraRow[] }) {
-  const [rows, setRows] = useState<ExtraRow[]>(initial);
-  const update = (i: number, patch: Partial<ExtraRow>) =>
-    setRows((r) => r.map((x, idx) => (idx === i ? { ...x, ...patch } : x)));
-  const add = () =>
-    setRows((r) => [...r, { name: "", unit: "", marks: "" }]);
-  const remove = (i: number) =>
-    setRows((r) => r.filter((_, idx) => idx !== i));
-
-  const field =
-    "rounded-md border border-stone-300 bg-white px-2 py-1.5 text-sm focus:outline-none focus:border-stone-400";
-
-  return (
-    <div className="rounded-lg border border-stone-200 bg-stone-50/60 p-2.5">
-      <input type="hidden" name="extra_count" value={rows.length} />
-      <div className="flex items-center justify-between gap-3">
-        <p className="text-[11px] font-medium uppercase tracking-wider text-stone-500">
-          Extra marks{" "}
-          <span className="font-normal normal-case text-stone-400">
-            · added to team points, not on poster or result
-          </span>
-        </p>
-        <button
-          type="button"
-          onClick={add}
-          className="shrink-0 rounded-md border border-stone-300 bg-white px-2 py-1 text-xs font-medium text-stone-700 hover:bg-stone-100"
-        >
-          + Add
-        </button>
-      </div>
-
-      {rows.length === 0 ? (
-        <p className="mt-1.5 text-[11px] text-stone-400">
-          Add marks earned by a team that aren't a podium place so they
-          still count toward the team's total points.
-        </p>
-      ) : (
-        <div className="mt-2 space-y-1.5">
-          {rows.map((row, i) => (
-            <div
-              key={i}
-              className="grid grid-cols-[minmax(0,1fr)_9rem_5rem_2rem] gap-2 items-center"
-            >
-              <input
-                name={`extra_${i}_name`}
-                value={row.name}
-                onChange={(e) => update(i, { name: e.target.value })}
-                placeholder="Name / note (optional)"
-                className={`${field} w-full`}
-              />
-              <select
-                name={`extra_${i}_unit_ml`}
-                value={row.unit}
-                onChange={(e) => update(i, { unit: e.target.value })}
-                className={field}
-              >
-                <option value="">Team —</option>
-                {TEAMS.map((t) => (
-                  <option key={t.slug} value={t.slug}>
-                    {t.name}
-                  </option>
-                ))}
-              </select>
-              <input
-                name={`extra_${i}_marks`}
-                type="number"
-                step="0.01"
-                inputMode="decimal"
-                value={row.marks}
-                onChange={(e) => update(i, { marks: e.target.value })}
-                placeholder="Marks"
-                className={`${field} w-full text-right tabular-nums`}
-              />
-              <button
-                type="button"
-                onClick={() => remove(i)}
-                aria-label="Remove entry"
-                className="inline-flex size-7 items-center justify-center rounded-md text-stone-400 hover:bg-stone-200 hover:text-stone-700"
-              >
-                <X className="size-4" />
-              </button>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ============================================================================
 // Result entry modal
 // ============================================================================
 function ResultModal({
@@ -1306,7 +1181,7 @@ function ResultModal({
     };
   }, []);
 
-  const { program, level, result, winners, suggestedResultNo, neighbors } = editData;
+  const { program, level, result, winners, neighbors } = editData;
   const status = result?.status ?? "none";
   const winnersByPos = new Map<number, typeof winners[number]>();
   for (const w of winners) winnersByPos.set(w.position, w);
@@ -1365,9 +1240,6 @@ function ResultModal({
           className="flex-1 min-h-0 flex flex-col"
         >
           <input type="hidden" name="program_code" value={program.code} />
-          {neighbors.next && (
-            <input type="hidden" name="next_code" value={neighbors.next.code} />
-          )}
 
           {/* Scrollable body */}
           <div className="flex-1 overflow-auto px-4 py-3 space-y-2.5">
@@ -1382,22 +1254,18 @@ function ResultModal({
               <input
                 id="result_no"
                 name="result_no"
-                defaultValue={result?.result_no ?? suggestedResultNo ?? ""}
+                defaultValue={result?.result_no ?? ""}
                 placeholder="030"
                 inputMode="numeric"
                 className="w-20 rounded-md border border-stone-300 bg-white px-2.5 py-1.5 text-sm tabular-nums focus:outline-none focus:border-stone-400"
               />
-              {!result && suggestedResultNo && (
-                <span className="text-[10px] text-stone-400">auto-suggested</span>
-              )}
             </div>
 
             {/* Column headers (laptop) */}
-            <div className="hidden md:grid grid-cols-[3.25rem_minmax(0,1fr)_11rem_5rem] gap-2 px-1 text-[10px] font-medium uppercase tracking-wider text-stone-400">
+            <div className="hidden md:grid grid-cols-[3.25rem_minmax(0,1fr)_13rem] gap-2 px-1 text-[10px] font-medium uppercase tracking-wider text-stone-400">
               <span>Place</span>
               <span>Name</span>
               <span>Team</span>
-              <span className="text-right">Marks</span>
             </div>
 
             {[1, 2, 3].map((pos) => {
@@ -1407,14 +1275,14 @@ function ResultModal({
               return (
                 <div
                   key={pos}
-                  className={`grid items-center gap-2 grid-cols-2 md:grid-cols-[3.25rem_minmax(0,1fr)_11rem_5rem] rounded-lg border px-2.5 py-2 ${
+                  className={`grid items-center gap-2 grid-cols-1 md:grid-cols-[3.25rem_minmax(0,1fr)_13rem] rounded-lg border px-2.5 py-2 ${
                     isFirst
                       ? "border-amber-300 bg-amber-50/40"
                       : "border-stone-200"
                   }`}
                 >
                   <span
-                    className={`col-span-2 md:col-auto inline-flex items-center justify-center rounded-full text-[11px] font-semibold w-12 h-6 ${meta.tone}`}
+                    className={`inline-flex items-center justify-center rounded-full text-[11px] font-semibold w-12 h-6 ${meta.tone}`}
                   >
                     {meta.ordinal}
                   </span>
@@ -1424,12 +1292,12 @@ function ResultModal({
                     autoFocus={isFirst && !winnersByPos.get(1)}
                     defaultValue={w?.name_en ?? w?.name_ml ?? ""}
                     placeholder={isFirst ? "Winner name" : "Name (optional)"}
-                    className="col-span-2 md:col-auto w-full rounded-md border border-stone-300 bg-white px-2.5 py-1.5 text-sm focus:outline-none focus:border-stone-400"
+                    className="w-full rounded-md border border-stone-300 bg-white px-2.5 py-1.5 text-sm focus:outline-none focus:border-stone-400"
                   />
                   <select
                     name={`winner_${pos}_unit_ml`}
                     defaultValue={(w?.unit_ml ?? "").toLowerCase()}
-                    className="col-span-1 md:col-auto rounded-md border border-stone-300 bg-white px-2 py-1.5 text-sm focus:outline-none focus:border-stone-400"
+                    className="rounded-md border border-stone-300 bg-white px-2 py-1.5 text-sm focus:outline-none focus:border-stone-400"
                   >
                     <option value="">Team —</option>
                     {TEAMS.map((t) => (
@@ -1438,29 +1306,9 @@ function ResultModal({
                       </option>
                     ))}
                   </select>
-                  <input
-                    name={`winner_${pos}_marks`}
-                    type="number"
-                    step="0.01"
-                    inputMode="decimal"
-                    defaultValue={w?.marks?.toString() ?? ""}
-                    placeholder="Marks"
-                    className="col-span-1 md:col-auto w-full rounded-md border border-stone-300 bg-white px-2 py-1.5 text-sm tabular-nums text-right focus:outline-none focus:border-stone-400"
-                  />
                 </div>
               );
             })}
-
-            <ExtraMarkEntries
-              key={program.code}
-              initial={winners
-                .filter((w) => w.position < 1)
-                .map((w) => ({
-                  name: w.name_en ?? w.name_ml ?? "",
-                  unit: (w.unit_ml ?? "").toLowerCase(),
-                  marks: w.marks != null ? String(w.marks) : "",
-                }))}
-            />
 
             {actionData && "error" in actionData && (
               <p className="text-xs text-red-700 bg-red-50 border border-red-200 rounded-md px-3 py-2">
@@ -1517,11 +1365,11 @@ function ResultModal({
               <button
                 type="submit"
                 name="intent"
-                value={neighbors.next ? "save_publish_next" : "save_publish"}
+                value="save_publish"
                 disabled={busy}
                 className="rounded-md bg-brand-700 hover:bg-brand-800 text-white px-4 py-1.5 text-sm font-medium disabled:opacity-50"
               >
-                {busy ? "…" : neighbors.next ? "Publish & next" : "Publish"}
+                {busy ? "…" : "Publish"}
               </button>
             </div>
           </div>
@@ -1584,7 +1432,6 @@ type EditData = {
   level: { code: string; name_ml: string };
   result: { id: string; status: string; result_no: string | null } | null;
   winners: EditWinner[];
-  suggestedResultNo: string | null;
   neighbors: {
     prev: { code: string; name_ml: string } | null;
     next: { code: string; name_ml: string } | null;
@@ -1628,16 +1475,6 @@ function buildEditData(
   if (!program || !level) return null;
 
   const r = program.result;
-  let suggestedResultNo: string | null = null;
-  if (!r) {
-    const used = levels
-      .flatMap((l) => l.programs)
-      .map((p) => parseInt(p.result?.result_no ?? "", 10))
-      .filter((n) => Number.isFinite(n) && n > 0);
-    suggestedResultNo = String(
-      (used.length > 0 ? Math.max(...used) : 0) + 1,
-    ).padStart(3, "0");
-  }
 
   const siblings = level.programs
     .slice()
@@ -1658,7 +1495,6 @@ function buildEditData(
       ? { id: r.id, status: r.status, result_no: r.result_no }
       : null,
     winners: r?.winners ?? [],
-    suggestedResultNo,
     neighbors: {
       prev: prev ? { code: prev.code, name_ml: prev.name_ml } : null,
       next: next ? { code: next.code, name_ml: next.name_ml } : null,
@@ -1816,7 +1652,9 @@ function SharePostersView({
       <div className="flex items-center justify-between gap-3 mb-3">
         <div className="min-w-0">
           <p className="text-[11px] font-mono uppercase tracking-widest text-stone-400">
-            {item?.code} · Result {clampedIdx + 1} of {total}
+            {item?.code}
+            {item?.data.resultNo ? ` · Result #${item.data.resultNo}` : ""} ·{" "}
+            {clampedIdx + 1} of {total}
           </p>
           <p className="text-sm font-semibold truncate">
             {item?.programName}
