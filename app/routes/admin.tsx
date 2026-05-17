@@ -55,6 +55,17 @@ export function meta() {
   return [{ title: "Admin · Sahityotsav" }];
 }
 
+// Normalize a candidate name to Title Case (first letter of each word
+// upper, rest lower) so stored names are consistent regardless of how
+// the admin typed them. Mirrors Postgres initcap(); Unicode-aware so
+// Malayalam (no case) passes through unchanged.
+function titleCaseName(s: string): string {
+  return s
+    .trim()
+    .toLowerCase()
+    .replace(/(^|[^\p{L}\p{N}])(\p{L})/gu, (_m, sep, ch) => sep + ch.toUpperCase());
+}
+
 // ── Standings CSV parsing (header: Rank,Team Name,Points) ────────────
 function csvCells(line: string): string[] {
   const out: string[] = [];
@@ -435,8 +446,9 @@ export async function action({ request }: Route.ActionArgs) {
       grade: string | null;
     }[] = [];
     for (const pos of [1, 2, 3]) {
-      const name = String(fd.get(`winner_${pos}_name_en`) ?? "").trim();
-      if (!name) continue;
+      const raw = String(fd.get(`winner_${pos}_name_en`) ?? "").trim();
+      if (!raw) continue;
+      const name = titleCaseName(raw);
       winners.push({
         position: pos,
         // name_ml is NOT NULL in the DB; English name backs both columns.
