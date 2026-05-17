@@ -462,7 +462,7 @@ function ChatFlow({
     const ranked =
       program.result?.winners.filter((w) => w.position >= 1) ?? [];
     withTyping(program.result ? 480 : 280, () => {
-      if (program.result && ranked.length >= 3) {
+      if (program.result && ranked.length >= 2) {
         push({
           id: nextId("b"),
           side: "bot",
@@ -481,7 +481,7 @@ function ChatFlow({
           ),
         });
       } else if (program.result) {
-        // 1–2 participant results: no poster, just a compact text card.
+        // <2 ranked winners: published but no poster — compact text card.
         push({
           id: nextId("b"),
           side: "bot",
@@ -833,8 +833,8 @@ function AwaitingBubble({
   );
 }
 
-// Compact, poster-less result — used when a program has fewer than 3
-// ranked winners (1–2 participants). Points come from the uploaded
+// Compact, poster-less result — used when a program has fewer than 2
+// ranked winners. Still published; points come from the uploaded
 // standings, so no poster is generated for these.
 function ResultTextBubble({
   level,

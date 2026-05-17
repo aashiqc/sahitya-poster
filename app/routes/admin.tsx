@@ -1537,9 +1537,9 @@ function SharePostersView({
           return { position: w.position, name: w.name_en ?? w.name_ml, unit };
         });
       const programName = program.name_en ?? program.code;
-      // Skip the poster for thin results (1–2 participants) — they
-      // still count via the uploaded standings, just no poster.
-      if (winners.length >= 3) {
+      // Skip the poster for <2-winner results — still published, they
+      // count via the uploaded standings, just no poster.
+      if (winners.length >= 2) {
         out.push({
           kind: "result",
           key: `r-${r.id}`,
