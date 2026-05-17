@@ -491,6 +491,10 @@ function ChatFlow({
   // follow new bubbles only when the reader is already at the bottom,
   // so an auto-announced result never yanks them out of history.
   const atBottomRef = useRef(true);
+  // Skip the very first auto-scroll so the page opens at the top — the
+  // reader should see the lead bubble (e.g. the final poster), not be
+  // thrown to the bottom on load.
+  const firstRenderRef = useRef(true);
 
   const scrollToEnd = () =>
     endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
@@ -515,6 +519,10 @@ function ChatFlow({
   // following along. If they've scrolled up, the "Latest" pill (which
   // shows whenever !atBottom) is their cue instead.
   useEffect(() => {
+    if (firstRenderRef.current) {
+      firstRenderRef.current = false;
+      return; // initial load — stay at the top, show the lead bubble
+    }
     if (atBottomRef.current) scrollToEnd();
   }, [bubbles.length, typing]);
 
