@@ -1215,7 +1215,24 @@ export default function Admin({ loaderData }: Route.ComponentProps) {
           )}
           {view === "import" && <ImportResultsView />}
           {view === "templates" && (
-            <TemplateStudioView posterMeta={posterMeta} siteUrl={siteUrl} />
+            <TemplateStudioView
+              // Remount (re-seed all editor state + previews) only when the
+              // persisted poster settings actually change — i.e. after a
+              // successful save + loader revalidation. Typing/dragging
+              // (no save) keeps the key stable, so edits aren't lost.
+              key={JSON.stringify({
+                d: posterMeta.defaultTemplate,
+                l: posterMeta.lang,
+                fe: posterMeta.fontEn,
+                fm: posterMeta.fontMl,
+                n: posterMeta.orgName,
+                dt: posterMeta.posterDate,
+                p: posterMeta.posterPlace,
+                ly: posterMeta.layout,
+              })}
+              posterMeta={posterMeta}
+              siteUrl={siteUrl}
+            />
           )}
           {view === "dashboard" && (
             <DashboardView
@@ -2495,7 +2512,13 @@ function TemplateStudioView({
                   </button>
                 </div>
                 <div className="bg-stone-100 p-2">
-                  <PosterCanvas data={sample()} templateIndex={tplIdx} />
+                  <PosterCanvas
+                    data={{
+                      ...sample(),
+                      overrides: layoutMap[String(tplIdx)],
+                    }}
+                    templateIndex={tplIdx}
+                  />
                 </div>
               </div>
             );
