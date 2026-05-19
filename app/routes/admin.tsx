@@ -2634,6 +2634,16 @@ function TemplateStudioView({
       s: Math.min(1.8, Math.max(0.5, (cur.s ?? 1) + d)),
     });
   };
+  const colorEl = (el: LayoutEl, color: string) => patchEl(el, { color });
+  const autoColor = (el: LayoutEl) => patchEl(el, { color: undefined });
+  const toggleBold = (el: LayoutEl, defBold: boolean) =>
+    patchEl(el, {
+      bold: !(layoutMap[tplKey]?.[el]?.bold ?? defBold),
+    });
+  const toggleItalic = (el: LayoutEl) =>
+    patchEl(el, {
+      italic: !(layoutMap[tplKey]?.[el]?.italic ?? false),
+    });
   const resetTpl = () =>
     setLayoutMap((m) => {
       const next = { ...m };
@@ -3024,10 +3034,11 @@ function TemplateStudioView({
               </span>
             </div>
             <p className="mt-1 text-xs text-stone-500">
-              Drag any block on the preview to move it; resize with −/＋.
-              Positions are saved per&nbsp;template so every generated
-              poster stays consistent. Reset reverts to the built-in
-              layout.
+              Drag any block on the preview to move it; the category and
+              program move independently. Resize with −/＋ and recolour or
+              set bold / italic per block. Everything is saved
+              per&nbsp;template so every generated poster stays consistent.
+              Reset reverts to the built-in layout.
             </p>
           </div>
         </div>
@@ -3051,62 +3062,128 @@ function TemplateStudioView({
 
           <div className="flex flex-col gap-4">
             <div className="space-y-2">
-              <span className={lbl}>Block size</span>
+              <span className={lbl}>Blocks · position, size &amp; style</span>
               {(
                 [
-                  ["meta", "Name · date · place", "Org line at the top"],
-                  ["content", "Category & program", "The program heading"],
-                  ["winners", "Winners list", "Ranked names & units"],
+                  ["meta", "Name · date · place", "Org / date / venue", false],
+                  ["level", "Category / level", "e.g. Senior, Junior", true],
+                  ["program", "Program name", "The program heading", true],
+                  ["winners", "Winners list", "Ranked names & units", true],
                   [
                     "resultNo",
                     "Result number",
                     "The corner result badge",
+                    true,
                   ],
-                ] as [LayoutEl, string, string][]
-              ).map(([el, label, desc]) => {
-                const pct = Math.round((ov[el]?.s ?? 1) * 100);
+                ] as [LayoutEl, string, string, boolean][]
+              ).map(([el, label, desc, defBold]) => {
+                const cur = ov[el];
+                const pct = Math.round((cur?.s ?? 1) * 100);
+                const colorVal = cur?.color ?? "#111111";
+                const hasColor = !!cur?.color;
+                const isBold = cur?.bold ?? defBold;
+                const isItalic = !!cur?.italic;
                 return (
                   <div
                     key={el}
-                    className="flex items-center justify-between gap-3 rounded-lg border border-stone-200 px-3 py-2.5"
+                    className="rounded-lg border border-stone-200 p-3"
                   >
-                    <div className="min-w-0">
-                      <p className="truncate text-sm font-medium text-stone-800">
-                        {label}
-                      </p>
-                      <p className="truncate text-[11px] text-stone-400">
-                        {desc}
-                      </p>
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-medium text-stone-800">
+                          {label}
+                        </p>
+                        <p className="truncate text-[11px] text-stone-400">
+                          {desc}
+                        </p>
+                      </div>
+                      <div className="flex shrink-0 items-center gap-2">
+                        <span
+                          className={`w-11 text-right text-xs tabular-nums ${
+                            pct === 100
+                              ? "text-stone-400"
+                              : "font-semibold text-brand-700"
+                          }`}
+                        >
+                          {pct}%
+                        </span>
+                        <div className="flex items-center overflow-hidden rounded-md border border-stone-300">
+                          <button
+                            type="button"
+                            aria-label={`Shrink ${label}`}
+                            onClick={() => sizeEl(el, -0.05)}
+                            className="grid size-7 place-items-center text-stone-600 transition hover:bg-stone-100"
+                          >
+                            −
+                          </button>
+                          <span className="h-7 w-px bg-stone-300" />
+                          <button
+                            type="button"
+                            aria-label={`Enlarge ${label}`}
+                            onClick={() => sizeEl(el, 0.05)}
+                            className="grid size-7 place-items-center text-stone-600 transition hover:bg-stone-100"
+                          >
+                            ＋
+                          </button>
+                        </div>
+                      </div>
                     </div>
-                    <div className="flex shrink-0 items-center gap-2">
-                      <span
-                        className={`w-11 text-right text-xs tabular-nums ${
-                          pct === 100
-                            ? "text-stone-400"
-                            : "font-semibold text-brand-700"
+
+                    <div className="mt-2.5 flex flex-wrap items-center gap-2 border-t border-stone-100 pt-2.5">
+                      <label
+                        title={`${label} text color`}
+                        className="relative grid size-7 cursor-pointer place-items-center rounded-md border border-stone-300"
+                      >
+                        <span
+                          className="size-4 rounded-sm ring-1 ring-inset ring-black/10"
+                          style={{ backgroundColor: colorVal }}
+                        />
+                        <input
+                          type="color"
+                          value={colorVal}
+                          onChange={(e) => colorEl(el, e.target.value)}
+                          className="absolute inset-0 cursor-pointer opacity-0"
+                        />
+                      </label>
+                      {hasColor ? (
+                        <button
+                          type="button"
+                          onClick={() => autoColor(el)}
+                          className="rounded-md border border-stone-300 px-2 py-1 text-[11px] font-medium text-stone-600 transition hover:bg-stone-50"
+                        >
+                          Auto
+                        </button>
+                      ) : (
+                        <span className="text-[11px] text-stone-400">
+                          Template color
+                        </span>
+                      )}
+                      <button
+                        type="button"
+                        aria-pressed={isBold}
+                        onClick={() => toggleBold(el, defBold)}
+                        title="Bold"
+                        className={`grid size-7 place-items-center rounded-md border text-sm font-bold transition ${
+                          isBold
+                            ? "border-brand-600 bg-brand-50 text-brand-700"
+                            : "border-stone-300 text-stone-600 hover:bg-stone-50"
                         }`}
                       >
-                        {pct}%
-                      </span>
-                      <div className="flex items-center overflow-hidden rounded-md border border-stone-300">
-                        <button
-                          type="button"
-                          aria-label={`Shrink ${label}`}
-                          onClick={() => sizeEl(el, -0.05)}
-                          className="grid size-7 place-items-center text-stone-600 transition hover:bg-stone-100"
-                        >
-                          −
-                        </button>
-                        <span className="h-7 w-px bg-stone-300" />
-                        <button
-                          type="button"
-                          aria-label={`Enlarge ${label}`}
-                          onClick={() => sizeEl(el, 0.05)}
-                          className="grid size-7 place-items-center text-stone-600 transition hover:bg-stone-100"
-                        >
-                          ＋
-                        </button>
-                      </div>
+                        B
+                      </button>
+                      <button
+                        type="button"
+                        aria-pressed={isItalic}
+                        onClick={() => toggleItalic(el)}
+                        title="Italic"
+                        className={`grid size-7 place-items-center rounded-md border font-serif text-sm italic transition ${
+                          isItalic
+                            ? "border-brand-600 bg-brand-50 text-brand-700"
+                            : "border-stone-300 text-stone-600 hover:bg-stone-50"
+                        }`}
+                      >
+                        I
+                      </button>
                     </div>
                   </div>
                 );

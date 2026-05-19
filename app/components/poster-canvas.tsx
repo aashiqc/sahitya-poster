@@ -39,11 +39,40 @@ export type PosterData = {
   overrides?: TemplateOverride;
 };
 
-export type LayoutEl = "meta" | "content" | "winners" | "resultNo";
-export type ElOverride = { x?: number; y?: number; s?: number };
-export type TemplateOverride = Partial<Record<LayoutEl, ElOverride>>;
-/** Whole-event layout map: { [templateIndex]: { el: {x,y,s} } }. */
+export type LayoutEl = "meta" | "level" | "program" | "winners" | "resultNo";
+/** Tolerates the pre-split "content" key still present in layouts saved
+ *  before level/program became independent blocks. */
+type StoredLayoutEl = LayoutEl | "content";
+export type ElOverride = {
+  x?: number;
+  y?: number;
+  s?: number;
+  /** Per-element text tone (hex). Empty/unset → the template's baked
+   *  default tone for that element. */
+  color?: string;
+  /** Explicit weight / slant. Unset → the element's natural default. */
+  bold?: boolean;
+  italic?: boolean;
+};
+export type TemplateOverride = Partial<Record<StoredLayoutEl, ElOverride>>;
+/** Whole-event layout map: { [templateKey]: { el: {x,y,s,…} } }. */
 export type PosterLayoutMap = Record<string, TemplateOverride>;
+
+/** Resolve a text element's effective fill — the admin's per-element
+ *  color override, else the template's baked tone. */
+function ovColor(ov: ElOverride | undefined, fallback: string): string {
+  return ov?.color || fallback;
+}
+/** Konva fontStyle from the element's bold/italic overrides. `defBold`
+ *  is the element's natural weight when the admin hasn't set one. */
+function ovFontStyle(ov: ElOverride | undefined, defBold: boolean): string {
+  const bold = ov?.bold ?? defBold;
+  const italic = ov?.italic ?? false;
+  return (
+    [bold ? "bold" : "", italic ? "italic" : ""].filter(Boolean).join(" ") ||
+    "normal"
+  );
+}
 
 // ─────────────────────────────────────────────────────────────────────
 // Stage geometry — templates are native 1080×1350 (4:5 portrait).
@@ -505,9 +534,11 @@ function DraggableEl({
 const TenantMeta = ({
   data,
   layout,
+  ov,
 }: {
   data: PosterData;
   layout: TemplateLayout;
+  ov?: ElOverride;
 }) => {
   const m = layout.meta;
   if (!m) return null;
@@ -538,8 +569,8 @@ const TenantMeta = ({
           text={ln.text}
           fontFamily={data.fontFamily || BODY_FONT}
           fontSize={ln.size}
-          fontStyle={ln.bold ? "bold" : "normal"}
-          fill={m.color}
+          fontStyle={ovFontStyle(ov, !!ln.bold)}
+          fill={ovColor(ov, m.color)}
           lineHeight={1.2}
         />
       ))}
@@ -611,6 +642,25 @@ export const PosterCanvas = ({
   const displayHeight = STAGE_H * scale;
   const ready = mounted && w > 0 && imgDone;
 
+  // Level + program were one "content" block before they became
+  // independently movable. Fall back to a saved `content` override so
+  // already-positioned layouts keep their look; new edits write the
+  // split keys. The program inherits content's offset + its old gap.
+  const co = data.overrides?.content;
+  const levelOv: ElOverride | undefined = data.overrides?.level ?? co;
+  const programOv: ElOverride | undefined =
+    data.overrides?.program ??
+    (co
+      ? {
+          x: co.x,
+          y: co.y != null ? co.y + PROGRAM_DY : undefined,
+          s: co.s,
+          color: co.color,
+          bold: co.bold,
+          italic: co.italic,
+        }
+      : undefined);
+
   return (
     <div
       ref={wrapRef}
@@ -659,20 +709,32 @@ export const PosterCanvas = ({
               editable={editable}
               onMove={onMove}
             >
-              <TenantMeta data={data} layout={layout} />
+              <TenantMeta data={data} layout={layout} ov={data.overrides?.meta} />
             </DraggableEl>
           )}
 
-          {/* Level (subtitle) + Program (title) block */}
+          {/* Category / level — independently positioned & styled */}
           <DraggableEl
-            el="content"
+            el="level"
             baseX={layout.contentX}
             baseY={layout.contentY}
-            ov={data.overrides?.content}
+            ov={levelOv}
             editable={editable}
             onMove={onMove}
           >
-            <SubtitleTitle data={data} layout={layout} />
+            <LevelText data={data} layout={layout} ov={levelOv} />
+          </DraggableEl>
+
+          {/* Program name — its own block, moved & styled separately */}
+          <DraggableEl
+            el="program"
+            baseX={layout.contentX}
+            baseY={layout.contentY + PROGRAM_DY}
+            ov={programOv}
+            editable={editable}
+            onMove={onMove}
+          >
+            <ProgramText data={data} layout={layout} ov={programOv} />
           </DraggableEl>
 
           {/* Winners list */}
@@ -684,7 +746,12 @@ export const PosterCanvas = ({
             editable={editable}
             onMove={onMove}
           >
-            <WinnersList winners={data.winners} layout={layout} font={font} />
+            <WinnersList
+              winners={data.winners}
+              layout={layout}
+              font={font}
+              ov={data.overrides?.winners}
+            />
           </DraggableEl>
 
           {/* Result number — large, centered under the "Result" script */}
@@ -705,8 +772,8 @@ export const PosterCanvas = ({
                 text={formatResultNo(data.resultNo)}
                 fontFamily={font}
                 fontSize={layout.resultNo.fontSize}
-                fontStyle="bold"
-                fill={layout.resultNo.color}
+                fontStyle={ovFontStyle(data.overrides?.resultNo, true)}
+                fill={ovColor(data.overrides?.resultNo, layout.resultNo.color)}
               />
             </DraggableEl>
           )}
@@ -718,7 +785,9 @@ export const PosterCanvas = ({
 };
 
 // ─────────────────────────────────────────────────────────────────────
-// Subtitle (level) + title (program)
+// Level (category) and program — two independent text blocks. The
+// highlight that used to sit behind the level is part of each template's
+// artwork now, so nothing is drawn behind the text here.
 // ─────────────────────────────────────────────────────────────────────
 
 const SUBTITLE_SIZE = 34;
@@ -728,51 +797,43 @@ const TITLE_LH = 1.05;
 const TITLE_LINE_BUDGET = 2;
 const TITLE_TO_WINNERS_GAP = 38;
 
-// Category highlight pill
-const PILL_PADX = 22;
-const PILL_PADY = 10;
-const PILL_RADIUS = 0;
-const PILL_BG = "#4FB7B2";
-const PILL_TEXT = "#FFFFFF";
-const PILL_H = SUBTITLE_SIZE + PILL_PADY * 2;
+// Default vertical offset of the program block below the level block.
+// Kept equal to the legacy pill height + gap so existing templates and
+// already-saved layouts don't shift now that the baked highlight is gone.
+const LEVEL_BLOCK_H = 54;
+const PROGRAM_DY = LEVEL_BLOCK_H + SUBTITLE_GAP;
 
-/** Level name on a rounded highlight. The pill auto-fits the text by
- *  measuring the rendered Konva.Text width after mount. */
-function CategoryPill({ text, font }: { text: string; font: string }) {
-  const tref = useRef<Konva.Text | null>(null);
-  const [w, setW] = useState(0);
-  useEffect(() => {
-    const n = tref.current;
-    if (n) setW(Math.ceil(n.getTextWidth()));
-  }, [text]);
-  return (
-    <Group>
-      <Rect
-        width={w + PILL_PADX * 2}
-        height={PILL_H}
-        cornerRadius={PILL_RADIUS}
-        fill={PILL_BG}
-      />
-      <Text
-        ref={tref}
-        x={PILL_PADX}
-        y={PILL_PADY}
-        text={text}
-        fontFamily={font}
-        fontSize={SUBTITLE_SIZE}
-        fontStyle="bold"
-        fill={PILL_TEXT}
-      />
-    </Group>
-  );
-}
-
-function SubtitleTitle({
+function LevelText({
   data,
   layout,
+  ov,
 }: {
   data: PosterData;
   layout: TemplateLayout;
+  ov?: ElOverride;
+}) {
+  const font = data.fontFamily || BODY_FONT;
+  return (
+    <Text
+      x={0}
+      y={0}
+      text={data.levelName}
+      fontFamily={font}
+      fontSize={SUBTITLE_SIZE}
+      fontStyle={ovFontStyle(ov, true)}
+      fill={ovColor(ov, layout.subtitleColor)}
+    />
+  );
+}
+
+function ProgramText({
+  data,
+  layout,
+  ov,
+}: {
+  data: PosterData;
+  layout: TemplateLayout;
+  ov?: ElOverride;
 }) {
   // Girls' programs carry a longer "(Girls)" qualifier, so trim a touch
   // more so they still fit the title block.
@@ -780,21 +841,18 @@ function SubtitleTitle({
     TITLE_SIZE - (/girls/i.test(data.programName) ? 6 : 4);
   const font = data.fontFamily || BODY_FONT;
   return (
-    <>
-      <CategoryPill text={data.levelName} font={font} />
-      <Text
-        x={0}
-        y={PILL_H + SUBTITLE_GAP}
-        width={layout.contentW}
-        text={data.programName}
-        fontFamily={font}
-        fontSize={titleSize}
-        fontStyle="bold"
-        fill={layout.titleColor}
-        lineHeight={TITLE_LH}
-        wrap="word"
-      />
-    </>
+    <Text
+      x={0}
+      y={0}
+      width={layout.contentW}
+      text={data.programName}
+      fontFamily={font}
+      fontSize={titleSize}
+      fontStyle={ovFontStyle(ov, true)}
+      fill={ovColor(ov, layout.titleColor)}
+      lineHeight={TITLE_LH}
+      wrap="word"
+    />
   );
 }
 
@@ -814,8 +872,7 @@ function winnersStartY(layout: TemplateLayout): number {
   const titleH = TITLE_SIZE * TITLE_LH * TITLE_LINE_BUDGET;
   return (
     layout.contentY +
-    PILL_H +
-    SUBTITLE_GAP +
+    PROGRAM_DY +
     titleH +
     TITLE_TO_WINNERS_GAP
   );
@@ -825,10 +882,12 @@ function WinnersList({
   winners,
   layout,
   font,
+  ov,
 }: {
   winners: PosterWinner[];
   layout: TemplateLayout;
   font: string;
+  ov?: ElOverride;
 }) {
   // position < 1 ⇒ grade-only entries (counted for team points, never
   // shown on the poster). Only ranked places 1–4 render here.
@@ -846,6 +905,7 @@ function WinnersList({
           y={i * (ROW_H + ROW_GAP)}
           layout={layout}
           font={font}
+          ov={ov}
         />
       ))}
     </>
@@ -857,11 +917,13 @@ function WinnerRow({
   y,
   layout,
   font,
+  ov,
 }: {
   winner: PosterWinner;
   y: number;
   layout: TemplateLayout;
   font: string;
+  ov?: ElOverride;
 }) {
   const idx = Math.min(Math.max(winner.position, 1), 4) - 1;
   const chipR = CHIP_SIZE / 2;
@@ -902,8 +964,8 @@ function WinnerRow({
         text={winner.name}
         fontFamily={font}
         fontSize={NAME_SIZE}
-        fontStyle="bold"
-        fill={layout.nameColor}
+        fontStyle={ovFontStyle(ov, true)}
+        fill={ovColor(ov, layout.nameColor)}
         lineHeight={1.05}
         wrap="none"
         ellipsis
@@ -916,7 +978,8 @@ function WinnerRow({
           text={winner.unit}
           fontFamily={font}
           fontSize={UNIT_SIZE}
-          fill={layout.unitColor}
+          fontStyle={ovFontStyle(ov, false)}
+          fill={ovColor(ov, layout.unitColor)}
           lineHeight={1}
           wrap="none"
           ellipsis
