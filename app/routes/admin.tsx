@@ -910,10 +910,10 @@ export async function action({ request }: Route.ActionArgs) {
         { headers: Object.fromEntries(headers) },
       );
     }
-    if (file.size > 1024 * 1024) {
+    if (file.size > 4 * 1024 * 1024) {
       return data(
         {
-          error: `Image is ${(file.size / 1024 / 1024).toFixed(1)} MB — keep it under 1 MB (compress or export at a lower scale).`,
+          error: `Image is ${(file.size / 1024 / 1024).toFixed(1)} MB — keep it under 4 MB (compress or export at a lower scale).`,
         },
         { headers: Object.fromEntries(headers) },
       );
@@ -981,10 +981,10 @@ export async function action({ request }: Route.ActionArgs) {
         { headers: Object.fromEntries(headers) },
       );
     }
-    if (file.size > 1024 * 1024) {
+    if (file.size > 4 * 1024 * 1024) {
       return data(
         {
-          error: `Image is ${(file.size / 1024 / 1024).toFixed(1)} MB — keep custom templates under 1 MB.`,
+          error: `Image is ${(file.size / 1024 / 1024).toFixed(1)} MB — keep custom templates under 4 MB.`,
         },
         { headers: Object.fromEntries(headers) },
       );
@@ -3005,15 +3005,21 @@ function TemplateStudioView({
       </div>
 
       {(err || msg) && (
-        <p
-          className={
-            err
-              ? "text-xs text-red-700 bg-red-50 border border-red-200 rounded-md px-3 py-1.5"
-              : "text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-md px-3 py-1.5"
-          }
+        <div
+          role="status"
+          aria-live="polite"
+          className="pointer-events-none fixed inset-x-0 bottom-4 z-50 flex justify-center px-4"
         >
-          {err ? err : `✓ ${msg}`}
-        </p>
+          <p
+            className={`pointer-events-auto max-w-md rounded-lg px-4 py-2.5 text-sm font-medium shadow-lg ring-1 ${
+              err
+                ? "bg-red-600 text-white ring-red-900/20"
+                : "bg-emerald-600 text-white ring-emerald-900/20"
+            }`}
+          >
+            {err ? err : `✓ ${msg}`}
+          </p>
+        </div>
       )}
 
       {/* Shared wording & fonts — open; applies to every template */}
@@ -3312,7 +3318,7 @@ function TemplateStudioView({
               {busy ? "Uploading…" : "Upload"}
             </button>
             <p className="text-[10px] leading-snug text-stone-400">
-              PNG/JPG/WebP · 4:5 · &lt;1 MB
+              PNG/JPG/WebP · 4:5 · &lt;4 MB
             </p>
           </Form>
         </div>
