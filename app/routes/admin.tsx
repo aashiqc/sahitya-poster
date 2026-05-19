@@ -19,6 +19,7 @@ import {
 import {
   Ban,
   Check,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
   Clock,
@@ -31,6 +32,7 @@ import {
   Share2,
   Images,
   Shuffle,
+  Star,
   Trophy,
   Upload,
   X,
@@ -455,6 +457,26 @@ export async function action({ request }: Route.ActionArgs) {
       return data({ error: error.message }, { headers: Object.fromEntries(headers) });
     return data(
       { ok: true, message: "Poster settings saved." },
+      { headers: Object.fromEntries(headers) },
+    );
+  }
+
+  if (intent === "set_default_template") {
+    const tplRaw = parseInt(String(fd.get("result_template") ?? "0"), 10);
+    const result_template =
+      Number.isFinite(tplRaw) && tplRaw >= 0 ? tplRaw : 0;
+    const rid = String(fd.get("result_template_id") ?? "").trim();
+    const { error } = await supabase
+      .from("events")
+      .update({
+        result_template,
+        result_template_id: rid.length ? rid : null,
+      })
+      .eq("id", event.id);
+    if (error)
+      return data({ error: error.message }, { headers: Object.fromEntries(headers) });
+    return data(
+      { ok: true, message: "Default template updated." },
       { headers: Object.fromEntries(headers) },
     );
   }
@@ -2597,25 +2619,35 @@ function TemplateStudioView({
     posterMeta.subdomain,
     posterMeta.customTemplates,
   );
-  const savedChoice = pickFromList(
+  // Position of a template among the built-in set (for the numeric
+  // `result_template` the default needs to keep working).
+  const builtinPosOf = (key: string) =>
+    Math.max(
+      0,
+      choices
+        .filter((c) => c.builtinIndex !== null)
+        .findIndex((c) => c.key === key),
+    );
+  // The PUBLIC default — server-owned source of truth.
+  const defChoice = pickFromList(
     choices,
     posterMeta.defaultTemplate,
     posterMeta.defaultTemplateId,
     0,
   );
-  const savedPos = savedChoice
-    ? Math.max(
-        0,
-        choices.findIndex((c) => c.key === savedChoice.key),
-      )
-    : 0;
-  const [pick, setPick] = useState(savedPos);
-  const cur = choices[pick] ?? choices[0];
+  const defaultKey = defChoice?.key ?? choices[0]?.key ?? "0";
+  const defaultBuiltinPos = builtinPosOf(defaultKey);
+  // Which template is open in the editor — DECOUPLED from the default,
+  // so you can arrange any template without changing what the public
+  // sees, and switch between them with one click (no scroll, no save).
+  const [editKey, setEditKey] = useState(defaultKey);
+  const cur = choices.find((c) => c.key === editKey) ?? choices[0];
   const tplKey = cur?.key ?? "0";
-  const builtinPos = Math.max(
-    0,
-    choices.filter((c) => c.builtinIndex !== null).findIndex((c) => c.key === tplKey),
-  );
+  const curBuiltinPos = builtinPosOf(tplKey);
+  const isEditingDefault = tplKey === defaultKey;
+  const [showDetails, setShowDetails] = useState(false);
+  const labelOf = (c: TemplateChoice) =>
+    c.builtinIndex === null ? c.name : `Template ${builtinPosOf(c.key) + 1}`;
   const [layoutMap, setLayoutMap] = useState<PosterLayoutMap>(
     posterMeta.layout ?? {},
   );
@@ -2693,9 +2725,42 @@ function TemplateStudioView({
       ? (actionData.message as string)
       : null;
 
+  const detailSummary = [
+    meta.name || "Unnamed",
+    meta.lang === "ml" ? "Malayalam" : "English",
+    meta.fontEn,
+    meta.date,
+    meta.place,
+  ]
+    .filter(Boolean)
+    .join("  ·  ");
+
+  const SetDefaultForm = ({
+    c,
+    className,
+    children,
+  }: {
+    c: TemplateChoice;
+    className: string;
+    children: ReactNode;
+  }) => (
+    <Form method="post" className="contents">
+      <input type="hidden" name="intent" value="set_default_template" />
+      <input
+        type="hidden"
+        name="result_template"
+        value={builtinPosOf(c.key)}
+      />
+      <input type="hidden" name="result_template_id" value={c.key} />
+      <button type="submit" disabled={busy} className={className}>
+        {children}
+      </button>
+    </Form>
+  );
+
   return (
-    <div className="max-w-5xl space-y-5">
-      {/* Studio masthead — orients the three-step flow */}
+    <div className="space-y-4">
+      {/* Studio masthead */}
       <header className="flex flex-wrap items-end justify-between gap-3 border-b border-stone-200 pb-4">
         <div>
           <p className="text-[10px] font-bold tracking-[0.3em] uppercase text-brand-700">
@@ -2706,9 +2771,9 @@ function TemplateStudioView({
           </h1>
         </div>
         <p className="max-w-sm text-xs leading-relaxed text-stone-500">
-          Set the wording once, pick a template, then nudge each block into
-          place. Every result poster the public sees is generated from
-          exactly these settings.
+          Pick a template on the left, arrange its blocks live on the
+          right, and star any one as the public default — no scrolling,
+          no save-before-edit.
         </p>
       </header>
 
@@ -2724,344 +2789,371 @@ function TemplateStudioView({
         </p>
       )}
 
-      {/* 01 — Poster details */}
-      <section className="rounded-xl border border-stone-200 bg-white p-5">
-        <div className="flex items-start gap-3">
-          <span className="select-none font-[Fraunces,serif] text-3xl leading-none tabular-nums text-stone-300">
-            01
-          </span>
+      {/* Shared wording & fonts — collapsed by default (applies to
+          every template, so it lives above the per-template workspace) */}
+      <section className="overflow-hidden rounded-xl border border-stone-200 bg-white">
+        <button
+          type="button"
+          onClick={() => setShowDetails((s) => !s)}
+          aria-expanded={showDetails}
+          className="flex w-full items-center justify-between gap-3 px-5 py-3.5 text-left transition hover:bg-stone-50"
+        >
           <div className="min-w-0">
-            <h2 className="text-lg font-semibold tracking-tight">
-              Poster details
+            <h2 className="text-sm font-semibold tracking-tight">
+              Poster wording &amp; fonts
             </h2>
-            <p className="mt-1 text-xs text-stone-500">
-              The wording printed on every result poster for{" "}
-              <span className="font-medium text-stone-700">
-                {posterMeta.orgName || "this organization"}
-              </span>
-              . Free text — it appears exactly as typed.
+            <p className="mt-0.5 truncate text-xs text-stone-500">
+              {detailSummary}
             </p>
           </div>
-        </div>
-
-        <Form method="post" className="mt-5 space-y-4">
-          <input type="hidden" name="intent" value="save_poster_settings" />
-          <input type="hidden" name="result_template" value={builtinPos} />
-          <input type="hidden" name="result_template_id" value={tplKey} />
-
-          <label className="block space-y-1.5">
-            <span className={lbl}>Display / event name</span>
-            <input
-              name="poster_name"
-              value={meta.name}
-              onChange={(e) =>
-                setMeta((m) => ({ ...m, name: e.target.value }))
-              }
-              className={field}
-              placeholder="SSF Cheerpingal Unit · Sahityotsav"
-            />
-          </label>
-
-          <div className="grid gap-3 sm:grid-cols-3">
-            <label className="space-y-1.5">
-              <span className={lbl}>Poster language</span>
-              <select
-                name="poster_lang"
-                value={meta.lang}
-                onChange={(e) =>
-                  setMeta((m) => ({
-                    ...m,
-                    lang: e.target.value === "ml" ? "ml" : "en",
-                  }))
-                }
-                className={field}
-              >
-                <option value="en">English</option>
-                <option value="ml">Malayalam</option>
-              </select>
-            </label>
-            <label className="space-y-1.5">
-              <span className={lbl}>English font</span>
-              <select
-                name="poster_font_en"
-                value={meta.fontEn}
-                onChange={(e) =>
-                  setMeta((m) => ({ ...m, fontEn: e.target.value }))
-                }
-                className={field}
-              >
-                {POSTER_FONTS_EN.map((f) => (
-                  <option key={f} value={f}>
-                    {f}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="space-y-1.5">
-              <span className={lbl}>Malayalam font</span>
-              <select
-                name="poster_font_ml"
-                value={meta.fontMl}
-                onChange={(e) =>
-                  setMeta((m) => ({ ...m, fontMl: e.target.value }))
-                }
-                className={field}
-              >
-                {POSTER_FONTS_ML.map((f) => (
-                  <option key={f} value={f}>
-                    {f}
-                  </option>
-                ))}
-              </select>
-            </label>
-          </div>
-
-          <div className="grid gap-3 sm:grid-cols-2">
-            <label className="space-y-1.5">
-              <span className={lbl}>Date</span>
-              <input
-                name="poster_date"
-                value={meta.date}
-                onChange={(e) =>
-                  setMeta((m) => ({ ...m, date: e.target.value }))
-                }
-                className={field}
-                placeholder="28–31 January 2027"
-              />
-            </label>
-            <label className="space-y-1.5">
-              <span className={lbl}>Place / venue</span>
-              <input
-                name="poster_place"
-                value={meta.place}
-                onChange={(e) =>
-                  setMeta((m) => ({ ...m, place: e.target.value }))
-                }
-                className={field}
-                placeholder="Vadi Hussain, Malappuram"
-              />
-            </label>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-3 border-t border-stone-100 pt-4">
-            <button
-              type="submit"
-              disabled={busy}
-              className="rounded-md bg-stone-900 px-4 py-2 text-sm font-medium text-white hover:bg-stone-800 disabled:opacity-50"
-            >
-              {busy ? "Saving…" : "Save poster settings"}
-            </button>
-            <span className="inline-flex items-center gap-1.5 rounded-full bg-stone-100 px-3 py-1 text-[11px] font-medium text-stone-600">
-              <span className="size-1.5 rounded-full bg-brand-600" />
-              Public default · {cur?.name ?? "—"}
-            </span>
-          </div>
-        </Form>
-      </section>
-
-      {/* 02 — Templates */}
-      <section className="rounded-xl border border-stone-200 bg-white p-5">
-        <div className="flex items-start gap-3">
-          <span className="select-none font-[Fraunces,serif] text-3xl leading-none tabular-nums text-stone-300">
-            02
-          </span>
-          <div className="min-w-0 flex-1">
-            <div className="flex items-baseline justify-between gap-2">
-              <h2 className="text-lg font-semibold tracking-tight">
-                Templates
-              </h2>
-              <span className="text-xs text-stone-400">
-                {choices.length} available
-              </span>
-            </div>
-            <p className="mt-1 text-xs text-stone-500">
-              Each shown at the poster's true 4:5 ratio. The highlighted
-              one is the public default and the one you're editing below
-              — viewers can still shuffle. Selecting a new one only takes
-              effect once you{" "}
-              <span className="font-medium text-stone-700">
-                Save poster settings
-              </span>
-              .
-            </p>
-          </div>
-        </div>
-
-        <div className="mt-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-          {choices.map((c, pos) => {
-            const selected = pos === pick;
-            const isCustom = c.builtinIndex === null;
-            return (
-              <div
-                key={c.key}
-                className={`relative overflow-hidden rounded-xl border bg-white transition ${
-                  selected
-                    ? "border-brand-600 ring-2 ring-brand-600/30"
-                    : "border-stone-200 hover:border-stone-300"
-                }`}
-              >
-                {isCustom && (
-                  <Form method="post" className="absolute right-2 top-2 z-10">
-                    <input
-                      type="hidden"
-                      name="intent"
-                      value="delete_template"
-                    />
-                    <input
-                      type="hidden"
-                      name="template_id"
-                      value={c.key}
-                    />
-                    <button
-                      type="submit"
-                      title="Delete template"
-                      aria-label="Delete template"
-                      onClick={(e) => {
-                        if (!confirm(`Delete template "${c.name}"?`))
-                          e.preventDefault();
-                      }}
-                      className="grid size-7 place-items-center rounded-full bg-white/90 text-stone-500 shadow-sm ring-1 ring-stone-200 backdrop-blur transition hover:bg-red-50 hover:text-red-700"
-                    >
-                      <X className="size-3.5" />
-                    </button>
-                  </Form>
-                )}
-                <button
-                  type="button"
-                  onClick={() => setPick(pos)}
-                  aria-pressed={selected}
-                  className="block w-full cursor-pointer bg-stone-100 p-2"
-                >
-                  <PosterCanvas
-                    data={{ ...sample(), overrides: layoutMap[c.key] }}
-                    templateIndex={c.builtinIndex ?? 0}
-                    customSrc={c.src ?? undefined}
-                  />
-                </button>
-                <div className="flex items-center justify-between gap-2 border-t border-stone-100 px-3 py-2.5">
-                  <span className="min-w-0 truncate text-xs font-medium text-stone-800">
-                    {isCustom ? c.name : `Template ${pos + 1}`}
-                  </span>
-                  {selected ? (
-                    <span className="inline-flex shrink-0 items-center gap-1.5 text-[11px] font-semibold text-brand-700">
-                      <span className="size-1.5 rounded-full bg-brand-600" />
-                      Default
-                    </span>
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={() => setPick(pos)}
-                      className="shrink-0 rounded-md border border-stone-300 px-2.5 py-1 text-[11px] font-medium text-stone-700 transition hover:bg-stone-50"
-                    >
-                      Set as default
-                    </button>
-                  )}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-
-        {/* Upload a custom template */}
-        <div className="mt-5 rounded-xl border border-stone-200 bg-stone-50/70 p-4">
-          <div className="flex items-center gap-2">
-            <Upload className="size-4 text-stone-400" />
-            <h3 className="text-sm font-semibold tracking-tight text-stone-800">
-              Add your own template
-            </h3>
-          </div>
-          <p className="mt-1 text-xs text-stone-500">
-            PNG / JPG / WebP, ideally 1080×1350 (4:5), under 1 MB. After
-            uploading, position the text in the layout editor below and
-            save.
-          </p>
+          <ChevronDown
+            className={`size-4 shrink-0 text-stone-400 transition ${
+              showDetails ? "rotate-180" : ""
+            }`}
+          />
+        </button>
+        {showDetails && (
           <Form
             method="post"
-            encType="multipart/form-data"
-            className="mt-3 flex flex-wrap items-end gap-3"
+            className="space-y-4 border-t border-stone-100 p-5"
           >
-            <input type="hidden" name="intent" value="upload_template" />
-            <label className="min-w-[12rem] flex-1 space-y-1.5">
-              <span className={lbl}>Template name</span>
+            <input
+              type="hidden"
+              name="intent"
+              value="save_poster_settings"
+            />
+            {/* Keep the current public default untouched on save */}
+            <input
+              type="hidden"
+              name="result_template"
+              value={defaultBuiltinPos}
+            />
+            <input
+              type="hidden"
+              name="result_template_id"
+              value={defaultKey}
+            />
+
+            <label className="block space-y-1.5">
+              <span className={lbl}>Display / event name</span>
+              <input
+                name="poster_name"
+                value={meta.name}
+                onChange={(e) =>
+                  setMeta((m) => ({ ...m, name: e.target.value }))
+                }
+                className={field}
+                placeholder="SSF Cheerpingal Unit · Sahityotsav"
+              />
+            </label>
+
+            <div className="grid gap-3 sm:grid-cols-3">
+              <label className="space-y-1.5">
+                <span className={lbl}>Poster language</span>
+                <select
+                  name="poster_lang"
+                  value={meta.lang}
+                  onChange={(e) =>
+                    setMeta((m) => ({
+                      ...m,
+                      lang: e.target.value === "ml" ? "ml" : "en",
+                    }))
+                  }
+                  className={field}
+                >
+                  <option value="en">English</option>
+                  <option value="ml">Malayalam</option>
+                </select>
+              </label>
+              <label className="space-y-1.5">
+                <span className={lbl}>English font</span>
+                <select
+                  name="poster_font_en"
+                  value={meta.fontEn}
+                  onChange={(e) =>
+                    setMeta((m) => ({ ...m, fontEn: e.target.value }))
+                  }
+                  className={field}
+                >
+                  {POSTER_FONTS_EN.map((f) => (
+                    <option key={f} value={f}>
+                      {f}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="space-y-1.5">
+                <span className={lbl}>Malayalam font</span>
+                <select
+                  name="poster_font_ml"
+                  value={meta.fontMl}
+                  onChange={(e) =>
+                    setMeta((m) => ({ ...m, fontMl: e.target.value }))
+                  }
+                  className={field}
+                >
+                  {POSTER_FONTS_ML.map((f) => (
+                    <option key={f} value={f}>
+                      {f}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+
+            <div className="grid gap-3 sm:grid-cols-2">
+              <label className="space-y-1.5">
+                <span className={lbl}>Date</span>
+                <input
+                  name="poster_date"
+                  value={meta.date}
+                  onChange={(e) =>
+                    setMeta((m) => ({ ...m, date: e.target.value }))
+                  }
+                  className={field}
+                  placeholder="28–31 January 2027"
+                />
+              </label>
+              <label className="space-y-1.5">
+                <span className={lbl}>Place / venue</span>
+                <input
+                  name="poster_place"
+                  value={meta.place}
+                  onChange={(e) =>
+                    setMeta((m) => ({ ...m, place: e.target.value }))
+                  }
+                  className={field}
+                  placeholder="Vadi Hussain, Malappuram"
+                />
+              </label>
+            </div>
+
+            <div className="border-t border-stone-100 pt-4">
+              <button
+                type="submit"
+                disabled={busy}
+                className="rounded-md bg-stone-900 px-4 py-2 text-sm font-medium text-white hover:bg-stone-800 disabled:opacity-50"
+              >
+                {busy ? "Saving…" : "Save wording"}
+              </button>
+            </div>
+          </Form>
+        )}
+      </section>
+
+      {/* Workspace — template rail + live editor, always side by side */}
+      <div className="grid gap-4 lg:grid-cols-[224px_minmax(0,1fr)]">
+        {/* Template rail */}
+        <aside className="lg:sticky lg:top-4 lg:self-start">
+          <div className="flex max-h-[calc(100dvh-7rem)] flex-col overflow-hidden rounded-xl border border-stone-200 bg-white">
+            <div className="flex items-center justify-between border-b border-stone-100 px-3 py-2.5">
+              <span className={lbl}>Templates</span>
+              <span className="text-[11px] text-stone-400">
+                {choices.length}
+              </span>
+            </div>
+            <div className="min-h-0 flex-1 space-y-2 overflow-y-auto p-2">
+              {choices.map((c) => {
+                const active = c.key === editKey;
+                const isDefault = c.key === defaultKey;
+                const isCustom = c.builtinIndex === null;
+                return (
+                  <div
+                    key={c.key}
+                    className={`overflow-hidden rounded-lg border transition ${
+                      active
+                        ? "border-brand-600 ring-2 ring-brand-600/25"
+                        : "border-stone-200 hover:border-stone-300"
+                    }`}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => setEditKey(c.key)}
+                      aria-pressed={active}
+                      title={`Edit ${labelOf(c)}`}
+                      className="block w-full cursor-pointer bg-stone-100 p-1.5"
+                    >
+                      <PosterCanvas
+                        data={{
+                          ...sample(),
+                          overrides: layoutMap[c.key],
+                        }}
+                        templateIndex={c.builtinIndex ?? 0}
+                        customSrc={c.src ?? undefined}
+                      />
+                    </button>
+                    <div className="flex items-center gap-1 px-2 py-1.5">
+                      <span className="min-w-0 flex-1 truncate text-[11px] font-medium text-stone-700">
+                        {labelOf(c)}
+                      </span>
+                      {isDefault ? (
+                        <span
+                          title="Public default"
+                          className="inline-flex shrink-0 items-center gap-1 rounded px-1 text-[10px] font-semibold text-brand-700"
+                        >
+                          <Star className="size-3 fill-brand-600 text-brand-600" />
+                          Default
+                        </span>
+                      ) : (
+                        <SetDefaultForm
+                          c={c}
+                          className="grid size-6 shrink-0 place-items-center rounded text-stone-400 transition hover:bg-stone-100 hover:text-brand-700 disabled:opacity-50"
+                        >
+                          <Star className="size-3.5" />
+                        </SetDefaultForm>
+                      )}
+                      {isCustom && (
+                        <Form method="post" className="contents">
+                          <input
+                            type="hidden"
+                            name="intent"
+                            value="delete_template"
+                          />
+                          <input
+                            type="hidden"
+                            name="template_id"
+                            value={c.key}
+                          />
+                          <button
+                            type="submit"
+                            title="Delete template"
+                            aria-label="Delete template"
+                            onClick={(e) => {
+                              if (
+                                !confirm(`Delete template "${c.name}"?`)
+                              )
+                                e.preventDefault();
+                            }}
+                            className="grid size-6 shrink-0 place-items-center rounded text-stone-400 transition hover:bg-red-50 hover:text-red-700"
+                          >
+                            <X className="size-3.5" />
+                          </button>
+                        </Form>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            {/* Upload a custom template */}
+            <Form
+              method="post"
+              encType="multipart/form-data"
+              className="space-y-2 border-t border-stone-100 p-2"
+            >
+              <input
+                type="hidden"
+                name="intent"
+                value="upload_template"
+              />
               <input
                 name="template_name"
                 required
-                placeholder="e.g. Sector blue"
-                className={field}
+                placeholder="New template name"
+                className="w-full rounded-md border border-stone-300 bg-white px-2.5 py-1.5 text-xs text-stone-900 placeholder:text-stone-400 transition focus:outline-none focus:border-brand-600 focus:ring-2 focus:ring-brand-600/25"
               />
-            </label>
-            <label className="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm font-medium text-stone-700 transition hover:bg-stone-50">
-              <Upload className="size-4 text-stone-400" />
-              <span className="max-w-[12rem] truncate">
-                {tplFileName || "Choose image"}
-              </span>
-              <input
-                type="file"
-                name="template_file"
-                accept="image/png,image/jpeg,image/webp"
-                required
-                className="sr-only"
-                onChange={(e) =>
-                  setTplFileName(e.target.files?.[0]?.name ?? "")
-                }
-              />
-            </label>
-            <button
-              type="submit"
-              disabled={busy}
-              className="rounded-md bg-stone-900 px-4 py-2 text-sm font-medium text-white hover:bg-stone-800 disabled:opacity-50"
-            >
-              {busy ? "Uploading…" : "Upload template"}
-            </button>
-          </Form>
-        </div>
-      </section>
-
-      {/* 03 — Layout editor */}
-      <section className="rounded-xl border border-stone-200 bg-white p-5">
-        <div className="flex items-start gap-3">
-          <span className="select-none font-[Fraunces,serif] text-3xl leading-none tabular-nums text-stone-300">
-            03
-          </span>
-          <div className="min-w-0 flex-1">
-            <div className="flex flex-wrap items-baseline justify-between gap-2">
-              <h2 className="text-lg font-semibold tracking-tight">
-                Layout editor
-              </h2>
-              <span className="inline-flex max-w-[14rem] items-center gap-1.5 truncate text-[11px] font-medium text-stone-500">
-                <span className="size-1.5 shrink-0 rounded-full bg-brand-600" />
-                Editing · {cur?.name ?? "—"}
-              </span>
-            </div>
-            <p className="mt-1 text-xs text-stone-500">
-              Drag any block on the preview to move it — name, date,
-              place, category and program each move independently. Resize
-              with −/＋ and recolour or set bold / italic per block.
-              Everything is saved per&nbsp;template so every generated
-              poster stays consistent. Reset reverts to the built-in
-              layout.
-            </p>
+              <label className="flex cursor-pointer items-center gap-1.5 rounded-md border border-stone-300 bg-white px-2.5 py-1.5 text-xs font-medium text-stone-700 transition hover:bg-stone-50">
+                <Upload className="size-3.5 shrink-0 text-stone-400" />
+                <span className="min-w-0 truncate">
+                  {tplFileName || "Choose image…"}
+                </span>
+                <input
+                  type="file"
+                  name="template_file"
+                  accept="image/png,image/jpeg,image/webp"
+                  required
+                  className="sr-only"
+                  onChange={(e) =>
+                    setTplFileName(e.target.files?.[0]?.name ?? "")
+                  }
+                />
+              </label>
+              <button
+                type="submit"
+                disabled={busy}
+                className="w-full rounded-md bg-stone-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-stone-800 disabled:opacity-50"
+              >
+                {busy ? "Uploading…" : "Upload template"}
+              </button>
+              <p className="text-[10px] leading-snug text-stone-400">
+                PNG / JPG / WebP · 1080×1350 (4:5) · under 1 MB
+              </p>
+            </Form>
           </div>
-        </div>
+        </aside>
 
-        <div className="mt-5 grid gap-5 lg:grid-cols-[minmax(0,420px)_1fr]">
-          <div className="lg:sticky lg:top-4 lg:self-start">
-            <div className="overflow-hidden rounded-xl border border-stone-200 bg-stone-100 p-2">
-              <PosterCanvas
-                key={`edit-${tplKey}`}
-                data={{ ...sample(), overrides: ov }}
-                templateIndex={cur?.builtinIndex ?? 0}
-                customSrc={cur?.src ?? undefined}
-                editable
-                onMove={moveEl}
-              />
+        {/* Editor */}
+        <section className="rounded-xl border border-stone-200 bg-white p-4 sm:p-5">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-stone-100 pb-3">
+            <div className="min-w-0">
+              <p className={lbl}>Editing template</p>
+              <p className="mt-0.5 truncate text-sm font-semibold text-stone-900">
+                {cur ? labelOf(cur) : "—"}
+              </p>
             </div>
-            <p className="mt-2 text-center text-[11px] text-stone-400">
-              Live preview — drag the blocks directly
-            </p>
+            <div className="flex flex-wrap items-center gap-2">
+              {isEditingDefault ? (
+                <span className="inline-flex items-center gap-1.5 rounded-md bg-brand-50 px-3 py-2 text-xs font-semibold text-brand-700">
+                  <Star className="size-3.5 fill-brand-600 text-brand-600" />
+                  Public default
+                </span>
+              ) : (
+                cur && (
+                  <SetDefaultForm
+                    c={cur}
+                    className="inline-flex items-center gap-1.5 rounded-md border border-stone-300 px-3 py-2 text-xs font-medium text-stone-700 transition hover:bg-stone-50 disabled:opacity-50"
+                  >
+                    <Star className="size-3.5" />
+                    Set as default
+                  </SetDefaultForm>
+                )
+              )}
+              <button
+                type="button"
+                onClick={resetTpl}
+                className="rounded-md border border-stone-300 px-3 py-2 text-xs font-medium text-stone-700 transition hover:bg-stone-50"
+              >
+                Reset
+              </button>
+              <Form method="post" className="contents">
+                <input
+                  type="hidden"
+                  name="intent"
+                  value="save_poster_layout"
+                />
+                <input
+                  type="hidden"
+                  name="poster_layout"
+                  value={JSON.stringify(layoutMap)}
+                />
+                <button
+                  type="submit"
+                  disabled={busy}
+                  className="rounded-md bg-stone-900 px-4 py-2 text-xs font-semibold text-white hover:bg-stone-800 disabled:opacity-50"
+                >
+                  {busy ? "Saving…" : "Save layout"}
+                </button>
+              </Form>
+            </div>
           </div>
 
-          <div className="flex flex-col gap-4">
+          <div className="mt-4 grid gap-5 xl:grid-cols-[minmax(0,440px)_minmax(0,1fr)]">
+            <div className="xl:sticky xl:top-4 xl:self-start">
+              <div className="overflow-hidden rounded-xl border border-stone-200 bg-stone-100 p-2">
+                <PosterCanvas
+                  key={`edit-${tplKey}`}
+                  data={{ ...sample(), overrides: ov }}
+                  templateIndex={cur?.builtinIndex ?? 0}
+                  customSrc={cur?.src ?? undefined}
+                  editable
+                  onMove={moveEl}
+                />
+              </div>
+              <p className="mt-2 text-center text-[11px] text-stone-400">
+                Drag any block directly on the preview
+              </p>
+            </div>
+
             <div className="space-y-2">
               <span className={lbl}>Blocks · position, size &amp; style</span>
               {(
@@ -3192,39 +3284,9 @@ function TemplateStudioView({
                 );
               })}
             </div>
-
-            <Form
-              method="post"
-              className="flex items-center gap-3 border-t border-stone-100 pt-4"
-            >
-              <input
-                type="hidden"
-                name="intent"
-                value="save_poster_layout"
-              />
-              <input
-                type="hidden"
-                name="poster_layout"
-                value={JSON.stringify(layoutMap)}
-              />
-              <button
-                type="submit"
-                disabled={busy}
-                className="rounded-md bg-stone-900 px-4 py-2 text-sm font-medium text-white hover:bg-stone-800 disabled:opacity-50"
-              >
-                {busy ? "Saving…" : "Save layout"}
-              </button>
-              <button
-                type="button"
-                onClick={resetTpl}
-                className="rounded-md border border-stone-300 px-3 py-2 text-sm font-medium text-stone-700 transition hover:bg-stone-50"
-              >
-                Reset template
-              </button>
-            </Form>
           </div>
-        </div>
-      </section>
+        </section>
+      </div>
     </div>
   );
 }
