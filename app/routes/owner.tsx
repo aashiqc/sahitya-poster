@@ -539,8 +539,8 @@ export default function OwnerConsole({ loaderData }: Route.ComponentProps) {
         <div className="grid gap-5 lg:grid-cols-12 lg:items-start">
           {/* Tenants ledger */}
           <section
-            className={`${card} overflow-hidden lg:col-span-7`}
-            style={{ animationDelay: ".04s" }}
+            className={`${card} order-2 overflow-hidden lg:col-span-7`}
+            style={{ animationDelay: ".1s" }}
           >
             <div className="flex items-center justify-between border-b border-stone-100 px-5 py-3">
               <h2 className="font-[Fraunces,serif] text-base tracking-tight">
@@ -648,10 +648,10 @@ export default function OwnerConsole({ loaderData }: Route.ComponentProps) {
           </section>
 
           {/* Create + maintain */}
-          <div className="space-y-5 lg:col-span-5">
+          <div className="order-1 space-y-5 lg:col-span-5">
             <section
               className={`${card} p-5`}
-              style={{ animationDelay: ".08s" }}
+              style={{ animationDelay: ".04s" }}
             >
               <div className="flex items-baseline justify-between gap-2">
                 <h2 className="font-[Fraunces,serif] text-lg tracking-tight">
@@ -743,7 +743,7 @@ export default function OwnerConsole({ loaderData }: Route.ComponentProps) {
 
             <section
               className={`${card} p-5`}
-              style={{ animationDelay: ".12s" }}
+              style={{ animationDelay: ".08s" }}
             >
               <div className="flex items-baseline justify-between gap-2">
                 <h2 className="font-[Fraunces,serif] text-lg tracking-tight">
