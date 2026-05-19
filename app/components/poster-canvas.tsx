@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type Konva from "konva";
 import { Stage, Layer, Image as KImage, Text, Rect, Group } from "react-konva";
+import { SITE_URL } from "~/lib/constants";
 
 // ─────────────────────────────────────────────────────────────────────
 // Public types
@@ -100,7 +101,37 @@ const TEMPLATES: TemplateLayout[] = [
     unitColor: "#6B6566",
     resultNo: { x: 50, y: 270, boxW: 360, fontSize: 136, color: "#3D5DBF" },
   },
+  // 04 — dark navy, "Result" script top-left, sage "Sahityotsav"
+  // wordmark top-right, flowers bottom-left. Content sits in the open
+  // navy band on the right; light text.
+  {
+    src: "/poster/templates/result-04.png",
+    contentX: 560,
+    contentY: 470,
+    contentW: 470,
+    subtitleColor: "#E9E1CF",
+    titleColor: "#F3ECDC",
+    nameColor: "#FFFFFF",
+    unitColor: "#B7BECC",
+    resultNo: { x: 65, y: 271, boxW: 360, fontSize: 150, color: "#EFE6D2" },
+  },
+  // 05 — dark maroon, pink "Result" script top-right, cyan
+  // "Sahityotsav" wordmark top-left, lantern bottom-right. Content
+  // sits in the open maroon band on the left; light text.
+  {
+    src: "/poster/templates/result-05.png",
+    contentX: 90,
+    contentY: 470,
+    contentW: 480,
+    subtitleColor: "#F0E4DA",
+    titleColor: "#F4E8DC",
+    nameColor: "#FFFFFF",
+    unitColor: "#CDB8C6",
+    resultNo: { x: 659, y: 188, boxW: 340, fontSize: 150, color: "#F4A9C4" },
+  },
 ];
+
+export const POSTER_TEMPLATE_COUNT = TEMPLATES.length;
 
 // ─────────────────────────────────────────────────────────────────────
 // Image loading — tracks loaded/error + a "slow network" flag, and a
@@ -118,6 +149,8 @@ export function prefetchPosterAssets(): void {
   const srcs = [
     ...TEMPLATES.map((t) => t.src),
     "/poster/templates/standings.png",
+    "/poster/templates/standings-light.png",
+    "/poster/templates/standings-dark.png",
   ];
   for (const src of srcs) {
     if (imgCache.has(src)) continue;
@@ -572,6 +605,34 @@ export async function exportPosterPng(
   a.click();
 }
 
+// Human-readable caption that travels with the poster image when the
+// user shares it (WhatsApp / Telegram / etc. keep the `text` alongside
+// the file). Built from our own result data — program, category,
+// event, the podium, and a deep link back to the full result.
+function buildShareCaption(data: PosterData): { title: string; text: string } {
+  const medals = ["🥇", "🥈", "🥉", "🏅"];
+  const podium = data.winners
+    .filter((w) => w.position >= 1)
+    .sort((a, b) => a.position - b.position)
+    .slice(0, 4)
+    .map((w, i) => {
+      const place = medals[i] ?? `${w.position}.`;
+      return `${place} ${w.name}${w.unit ? ` — ${w.unit}` : ""}`;
+    });
+
+  const heading = `🏆 ${data.programName} · ${data.levelName}`;
+  const sub = data.resultNo
+    ? `${data.eventName} · Result No. ${data.resultNo}`
+    : data.eventName;
+  const link = `${SITE_URL}/result/${data.programCode}`;
+
+  const text = [heading, sub, "", ...podium, "", `Full result → ${link}`]
+    .join("\n")
+    .trim();
+
+  return { title: `${data.programName} — ${data.levelName}`, text };
+}
+
 export async function sharePoster(
   stage: Konva.Stage | null,
   data: PosterData,
@@ -595,9 +656,10 @@ export async function sharePoster(
   };
   if (nav.canShare?.({ files: [file] }) && nav.share) {
     try {
+      const caption = buildShareCaption(data);
       await nav.share({
-        title: `${data.programName} — ${data.levelName}`,
-        text: `#Result ${data.resultNo ?? ""}`.trim(),
+        title: caption.title,
+        text: caption.text,
         files: [file],
       });
       return "shared";

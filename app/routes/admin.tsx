@@ -1,4 +1,11 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ChangeEvent,
+  type ReactNode,
+} from "react";
 import {
   Form,
   Link,
@@ -29,20 +36,16 @@ import {
 import type Konva from "konva";
 import type { Route } from "./+types/admin";
 import { loadEvent, requireAdmin } from "~/lib/supabase.server";
+import { TEAM_BY_SLUG, TEAMS } from "~/lib/teams";
 import {
-  TEAM_BY_SLUG,
-  TEAMS,
-  computeStandings,
-  snapshotBucket,
-  winnerPoints,
-} from "~/lib/teams";
-import {
+  POSTER_TEMPLATE_COUNT,
   PosterCanvas,
   exportPosterPng,
   sharePoster,
   type PosterData,
 } from "~/components/poster-canvas";
 import {
+  STANDINGS_TEMPLATE_NAMES,
   StandingsPosterCanvas,
   exportStandingsPng,
   shareStandings,
@@ -52,6 +55,58 @@ export function meta() {
   return [{ title: "Admin · Sahityotsav" }];
 }
 
+// Normalize a candidate name to Title Case (first letter of each word
+// upper, rest lower) so stored names are consistent regardless of how
+// the admin typed them. Mirrors Postgres initcap(); Unicode-aware so
+// Malayalam (no case) passes through unchanged.
+function titleCaseName(s: string): string {
+  return s
+    .trim()
+    .toLowerCase()
+    .replace(/(^|[^\p{L}\p{N}])(\p{L})/gu, (_m, sep, ch) => sep + ch.toUpperCase());
+}
+
+// ── Standings CSV parsing (header: Rank,Team Name,Points) ────────────
+function csvCells(line: string): string[] {
+  const out: string[] = [];
+  let cur = "";
+  let inQ = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (inQ) {
+      if (ch === '"') {
+        if (line[i + 1] === '"') {
+          cur += '"';
+          i++;
+        } else inQ = false;
+      } else cur += ch;
+    } else if (ch === '"') inQ = true;
+    else if (ch === ",") {
+      out.push(cur);
+      cur = "";
+    } else cur += ch;
+  }
+  out.push(cur);
+  return out.map((s) => s.trim());
+}
+
+export function parseStandingsCsv(
+  text: string,
+): { rank: number; team_name: string; points: number }[] {
+  const rows: { rank: number; team_name: string; points: number }[] = [];
+  for (const line of text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean)) {
+    const c = csvCells(line);
+    if (c.length < 2) continue;
+    const rank = parseInt(c[0], 10);
+    if (!Number.isFinite(rank)) continue; // skips the header row
+    const name = (c[1] ?? "").replace(/\s*\bunit\b\s*$/i, "").trim();
+    if (!name) continue;
+    const points = Number(c[2] ?? "");
+    rows.push({ rank, team_name: name, points: Number.isFinite(points) ? points : 0 });
+  }
+  return rows;
+}
+
 // ============================================================================
 // Loader
 // ============================================================================
@@ -59,7 +114,7 @@ export async function loader({ request }: Route.LoaderArgs) {
   const { supabase, headers, user, profile } = await requireAdmin(request);
   const event = await loadEvent(supabase);
 
-  const [levelsRes, programsRes, resultsRes] = await Promise.all([
+  const [levelsRes, programsRes, resultsRes, standingsRes] = await Promise.all([
     supabase
       .from("levels")
       .select("id, code, name_ml, sort_order")
@@ -77,6 +132,12 @@ export async function loader({ request }: Route.LoaderArgs) {
         `id, program_id, status, result_no, result_winners(position, name_ml, name_en, unit_ml, marks, grade)`,
       )
       .eq("event_id", event.id),
+    supabase
+      .from("team_standings")
+      .select("after_n, rank, team_name, points, template")
+      .eq("event_id", event.id)
+      .order("after_n", { ascending: true })
+      .order("rank", { ascending: true }),
   ]);
 
   const levels = levelsRes.data ?? [];
@@ -153,6 +214,40 @@ export async function loader({ request }: Route.LoaderArgs) {
   const totalPending = activePrograms.filter((p) => !resultByProgram.get(p.id)).length;
   const totalInactive = programs.length - activePrograms.length;
 
+  // Group uploaded standings rows into per-after_n snapshots, each
+  // carrying its own poster template.
+  type SRow = {
+    after_n: number;
+    rank: number;
+    team_name: string;
+    points: number;
+    template: number | null;
+  };
+  const standingsMap = new Map<
+    number,
+    { template: number; rows: { rank: number; team_name: string; points: number }[] }
+  >();
+  for (const r of (standingsRes.data ?? []) as SRow[]) {
+    const g = standingsMap.get(r.after_n) ?? {
+      template: r.template ?? 0,
+      rows: [],
+    };
+    g.template = r.template ?? 0;
+    g.rows.push({
+      rank: r.rank,
+      team_name: r.team_name,
+      points: Number(r.points),
+    });
+    standingsMap.set(r.after_n, g);
+  }
+  const standings = [...standingsMap.entries()]
+    .map(([afterN, g]) => ({
+      afterN,
+      template: g.template,
+      rows: g.rows.sort((a, b) => a.rank - b.rank),
+    }))
+    .sort((a, b) => a.afterN - b.afterN);
+
   return data(
     {
       user: { email: user.email ?? "" },
@@ -167,6 +262,9 @@ export async function loader({ request }: Route.LoaderArgs) {
         totalInactive,
       },
       publishedWinners,
+      standings,
+      standingsTemplate:
+        (event as { standings_template?: number }).standings_template ?? 0,
     },
     { headers: Object.fromEntries(headers) },
   );
@@ -191,6 +289,170 @@ export async function action({ request }: Route.ActionArgs) {
     const { error } = await supabase.from("events").update({ status: next }).eq("id", event.id);
     if (error) return data({ error: error.message }, { headers: Object.fromEntries(headers) });
     return data({ ok: true }, { headers: Object.fromEntries(headers) });
+  }
+
+
+  if (intent === "delete_standings") {
+    const afterN = parseInt(String(fd.get("after_n") ?? ""), 10);
+    if (!Number.isFinite(afterN)) {
+      return data({ error: "Invalid snapshot." }, { headers: Object.fromEntries(headers) });
+    }
+    const { error } = await supabase
+      .from("team_standings")
+      .delete()
+      .eq("event_id", event.id)
+      .eq("after_n", afterN);
+    if (error) return data({ error: error.message }, { headers: Object.fromEntries(headers) });
+    return data({ ok: true }, { headers: Object.fromEntries(headers) });
+  }
+
+  if (intent === "upload_standings") {
+    const afterN = parseInt(String(fd.get("after_n") ?? "").trim(), 10);
+    if (!Number.isFinite(afterN) || afterN < 0) {
+      return data(
+        { error: "Enter a valid 'after N results' number." },
+        { headers: Object.fromEntries(headers) },
+      );
+    }
+    const tRaw = parseInt(String(fd.get("template") ?? "0"), 10);
+    const template =
+      Number.isFinite(tRaw) && tRaw >= 0 && tRaw < STANDINGS_TEMPLATE_NAMES.length
+        ? tRaw
+        : 0;
+    const csv = String(fd.get("csv") ?? "");
+    const parsed = parseStandingsCsv(csv);
+    if (parsed.length === 0) {
+      return data(
+        { error: "No valid rows found. Expected: Rank,Team Name,Points" },
+        { headers: Object.fromEntries(headers) },
+      );
+    }
+    // Replace this snapshot atomically-ish: delete then insert.
+    const del = await supabase
+      .from("team_standings")
+      .delete()
+      .eq("event_id", event.id)
+      .eq("after_n", afterN);
+    if (del.error) {
+      return data({ error: del.error.message }, { headers: Object.fromEntries(headers) });
+    }
+    const { error: insErr } = await supabase.from("team_standings").insert(
+      parsed.map((r) => ({
+        event_id: event.id,
+        after_n: afterN,
+        rank: r.rank,
+        team_name: r.team_name,
+        points: r.points,
+        template,
+      })),
+    );
+    if (insErr) return data({ error: insErr.message }, { headers: Object.fromEntries(headers) });
+    // Remember this as the default template for the next upload.
+    await supabase
+      .from("events")
+      .update({ standings_template: template })
+      .eq("id", event.id);
+    return data(
+      {
+        ok: true,
+        message: `Saved ${parsed.length} teams · after ${afterN} · ${STANDINGS_TEMPLATE_NAMES[template]}`,
+      },
+      { headers: Object.fromEntries(headers) },
+    );
+  }
+
+  if (intent === "set_snapshot_template") {
+    const afterN = parseInt(String(fd.get("after_n") ?? ""), 10);
+    const t = parseInt(String(fd.get("template") ?? ""), 10);
+    if (!Number.isFinite(afterN)) {
+      return data({ error: "Invalid snapshot." }, { headers: Object.fromEntries(headers) });
+    }
+    if (!Number.isFinite(t) || t < 0 || t >= STANDINGS_TEMPLATE_NAMES.length) {
+      return data({ error: "Invalid template." }, { headers: Object.fromEntries(headers) });
+    }
+    const { error } = await supabase
+      .from("team_standings")
+      .update({ template: t })
+      .eq("event_id", event.id)
+      .eq("after_n", afterN);
+    if (error) return data({ error: error.message }, { headers: Object.fromEntries(headers) });
+    return data(
+      {
+        ok: true,
+        message: `after ${afterN}: ${STANDINGS_TEMPLATE_NAMES[t]} template`,
+      },
+      { headers: Object.fromEntries(headers) },
+    );
+  }
+
+  if (intent === "upload_final_poster") {
+    const file = fd.get("final_poster");
+    if (!(file instanceof File) || file.size === 0) {
+      return data(
+        { error: "Choose an image file to upload." },
+        { headers: Object.fromEntries(headers) },
+      );
+    }
+    if (!file.type.startsWith("image/")) {
+      return data(
+        { error: "That's not an image. Upload a PNG or JPG poster." },
+        { headers: Object.fromEntries(headers) },
+      );
+    }
+    if (file.size > 4 * 1024 * 1024) {
+      return data(
+        {
+          error: `Image is ${(file.size / 1024 / 1024).toFixed(1)} MB — keep it under 4 MB (compress or export at a lower scale).`,
+        },
+        { headers: Object.fromEntries(headers) },
+      );
+    }
+    const ext =
+      file.type === "image/png"
+        ? "png"
+        : file.type === "image/jpeg"
+        ? "jpg"
+        : file.type === "image/webp"
+        ? "webp"
+        : (file.name.split(".").pop() || "png").toLowerCase();
+    const path = `final/${event.id}.${ext}`;
+    const up = await supabase.storage
+      .from("posters")
+      .upload(path, file, { upsert: true, contentType: file.type });
+    if (up.error) {
+      return data(
+        { error: `Upload failed: ${up.error.message}` },
+        { headers: Object.fromEntries(headers) },
+      );
+    }
+    const {
+      data: { publicUrl },
+    } = supabase.storage.from("posters").getPublicUrl(path);
+    // Cache-bust: the path is stable (upsert), so version the URL.
+    const versioned = `${publicUrl}?v=${Date.now()}`;
+    const { error: updErr } = await supabase
+      .from("events")
+      .update({ final_poster_url: versioned })
+      .eq("id", event.id);
+    if (updErr) {
+      return data({ error: updErr.message }, { headers: Object.fromEntries(headers) });
+    }
+    return data(
+      { ok: true, message: "Final poster published — it now leads the public chat." },
+      { headers: Object.fromEntries(headers) },
+    );
+  }
+
+  if (intent === "clear_final_poster") {
+    const { error } = await supabase
+      .from("events")
+      .update({ final_poster_url: null })
+      .eq("id", event.id);
+    if (error) return data({ error: error.message }, { headers: Object.fromEntries(headers) });
+    return data(
+      { ok: true, message: "Final poster removed." },
+      { headers: Object.fromEntries(headers) },
+    );
   }
 
   // Result-scoped intents need program_code
@@ -239,10 +501,12 @@ export async function action({ request }: Route.ActionArgs) {
     return data({ ok: true }, { headers: Object.fromEntries(headers) });
   }
 
-  if (intent === "save_draft" || intent === "save_publish" || intent === "save_publish_next") {
+  if (intent === "save_draft" || intent === "save_publish") {
     const result_no = String(fd.get("result_no") ?? "").trim() || null;
     const publish = intent !== "save_draft";
 
+    // Only 1st/2nd/3rd, name + team. Team points come from the
+    // separate standings CSV, so no marks/grade are collected here.
     const winners: {
       position: number;
       name_ml: string;
@@ -252,40 +516,16 @@ export async function action({ request }: Route.ActionArgs) {
       grade: string | null;
     }[] = [];
     for (const pos of [1, 2, 3]) {
-      const name = String(fd.get(`winner_${pos}_name_en`) ?? "").trim();
-      if (!name) continue;
-      const marksRaw = String(fd.get(`winner_${pos}_marks`) ?? "").trim();
+      const raw = String(fd.get(`winner_${pos}_name_en`) ?? "").trim();
+      if (!raw) continue;
+      const name = titleCaseName(raw);
       winners.push({
         position: pos,
-        // name_ml is NOT NULL in the DB; English name is the only one
-        // collected now, so it backs both columns.
+        // name_ml is NOT NULL in the DB; English name backs both columns.
         name_ml: name,
         name_en: name,
         unit_ml: String(fd.get(`winner_${pos}_unit_ml`) ?? "").trim() || null,
-        marks: marksRaw ? Number(marksRaw) : null,
-        grade: null,
-      });
-    }
-
-    // Extra marks — NOT a podium place, never rendered on the poster or
-    // individual result (stored with position 0), but the marks add to
-    // the team's total points.
-    const extraCount = Math.min(
-      Math.max(parseInt(String(fd.get("extra_count") ?? "0"), 10) || 0, 0),
-      200,
-    );
-    for (let i = 0; i < extraCount; i++) {
-      const unit = String(fd.get(`extra_${i}_unit_ml`) ?? "").trim() || null;
-      const marksRaw = String(fd.get(`extra_${i}_marks`) ?? "").trim();
-      const marks = marksRaw ? Number(marksRaw) : NaN;
-      if (!unit || !Number.isFinite(marks)) continue;
-      const name = String(fd.get(`extra_${i}_name`) ?? "").trim();
-      winners.push({
-        position: 0,
-        name_ml: name || "Extra marks",
-        name_en: name || "Extra marks",
-        unit_ml: unit,
-        marks,
+        marks: null,
         grade: null,
       });
     }
@@ -342,12 +582,6 @@ export async function action({ request }: Route.ActionArgs) {
       .insert(winners.map((w) => ({ result_id: resultId, ...w })));
     if (wErr) return data({ error: wErr.message }, { headers: Object.fromEntries(headers) });
 
-    if (intent === "save_publish_next") {
-      const nextCode = String(fd.get("next_code") ?? "");
-      return redirect(nextCode ? `/admin?edit=${nextCode}` : "/admin", {
-        headers: Object.fromEntries(headers),
-      });
-    }
     // Stay on the modal and show success — no redirect.
     return data({ ok: true }, { headers: Object.fromEntries(headers) });
   }
@@ -374,8 +608,16 @@ export function shouldRevalidate({ formMethod, currentUrl, nextUrl, defaultShoul
 // Component
 // ============================================================================
 export default function Admin({ loaderData }: Route.ComponentProps) {
-  const { user, profile, event, levels, stats, publishedWinners } =
-    loaderData;
+  const {
+    user,
+    profile,
+    event,
+    levels,
+    stats,
+    publishedWinners,
+    standings,
+    standingsTemplate,
+  } = loaderData;
   const orgName = (profile.organizations as { name?: string } | null)?.name ?? "";
   const eventName = event.name_ml ?? event.name;
   const isPublished = event.status === "published";
@@ -541,8 +783,12 @@ export default function Admin({ loaderData }: Route.ComponentProps) {
         <main className="flex-1 px-4 lg:px-8 py-6 space-y-6">
           {view === "standings" && (
             <StandingsView
-              totalPublished={stats.totalPublished}
-              winners={publishedWinners}
+              snapshots={standings}
+              defaultTemplate={standingsTemplate}
+              finalPosterUrl={
+                (event as { final_poster_url?: string | null })
+                  .final_poster_url ?? null
+              }
             />
           )}
           {view === "share" && (
@@ -689,236 +935,378 @@ function DashboardView({
 // ─────────────────────────────────────────────────────────────────────
 // Standings view — full leaderboard + per-team breakdown
 // ─────────────────────────────────────────────────────────────────────
-function StandingsView({
-  totalPublished,
-  winners,
-}: {
-  totalPublished: number;
-  winners: ReadonlyArray<{
-    unit_ml: string | null;
-    marks: number | null;
-    grade: string | null;
-  }>;
-}) {
-  const snapshotN = snapshotBucket(totalPublished);
-  const rows = computeStandings(winners);
-  const noResults = snapshotN === 0;
+type StandingsSnapshot = {
+  afterN: number;
+  template: number;
+  rows: { rank: number; team_name: string; points: number }[];
+};
 
-  // Per-team breakdown by grade tier (A/B/C) using the winnerPoints fallback.
-  const breakdown = new Map<
-    string,
-    { firsts: number; seconds: number; thirds: number; aGrade: number; bGrade: number; cGrade: number }
-  >();
-  for (const t of TEAMS) {
-    breakdown.set(t.slug, { firsts: 0, seconds: 0, thirds: 0, aGrade: 0, bGrade: 0, cGrade: 0 });
+// One snapshot's standings poster + Download / Share, using the
+// currently-selected template.
+function StandingsShareCard({
+  snapshot,
+  templateIndex,
+}: {
+  snapshot: StandingsSnapshot;
+  templateIndex: number;
+}) {
+  const stageRef = useRef<Konva.Stage | null>(null);
+  const [busy, setBusy] = useState<null | "download" | "share">(null);
+
+  async function onDownload() {
+    setBusy("download");
+    try {
+      await exportStandingsPng(
+        stageRef.current,
+        `standings_after_${snapshot.afterN}.png`,
+      );
+    } finally {
+      setBusy(null);
+    }
   }
-  for (const w of winners) {
-    if (!w.unit_ml) continue;
-    const slug = w.unit_ml.toLowerCase();
-    const b = breakdown.get(slug);
-    if (!b) continue;
-    if (w.grade === "A") b.aGrade++;
-    else if (w.grade === "B") b.bGrade++;
-    else if (w.grade === "C") b.cGrade++;
+  async function onShare() {
+    setBusy("share");
+    try {
+      await shareStandings(stageRef.current, snapshot.afterN);
+    } finally {
+      setBusy(null);
+    }
   }
-  const totalPoints = rows.reduce((n, r) => n + r.points, 0);
 
   return (
-    <>
-      <section className="rounded-xl border border-stone-200 bg-white p-5">
-        <div className="flex items-end justify-between gap-3">
-          <div>
-            <p className="text-[11px] font-semibold tracking-widest uppercase text-stone-500">
-              Snapshot
-            </p>
-            <h2 className="text-2xl font-semibold tracking-tight mt-0.5">
-              {noResults
-                ? "Standings open after 5 results"
-                : `After ${snapshotN} results`}
-            </h2>
-            {!noResults && totalPublished > snapshotN && (
-              <p className="text-xs text-stone-500 mt-1">
-                {totalPublished - snapshotN} new since this snapshot · next
-                update at result {snapshotN + 5}
-              </p>
-            )}
-          </div>
-          <div className="text-right">
-            <p className="text-[11px] font-semibold tracking-widest uppercase text-stone-500">
-              Total points
-            </p>
-            <p className="text-2xl font-semibold tabular-nums">{totalPoints}</p>
-          </div>
-        </div>
-      </section>
-
-      <section className="rounded-xl border border-stone-200 bg-white overflow-hidden">
-        <header className="px-5 py-3 border-b border-stone-200 bg-stone-50 flex items-center gap-3">
-          <Trophy className="size-4 text-yellow" strokeWidth={2.5} />
-          <h3 className="text-sm font-semibold">Leaderboard</h3>
-          <span className="ml-auto text-[11px] text-stone-500">
-            {TEAMS.length} teams · {winners.length} winners counted
-          </span>
-        </header>
-        <table className="w-full text-sm">
-          <thead className="text-[11px] uppercase tracking-wider text-stone-500 bg-white">
-            <tr className="border-b border-stone-200">
-              <th className="text-left px-5 py-2.5 font-medium w-16">Rank</th>
-              <th className="text-left px-5 py-2.5 font-medium">Team</th>
-              <th className="text-right px-3 py-2.5 font-medium">A</th>
-              <th className="text-right px-3 py-2.5 font-medium">B</th>
-              <th className="text-right px-3 py-2.5 font-medium">C</th>
-              <th className="text-right px-5 py-2.5 font-medium w-24">Points</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((r, i) => {
-              const b = breakdown.get(r.team.slug)!;
-              const isLeader = i === 0 && r.points > 0;
-              return (
-                <tr
-                  key={r.team.slug}
-                  className={`border-b border-stone-100 last:border-0 ${
-                    isLeader ? "bg-yellow/10" : ""
-                  }`}
-                >
-                  <td className="px-5 py-3">
-                    <span
-                      className={`inline-flex items-center justify-center size-7 rounded-full text-[11px] font-semibold tabular-nums ${
-                        i === 0
-                          ? "bg-yellow text-black"
-                          : i === 1
-                          ? "bg-black/10 text-black"
-                          : i === 2
-                          ? "bg-red-600 text-white"
-                          : "bg-stone-100 text-stone-600"
-                      }`}
-                    >
-                      {i + 1}
-                    </span>
-                  </td>
-                  <td className="px-5 py-3 font-medium">{r.team.name}</td>
-                  <td className="px-3 py-3 text-right tabular-nums text-stone-700">
-                    {b.aGrade || ""}
-                  </td>
-                  <td className="px-3 py-3 text-right tabular-nums text-stone-700">
-                    {b.bGrade || ""}
-                  </td>
-                  <td className="px-3 py-3 text-right tabular-nums text-stone-700">
-                    {b.cGrade || ""}
-                  </td>
-                  <td className="px-5 py-3 text-right font-semibold tabular-nums">
-                    {r.points}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </section>
-
-      <section className="text-[11px] text-stone-500">
-        Points: A grade = {winnerPoints({ marks: null, grade: "A" })} ·
-        B grade = {winnerPoints({ marks: null, grade: "B" })} ·
-        C grade = {winnerPoints({ marks: null, grade: "C" })}.
-        If an explicit marks value is set on a winner, that value is used
-        instead of the grade default.
-      </section>
-    </>
+    <div className="border-t border-stone-200 p-4">
+      <div className="mx-auto max-w-xs overflow-hidden rounded-lg ring-1 ring-stone-200">
+        <StandingsPosterCanvas
+          data={{
+            afterN: snapshot.afterN,
+            rows: snapshot.rows.map((r) => ({
+              name: r.team_name,
+              points: r.points,
+            })),
+          }}
+          templateIndex={templateIndex}
+          stageRef={stageRef}
+        />
+      </div>
+      <div className="mt-3 flex items-center justify-center gap-2">
+        <button
+          type="button"
+          onClick={onDownload}
+          disabled={busy !== null}
+          className="inline-flex items-center gap-1.5 rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm font-medium text-stone-700 disabled:opacity-50 hover:bg-stone-50"
+        >
+          <Download className="size-4" />
+          {busy === "download" ? "…" : "Download"}
+        </button>
+        <button
+          type="button"
+          onClick={onShare}
+          disabled={busy !== null}
+          className="inline-flex items-center gap-1.5 rounded-lg bg-stone-900 px-3 py-2 text-sm font-semibold text-white disabled:opacity-50 hover:bg-stone-800"
+        >
+          <Share2 className="size-4" />
+          {busy === "share" ? "…" : "Share"}
+        </button>
+      </div>
+    </div>
   );
 }
 
-// ============================================================================
-// Extra marks — marks attributed to a team that aren't a podium place.
-// Not rendered on the poster or individual result; the marks add to the
-// team's total points.
-// ============================================================================
-type ExtraRow = { name: string; unit: string; marks: string };
+function StandingsView({
+  snapshots,
+  defaultTemplate,
+  finalPosterUrl,
+}: {
+  snapshots: StandingsSnapshot[];
+  defaultTemplate: number;
+  finalPosterUrl: string | null;
+}) {
+  const actionData = useActionData<typeof action>();
+  const navigation = useNavigation();
+  const busy = navigation.state !== "idle";
+  const [csv, setCsv] = useState("");
+  const [finalName, setFinalName] = useState("");
 
-function ExtraMarkEntries({ initial }: { initial: ExtraRow[] }) {
-  const [rows, setRows] = useState<ExtraRow[]>(initial);
-  const update = (i: number, patch: Partial<ExtraRow>) =>
-    setRows((r) => r.map((x, idx) => (idx === i ? { ...x, ...patch } : x)));
-  const add = () =>
-    setRows((r) => [...r, { name: "", unit: "", marks: "" }]);
-  const remove = (i: number) =>
-    setRows((r) => r.filter((_, idx) => idx !== i));
-
-  const field =
-    "rounded-md border border-stone-300 bg-white px-2 py-1.5 text-sm focus:outline-none focus:border-stone-400";
+  const onPickFile = (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => setCsv(String(reader.result ?? ""));
+    reader.readAsText(file);
+  };
 
   return (
-    <div className="rounded-lg border border-stone-200 bg-stone-50/60 p-2.5">
-      <input type="hidden" name="extra_count" value={rows.length} />
-      <div className="flex items-center justify-between gap-3">
-        <p className="text-[11px] font-medium uppercase tracking-wider text-stone-500">
-          Extra marks{" "}
-          <span className="font-normal normal-case text-stone-400">
-            · added to team points, not on poster or result
-          </span>
+    <div className="space-y-6 max-w-3xl">
+      {/* Final standings poster — a finished image with real data,
+          uploaded as-is (no template). It leads the public chat with
+          a celebration the moment it's published. */}
+      <section className="rounded-xl border border-stone-200 bg-white p-5">
+        <h2 className="text-lg font-semibold tracking-tight">
+          Final standings poster
+        </h2>
+        <p className="text-xs text-stone-500 mt-1">
+          Upload the finished poster image (PNG/JPG, real data baked in —
+          no template). It appears first in the public chat with a
+          party-popper. Re-upload anytime to replace it. Keep under 4 MB.
         </p>
-        <button
-          type="button"
-          onClick={add}
-          className="shrink-0 rounded-md border border-stone-300 bg-white px-2 py-1 text-xs font-medium text-stone-700 hover:bg-stone-100"
-        >
-          + Add
-        </button>
-      </div>
 
-      {rows.length === 0 ? (
-        <p className="mt-1.5 text-[11px] text-stone-400">
-          Add marks earned by a team that aren't a podium place so they
-          still count toward the team's total points.
-        </p>
-      ) : (
-        <div className="mt-2 space-y-1.5">
-          {rows.map((row, i) => (
-            <div
-              key={i}
-              className="grid grid-cols-[minmax(0,1fr)_9rem_5rem_2rem] gap-2 items-center"
-            >
-              <input
-                name={`extra_${i}_name`}
-                value={row.name}
-                onChange={(e) => update(i, { name: e.target.value })}
-                placeholder="Name / note (optional)"
-                className={`${field} w-full`}
-              />
-              <select
-                name={`extra_${i}_unit_ml`}
-                value={row.unit}
-                onChange={(e) => update(i, { unit: e.target.value })}
-                className={field}
-              >
-                <option value="">Team —</option>
-                {TEAMS.map((t) => (
-                  <option key={t.slug} value={t.slug}>
-                    {t.name}
-                  </option>
-                ))}
-              </select>
-              <input
-                name={`extra_${i}_marks`}
-                type="number"
-                step="0.01"
-                inputMode="decimal"
-                value={row.marks}
-                onChange={(e) => update(i, { marks: e.target.value })}
-                placeholder="Marks"
-                className={`${field} w-full text-right tabular-nums`}
-              />
-              <button
-                type="button"
-                onClick={() => remove(i)}
-                aria-label="Remove entry"
-                className="inline-flex size-7 items-center justify-center rounded-md text-stone-400 hover:bg-stone-200 hover:text-stone-700"
-              >
-                <X className="size-4" />
-              </button>
+        {finalPosterUrl && (
+          <div className="mt-4 flex flex-wrap items-start gap-4">
+            <img
+              src={finalPosterUrl}
+              alt="Current final poster"
+              className="w-40 rounded-lg border border-stone-200 shadow-sm"
+            />
+            <div className="space-y-2">
+              <p className="text-xs font-medium text-emerald-700">
+                ● Live on the public site
+              </p>
+              <Form method="post">
+                <input
+                  type="hidden"
+                  name="intent"
+                  value="clear_final_poster"
+                />
+                <button
+                  type="submit"
+                  disabled={busy}
+                  className="inline-flex items-center gap-2 rounded-lg border border-red-300 px-3 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-50 disabled:opacity-50"
+                >
+                  Remove final poster
+                </button>
+              </Form>
             </div>
-          ))}
-        </div>
+          </div>
+        )}
+
+        <Form
+          method="post"
+          encType="multipart/form-data"
+          className="mt-4 space-y-3"
+        >
+          <input type="hidden" name="intent" value="upload_final_poster" />
+          <div className="flex flex-wrap items-center gap-3">
+            <label className="inline-flex items-center gap-2 rounded-md border border-stone-300 bg-white px-3 py-1.5 text-xs font-medium text-stone-700 hover:bg-stone-50 cursor-pointer">
+              <input
+                type="file"
+                name="final_poster"
+                accept="image/png,image/jpeg,image/webp"
+                required
+                onChange={(e) =>
+                  setFinalName(e.target.files?.[0]?.name ?? "")
+                }
+                className="sr-only"
+              />
+              Choose poster image
+            </label>
+            <span className="text-[11px] text-stone-500 truncate max-w-[16rem]">
+              {finalName || "No file chosen"}
+            </span>
+          </div>
+          <button
+            type="submit"
+            disabled={busy}
+            className="inline-flex items-center gap-2 rounded-lg bg-stone-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50 hover:bg-stone-800"
+          >
+            {busy ? "Publishing…" : finalPosterUrl ? "Replace poster" : "Publish final poster"}
+          </button>
+        </Form>
+      </section>
+
+      {/* Upload */}
+      <section className="rounded-xl border border-stone-200 bg-white p-5">
+        <h2 className="text-lg font-semibold tracking-tight">
+          Upload team standings
+        </h2>
+        <p className="text-xs text-stone-500 mt-1">
+          Standings are taken straight from your CSV — not computed from
+          results. Paste the official sheet for a checkpoint. Format:
+          <code className="mx-1 rounded bg-stone-100 px-1.5 py-0.5">
+            Rank,Team Name,Points
+          </code>
+          (a header row is fine). Uploading replaces the snapshot for that N.
+        </p>
+
+        <Form method="post" className="mt-4 space-y-3">
+          <input type="hidden" name="intent" value="upload_standings" />
+          <div className="flex items-center gap-2">
+            <label htmlFor="after_n" className="text-sm font-medium">
+              After
+            </label>
+            <input
+              id="after_n"
+              name="after_n"
+              type="number"
+              min={0}
+              required
+              placeholder="10"
+              className="w-24 rounded-md border border-stone-300 bg-white px-2.5 py-1.5 text-sm tabular-nums focus:outline-none focus:border-stone-400"
+            />
+            <span className="text-sm text-stone-600">results</span>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-sm font-medium mr-1">Template</span>
+            {STANDINGS_TEMPLATE_NAMES.map((nm, i) => (
+              <label
+                key={nm}
+                className="inline-flex items-center gap-1.5 rounded-md border border-stone-300 bg-white px-2.5 py-1.5 text-xs font-medium text-stone-700 cursor-pointer has-[:checked]:border-stone-900 has-[:checked]:bg-stone-900 has-[:checked]:text-white"
+              >
+                <input
+                  type="radio"
+                  name="template"
+                  value={i}
+                  defaultChecked={i === defaultTemplate}
+                  className="sr-only"
+                />
+                {nm}
+              </label>
+            ))}
+          </div>
+          <div className="flex items-center gap-3">
+            <label className="inline-flex items-center gap-2 rounded-md border border-stone-300 bg-white px-3 py-1.5 text-xs font-medium text-stone-700 hover:bg-stone-50 cursor-pointer">
+              <input
+                type="file"
+                accept=".csv,text/csv,text/plain"
+                onChange={onPickFile}
+                className="sr-only"
+              />
+              Choose .csv file
+            </label>
+            <span className="text-[11px] text-stone-400">
+              or paste below — the file fills the box; you can still edit it.
+            </span>
+          </div>
+          <textarea
+            name="csv"
+            required
+            rows={9}
+            spellCheck={false}
+            value={csv}
+            onChange={(e) => setCsv(e.target.value)}
+            placeholder={
+              "Rank,Team Name,Points\n1,Anithara Unit,143\n2,Vidya Nagar Unit,100\n3,Cheerpingal Unit,59"
+            }
+            className="w-full rounded-md border border-stone-300 bg-white px-3 py-2 font-mono text-xs leading-relaxed focus:outline-none focus:border-stone-400"
+          />
+          {actionData && "error" in actionData && (
+            <p className="text-xs text-red-700 bg-red-50 border border-red-200 rounded-md px-3 py-2">
+              {actionData.error}
+            </p>
+          )}
+          {actionData && "ok" in actionData && (
+            <p className="text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-md px-3 py-2">
+              ✓ {"message" in actionData ? String(actionData.message) : "Saved"}
+            </p>
+          )}
+          <button
+            type="submit"
+            disabled={busy}
+            className="inline-flex items-center gap-2 rounded-lg bg-stone-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50 hover:bg-stone-800"
+          >
+            {busy ? "Saving…" : "Upload standings"}
+          </button>
+        </Form>
+      </section>
+
+      {/* Existing snapshots */}
+      {snapshots.length === 0 ? (
+        <section className="rounded-xl border border-dashed border-stone-300 bg-white p-8 text-center text-sm text-stone-500">
+          No standings uploaded yet. The public standings poster appears once
+          you upload at least one snapshot.
+        </section>
+      ) : (
+        snapshots
+          .slice()
+          .sort((a, b) => b.afterN - a.afterN)
+          .map((s) => (
+            <section
+              key={s.afterN}
+              className="rounded-xl border border-stone-200 bg-white overflow-hidden"
+            >
+              <header className="px-5 py-3 border-b border-stone-200 bg-stone-50 flex items-center gap-3">
+                <Trophy className="size-4 text-yellow" strokeWidth={2.5} />
+                <h3 className="text-sm font-semibold">After {s.afterN} results</h3>
+                <span className="text-[11px] text-stone-500">
+                  {s.rows.length} teams
+                </span>
+                <Form method="post" className="ml-auto">
+                  <input type="hidden" name="intent" value="delete_standings" />
+                  <input type="hidden" name="after_n" value={s.afterN} />
+                  <button
+                    type="submit"
+                    disabled={busy}
+                    onClick={(e) => {
+                      if (!confirm(`Delete the "after ${s.afterN}" snapshot?`))
+                        e.preventDefault();
+                    }}
+                    className="text-xs text-red-600 hover:text-red-700 hover:underline disabled:opacity-50"
+                  >
+                    Delete
+                  </button>
+                </Form>
+              </header>
+              <table className="w-full text-sm">
+                <thead className="text-[11px] uppercase tracking-wider text-stone-500">
+                  <tr className="border-b border-stone-200">
+                    <th className="text-left px-5 py-2 font-medium w-16">Rank</th>
+                    <th className="text-left px-5 py-2 font-medium">Team</th>
+                    <th className="text-right px-5 py-2 font-medium w-24">
+                      Points
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {s.rows.map((r) => (
+                    <tr
+                      key={`${r.rank}-${r.team_name}`}
+                      className="border-b border-stone-100 last:border-0"
+                    >
+                      <td className="px-5 py-2.5 tabular-nums text-stone-600">
+                        {r.rank}
+                      </td>
+                      <td className="px-5 py-2.5 font-medium">{r.team_name}</td>
+                      <td className="px-5 py-2.5 text-right font-semibold tabular-nums">
+                        {r.points}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <div className="flex flex-wrap items-center gap-2 border-t border-stone-200 px-5 py-3">
+                <span className="text-xs font-medium text-stone-600 mr-1">
+                  Template
+                </span>
+                {STANDINGS_TEMPLATE_NAMES.map((nm, i) => (
+                  <Form method="post" key={nm}>
+                    <input
+                      type="hidden"
+                      name="intent"
+                      value="set_snapshot_template"
+                    />
+                    <input type="hidden" name="after_n" value={s.afterN} />
+                    <input type="hidden" name="template" value={i} />
+                    <button
+                      type="submit"
+                      disabled={busy}
+                      className={`rounded-md border px-2.5 py-1 text-xs font-medium disabled:opacity-50 ${
+                        i === s.template
+                          ? "border-stone-900 bg-stone-900 text-white"
+                          : "border-stone-300 bg-white text-stone-700 hover:bg-stone-50"
+                      }`}
+                    >
+                      {i === s.template ? "✓ " : ""}
+                      {nm}
+                    </button>
+                  </Form>
+                ))}
+              </div>
+              <StandingsShareCard
+                key={`poster-${s.afterN}-${s.template}`}
+                snapshot={s}
+                templateIndex={s.template}
+              />
+            </section>
+          ))
       )}
     </div>
   );
@@ -958,7 +1346,7 @@ function ResultModal({
     };
   }, []);
 
-  const { program, level, result, winners, suggestedResultNo, neighbors } = editData;
+  const { program, level, result, winners, neighbors } = editData;
   const status = result?.status ?? "none";
   const winnersByPos = new Map<number, typeof winners[number]>();
   for (const w of winners) winnersByPos.set(w.position, w);
@@ -1017,9 +1405,6 @@ function ResultModal({
           className="flex-1 min-h-0 flex flex-col"
         >
           <input type="hidden" name="program_code" value={program.code} />
-          {neighbors.next && (
-            <input type="hidden" name="next_code" value={neighbors.next.code} />
-          )}
 
           {/* Scrollable body */}
           <div className="flex-1 overflow-auto px-4 py-3 space-y-2.5">
@@ -1034,22 +1419,18 @@ function ResultModal({
               <input
                 id="result_no"
                 name="result_no"
-                defaultValue={result?.result_no ?? suggestedResultNo ?? ""}
+                defaultValue={result?.result_no ?? ""}
                 placeholder="030"
                 inputMode="numeric"
                 className="w-20 rounded-md border border-stone-300 bg-white px-2.5 py-1.5 text-sm tabular-nums focus:outline-none focus:border-stone-400"
               />
-              {!result && suggestedResultNo && (
-                <span className="text-[10px] text-stone-400">auto-suggested</span>
-              )}
             </div>
 
             {/* Column headers (laptop) */}
-            <div className="hidden md:grid grid-cols-[3.25rem_minmax(0,1fr)_11rem_5rem] gap-2 px-1 text-[10px] font-medium uppercase tracking-wider text-stone-400">
+            <div className="hidden md:grid grid-cols-[3.25rem_minmax(0,1fr)_13rem] gap-2 px-1 text-[10px] font-medium uppercase tracking-wider text-stone-400">
               <span>Place</span>
               <span>Name</span>
               <span>Team</span>
-              <span className="text-right">Marks</span>
             </div>
 
             {[1, 2, 3].map((pos) => {
@@ -1059,14 +1440,14 @@ function ResultModal({
               return (
                 <div
                   key={pos}
-                  className={`grid items-center gap-2 grid-cols-2 md:grid-cols-[3.25rem_minmax(0,1fr)_11rem_5rem] rounded-lg border px-2.5 py-2 ${
+                  className={`grid items-center gap-2 grid-cols-1 md:grid-cols-[3.25rem_minmax(0,1fr)_13rem] rounded-lg border px-2.5 py-2 ${
                     isFirst
                       ? "border-amber-300 bg-amber-50/40"
                       : "border-stone-200"
                   }`}
                 >
                   <span
-                    className={`col-span-2 md:col-auto inline-flex items-center justify-center rounded-full text-[11px] font-semibold w-12 h-6 ${meta.tone}`}
+                    className={`inline-flex items-center justify-center rounded-full text-[11px] font-semibold w-12 h-6 ${meta.tone}`}
                   >
                     {meta.ordinal}
                   </span>
@@ -1076,12 +1457,12 @@ function ResultModal({
                     autoFocus={isFirst && !winnersByPos.get(1)}
                     defaultValue={w?.name_en ?? w?.name_ml ?? ""}
                     placeholder={isFirst ? "Winner name" : "Name (optional)"}
-                    className="col-span-2 md:col-auto w-full rounded-md border border-stone-300 bg-white px-2.5 py-1.5 text-sm focus:outline-none focus:border-stone-400"
+                    className="w-full rounded-md border border-stone-300 bg-white px-2.5 py-1.5 text-sm focus:outline-none focus:border-stone-400"
                   />
                   <select
                     name={`winner_${pos}_unit_ml`}
                     defaultValue={(w?.unit_ml ?? "").toLowerCase()}
-                    className="col-span-1 md:col-auto rounded-md border border-stone-300 bg-white px-2 py-1.5 text-sm focus:outline-none focus:border-stone-400"
+                    className="rounded-md border border-stone-300 bg-white px-2 py-1.5 text-sm focus:outline-none focus:border-stone-400"
                   >
                     <option value="">Team —</option>
                     {TEAMS.map((t) => (
@@ -1090,29 +1471,9 @@ function ResultModal({
                       </option>
                     ))}
                   </select>
-                  <input
-                    name={`winner_${pos}_marks`}
-                    type="number"
-                    step="0.01"
-                    inputMode="decimal"
-                    defaultValue={w?.marks?.toString() ?? ""}
-                    placeholder="Marks"
-                    className="col-span-1 md:col-auto w-full rounded-md border border-stone-300 bg-white px-2 py-1.5 text-sm tabular-nums text-right focus:outline-none focus:border-stone-400"
-                  />
                 </div>
               );
             })}
-
-            <ExtraMarkEntries
-              key={program.code}
-              initial={winners
-                .filter((w) => w.position < 1)
-                .map((w) => ({
-                  name: w.name_en ?? w.name_ml ?? "",
-                  unit: (w.unit_ml ?? "").toLowerCase(),
-                  marks: w.marks != null ? String(w.marks) : "",
-                }))}
-            />
 
             {actionData && "error" in actionData && (
               <p className="text-xs text-red-700 bg-red-50 border border-red-200 rounded-md px-3 py-2">
@@ -1169,11 +1530,11 @@ function ResultModal({
               <button
                 type="submit"
                 name="intent"
-                value={neighbors.next ? "save_publish_next" : "save_publish"}
+                value="save_publish"
                 disabled={busy}
                 className="rounded-md bg-brand-700 hover:bg-brand-800 text-white px-4 py-1.5 text-sm font-medium disabled:opacity-50"
               >
-                {busy ? "…" : neighbors.next ? "Publish & next" : "Publish"}
+                {busy ? "…" : "Publish"}
               </button>
             </div>
           </div>
@@ -1236,7 +1597,6 @@ type EditData = {
   level: { code: string; name_ml: string };
   result: { id: string; status: string; result_no: string | null } | null;
   winners: EditWinner[];
-  suggestedResultNo: string | null;
   neighbors: {
     prev: { code: string; name_ml: string } | null;
     next: { code: string; name_ml: string } | null;
@@ -1280,16 +1640,6 @@ function buildEditData(
   if (!program || !level) return null;
 
   const r = program.result;
-  let suggestedResultNo: string | null = null;
-  if (!r) {
-    const used = levels
-      .flatMap((l) => l.programs)
-      .map((p) => parseInt(p.result?.result_no ?? "", 10))
-      .filter((n) => Number.isFinite(n) && n > 0);
-    suggestedResultNo = String(
-      (used.length > 0 ? Math.max(...used) : 0) + 1,
-    ).padStart(3, "0");
-  }
 
   const siblings = level.programs
     .slice()
@@ -1310,7 +1660,6 @@ function buildEditData(
       ? { id: r.id, status: r.status, result_no: r.result_no }
       : null,
     winners: r?.winners ?? [],
-    suggestedResultNo,
     neighbors: {
       prev: prev ? { code: prev.code, name_ml: prev.name_ml } : null,
       next: next ? { code: next.code, name_ml: next.name_ml } : null,
@@ -1343,9 +1692,12 @@ function levelLabelFromCode(code: string, fallback: string): string {
     .join(" ");
 }
 
-type ShareItem =
-  | { kind: "result"; key: string; code: string; programName: string; data: PosterData }
-  | { kind: "standings"; key: string; afterN: number; rows: { name: string; points: number }[] };
+type ShareItem = {
+  key: string;
+  code: string;
+  programName: string;
+  data: PosterData;
+};
 
 function SharePostersView({
   levels,
@@ -1372,10 +1724,8 @@ function SharePostersView({
     );
 
     const out: ShareItem[] = [];
-    const cumulative: EditWinner[] = [];
-    pubs.forEach(({ level, program }, i) => {
+    pubs.forEach(({ level, program }) => {
       const r = program.result!;
-      cumulative.push(...r.winners);
       const winners = [...r.winners]
         .filter((w) => w.position >= 1)
         .sort((a, b) => a.position - b.position)
@@ -1384,9 +1734,11 @@ function SharePostersView({
           const unit = slug ? TEAM_BY_SLUG[slug]?.name ?? w.unit_ml : w.unit_ml;
           return { position: w.position, name: w.name_en ?? w.name_ml, unit };
         });
+      // Skip the poster for <2-winner results — still published, they
+      // count via the uploaded standings, just no poster.
+      if (winners.length < 2) return;
       const programName = program.name_en ?? program.code;
       out.push({
-        kind: "result",
         key: `r-${r.id}`,
         code: program.code,
         programName,
@@ -1399,14 +1751,6 @@ function SharePostersView({
           winners,
         },
       });
-      const seq = i + 1;
-      if (seq % 5 === 0) {
-        const rows = computeStandings(cumulative).map((s) => ({
-          name: s.team.name,
-          points: s.points,
-        }));
-        out.push({ kind: "standings", key: `s-${seq}`, afterN: seq, rows });
-      }
     });
     return out;
   }, [levels, eventName]);
@@ -1439,7 +1783,9 @@ function SharePostersView({
     return (
       <div className="rounded-xl border border-stone-200 bg-white p-10 text-center">
         <p className="text-sm text-stone-500">
-          No published results yet. Publish results to share their posters.
+          No shareable result posters yet. Publish results (2+ winners) to
+          share their posters. Team-standings posters live in the Team
+          standings tab.
         </p>
       </div>
     );
@@ -1449,11 +1795,7 @@ function SharePostersView({
     if (!item) return;
     setBusy("download");
     try {
-      if (item.kind === "result") {
-        await exportPosterPng(stageRef.current, `${item.code}_poster.png`);
-      } else {
-        await exportStandingsPng(stageRef.current, `standings_after_${item.afterN}.png`);
-      }
+      await exportPosterPng(stageRef.current, `${item.code}_poster.png`);
     } finally {
       setBusy(null);
     }
@@ -1463,43 +1805,25 @@ function SharePostersView({
     if (!item) return;
     setBusy("share");
     try {
-      if (item.kind === "result") {
-        await sharePoster(stageRef.current, item.data);
-      } else {
-        await shareStandings(stageRef.current, item.afterN);
-      }
+      await sharePoster(stageRef.current, item.data);
     } finally {
       setBusy(null);
     }
   }
-
-  const resultsSoFar = items
-    .slice(0, clampedIdx + 1)
-    .filter((it) => it.kind === "result").length;
-  const resultsTotal = items.filter((it) => it.kind === "result").length;
 
   return (
     <div className="mx-auto max-w-md">
       {/* Status */}
       <div className="flex items-center justify-between gap-3 mb-3">
         <div className="min-w-0">
-          {item?.kind === "result" ? (
-            <>
-              <p className="text-[11px] font-mono uppercase tracking-widest text-stone-400">
-                {item.code} · Result {resultsSoFar} of {resultsTotal}
-              </p>
-              <p className="text-sm font-semibold truncate">{item.programName}</p>
-            </>
-          ) : (
-            <>
-              <p className="text-[11px] font-mono uppercase tracking-widest text-stone-400">
-                Snapshot
-              </p>
-              <p className="text-sm font-semibold">
-                Team standings · after {item?.kind === "standings" ? item.afterN : 0}
-              </p>
-            </>
-          )}
+          <p className="text-[11px] font-mono uppercase tracking-widest text-stone-400">
+            {item?.code}
+            {item?.data.resultNo ? ` · Result #${item.data.resultNo}` : ""} ·{" "}
+            {clampedIdx + 1} of {total}
+          </p>
+          <p className="text-sm font-semibold truncate">
+            {item?.programName}
+          </p>
         </div>
         <span className="shrink-0 text-xs tabular-nums text-stone-400">
           {clampedIdx + 1} / {total}
@@ -1508,20 +1832,14 @@ function SharePostersView({
 
       {/* Poster */}
       <div className="overflow-hidden rounded-xl ring-1 ring-stone-200 shadow-sm bg-white">
-        {item?.kind === "result" ? (
+        {item && (
           <PosterCanvas
             key={item.key}
             data={item.data}
-            templateIndex={(clampedIdx + tmplShift) % 3}
+            templateIndex={(clampedIdx + tmplShift) % POSTER_TEMPLATE_COUNT}
             stageRef={stageRef}
           />
-        ) : item ? (
-          <StandingsPosterCanvas
-            key={item.key}
-            data={{ afterN: item.afterN, rows: item.rows }}
-            stageRef={stageRef}
-          />
-        ) : null}
+        )}
       </div>
 
       {/* Controls */}
@@ -1544,17 +1862,15 @@ function SharePostersView({
         </button>
 
         <div className="ml-auto flex items-center gap-2">
-          {item?.kind === "result" && (
-            <button
-              type="button"
-              onClick={() => setTmplShift((s) => s + 1)}
-              aria-label="Shuffle template"
-              title="Shuffle template"
-              className="inline-flex size-9 items-center justify-center rounded-lg border border-stone-300 bg-white text-stone-600 hover:bg-stone-50"
-            >
-              <Shuffle className="size-4" />
-            </button>
-          )}
+          <button
+            type="button"
+            onClick={() => setTmplShift((s) => s + 1)}
+            aria-label="Shuffle template"
+            title="Shuffle template"
+            className="inline-flex size-9 items-center justify-center rounded-lg border border-stone-300 bg-white text-stone-600 hover:bg-stone-50"
+          >
+            <Shuffle className="size-4" />
+          </button>
           <button
             type="button"
             onClick={onDownload}
@@ -1576,8 +1892,8 @@ function SharePostersView({
         </div>
       </div>
       <p className="mt-2 text-[11px] text-stone-400">
-        In result-number order · team standings every 5 results. Use ← → keys
-        to move.
+        Result posters only, in result-number order. Use ← → keys to move.
+        Team-standings posters are in the Team standings tab.
       </p>
     </div>
   );

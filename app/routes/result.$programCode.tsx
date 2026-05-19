@@ -31,7 +31,7 @@ export function meta({ data, params }: Route.MetaArgs) {
     { property: "og:description", content: description },
     { property: "og:type", content: "article" },
     { property: "og:url", content: url },
-    { property: "og:site_name", content: "SSF Pantharangadi Sahityotsav" },
+    { property: "og:site_name", content: "Pantharangadi Sector Sahityotsav" },
     { property: "og:locale", content: "en_IN" },
     { property: "og:image", content: image },
     { name: "twitter:card", content: "summary_large_image" },

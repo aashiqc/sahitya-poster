@@ -1,14 +1,24 @@
 {
-  "name": "SSF Pantharangadi Sahityotsav — Results",
+  "name": "Pantharangadi Sector Sahityotsav — Results",
   "short_name": "Sahityotsav",
-  "description": "Live results from SSF Pantharangadi Sector Sahityotsav.",
+  "description": "Live results from Pantharangadi Sector Sahityotsav.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
   "background_color": "#FBF4E4",
   "theme_color": "#0B090A",
   "icons": [
-    { "src": "/favicon.ico", "sizes": "48x48", "type": "image/x-icon" },
-    { "src": "/sahityotsav-logo.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+    {
+      "src": "/web-app-manifest-192x192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/web-app-manifest-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
   ]
 }

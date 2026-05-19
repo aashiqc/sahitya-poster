@@ -22,54 +22,148 @@ export type StandingsData = {
 
 const STAGE_W = 1080;
 const STAGE_H = 1350;
-const TEMPLATE_SRC = "/poster/templates/standings.png";
 
 // Match the result poster's count: same family, bold (poster-canvas
 // ORDINAL_FONT = Plus Jakarta Sans). One font across both posters.
 const BODY_FONT = '"Plus Jakarta Sans", system-ui, sans-serif';
 const COUNT_FONT = BODY_FONT;
 
-// ── Layout (native 1080×1350). Tuned to the supplied template/demo. ──
-const LAYOUT = {
-  // "after [N] Team Point" — N centered in the gap between the cursive
-  // words. Demo: gap center ≈ native (643, 163).
-  afterX: 558,
-  afterY: 98,
-  afterW: 170,
-  afterH: 130,
-  afterSize: 82,
-  afterColor: "#7A4A1C",
-
-  // Team table — matched to demostandings.jpg: names start clear of the
-  // burst (native x≈470), points hard-right (right edge ≈ native 1000).
-  listX: 448,
-  pointsRight: 1004,
-  pointsBoxW: 92,
-  nameGap: 8,
-  rowC0: 331, // vertical CENTER of row 1 (native)
-  rowPitch: 61,
-  maxRows: 8,
-  baseNameSize: 38,
-  baseColor: "#4A4445",
-} as const;
-
-// Top-3 emphasis, strictly in priority order; ranks 4+ use base style.
-const RANK_STYLE: Record<number, { color: string; size: number }> = {
-  1: { color: "#9C0503", size: 44 },
-  2: { color: "#1A1718", size: 42 },
-  3: { color: "#1A1718", size: 40 },
+type SLayout = {
+  afterX: number;
+  afterY: number;
+  afterW: number;
+  afterH: number;
+  afterSize: number;
+  afterColor: string;
+  listX: number;
+  pointsRight: number;
+  pointsBoxW: number;
+  nameGap: number;
+  rowC0: number; // vertical CENTER of row 1 (native)
+  rowPitch: number;
+  maxRows: number;
+  baseNameSize: number;
+  baseColor: string;
 };
+type STemplate = {
+  src: string;
+  layout: SLayout;
+  // Top-3 emphasis, strictly in priority order; ranks 4+ use base style.
+  rankStyle: Record<number, { color: string; size: number }>;
+};
+
+// All coords are native 1080×1350 (templates are exactly that size).
+export const STANDINGS_TEMPLATES: STemplate[] = [
+  // 0 — Original (geometric burst, "after _ Team Point" centred top).
+  {
+    src: "/poster/templates/standings.png",
+    layout: {
+      afterX: 558,
+      afterY: 98,
+      afterW: 170,
+      afterH: 130,
+      afterSize: 82,
+      afterColor: "#7A4A1C",
+      listX: 448,
+      pointsRight: 1004,
+      pointsBoxW: 92,
+      nameGap: 8,
+      rowC0: 331,
+      rowPitch: 61,
+      maxRows: 8,
+      baseNameSize: 38,
+      baseColor: "#4A4445",
+    },
+    rankStyle: {
+      1: { color: "#9C0503", size: 44 },
+      2: { color: "#1A1718", size: 42 },
+      3: { color: "#1A1718", size: 40 },
+    },
+  },
+  // 1 — Light/peach flowers. "After" + "Team Point" indigo script top-
+  // left; bird & flowers right; list in the open left/centre band;
+  // footer wordmark bottom-left. Dark text on peach/white.
+  {
+    src: "/poster/templates/standings-light.png",
+    layout: {
+      afterX: 180,
+      afterY: 190,
+      afterW: 160,
+      afterH: 130,
+      afterSize: 78,
+      afterColor: "#3A2FB0",
+      listX: 110,
+      pointsRight: 548,
+      pointsBoxW: 84,
+      nameGap: 8,
+      rowC0: 378,
+      rowPitch: 58,
+      maxRows: 8,
+      baseNameSize: 35,
+      baseColor: "#2B2738",
+    },
+    rankStyle: {
+      1: { color: "#9C0503", size: 42 },
+      2: { color: "#262150", size: 40 },
+      3: { color: "#262150", size: 38 },
+    },
+  },
+  // 2 — Dark navy flowers. "After" + "Team Point" pink script top-
+  // right; flowers left; list in the open right band; footer wordmark
+  // bottom-right. Light text on dark navy.
+  {
+    src: "/poster/templates/standings-dark.png",
+    layout: {
+      afterX: 595,
+      afterY: 108,
+      afterW: 170,
+      afterH: 130,
+      afterSize: 82,
+      afterColor: "#F2B5C4",
+      listX: 500,
+      pointsRight: 1000,
+      pointsBoxW: 100,
+      nameGap: 8,
+      rowC0: 320,
+      rowPitch: 62,
+      maxRows: 8,
+      baseNameSize: 37,
+      baseColor: "#D9D2E4",
+    },
+    rankStyle: {
+      1: { color: "#FFFFFF", size: 46 },
+      2: { color: "#FFFFFF", size: 43 },
+      3: { color: "#FFFFFF", size: 41 },
+    },
+  },
+];
+
+export const STANDINGS_TEMPLATE_NAMES = [
+  "Original",
+  "Light flowers",
+  "Dark flowers",
+] as const;
 
 
 export const StandingsPosterCanvas = ({
   data,
+  templateIndex = 0,
   stageRef,
   displayWidth,
 }: {
   data: StandingsData;
+  templateIndex?: number;
   stageRef?: React.MutableRefObject<Konva.Stage | null>;
   displayWidth?: number;
 }) => {
+  const tpl =
+    STANDINGS_TEMPLATES[
+      ((templateIndex | 0) % STANDINGS_TEMPLATES.length +
+        STANDINGS_TEMPLATES.length) %
+        STANDINGS_TEMPLATES.length
+    ];
+  const LAYOUT = tpl.layout;
+  const RANK_STYLE = tpl.rankStyle;
   const [mounted, setMounted] = useState(false);
   useEffect(() => {
     let active = true;
@@ -98,7 +192,7 @@ export const StandingsPosterCanvas = ({
     return () => ro.disconnect();
   }, [displayWidth, mounted]);
 
-  const { img: template, done: imgDone, slow } = usePosterImage(TEMPLATE_SRC);
+  const { img: template, done: imgDone, slow } = usePosterImage(tpl.src);
 
   const w = displayWidth ?? autoW;
   const scale = w / STAGE_W;

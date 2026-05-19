@@ -2,34 +2,30 @@ import { useEffect, useRef, useState } from "react";
 import { Download, Share2, X } from "lucide-react";
 import type Konva from "konva";
 import {
-  TEAMS,
-  computeStandings,
-  snapshotBucket,
-} from "~/lib/teams";
-import {
   StandingsPosterCanvas,
   exportStandingsPng,
   shareStandings,
 } from "./standings-poster";
 
-export type StandingsWinner = {
-  unit_ml: string | null;
-  marks: number | null;
-  grade: string | null;
+export type StandingsSnapshot = {
+  afterN: number;
+  template: number;
+  rows: { name: string; points: number }[];
 };
 
 export function StandingsSheet({
-  totalPublished,
-  winners,
+  history,
   onClose,
 }: {
-  totalPublished: number;
-  winners: ReadonlyArray<StandingsWinner>;
+  // Newest checkpoint first (loader sorts after_n desc).
+  history: StandingsSnapshot[];
   onClose: () => void;
 }) {
-  const snapshotN = snapshotBucket(totalPublished);
-  const rows = computeStandings(winners);
-  const noResults = snapshotN === 0;
+  // Index into `history`; 0 is always the latest checkpoint.
+  const [sel, setSel] = useState(0);
+  const snapshot = history[sel] ?? null;
+  const hasData = !!snapshot && snapshot.rows.length > 0;
+  const afterN = snapshot?.afterN ?? 0;
 
   const stageRef = useRef<Konva.Stage | null>(null);
   const [busy, setBusy] = useState<null | "download" | "share">(null);
@@ -53,7 +49,7 @@ export function StandingsSheet({
   async function onDownload() {
     setBusy("download");
     try {
-      await exportStandingsPng(stageRef.current, `standings_after_${snapshotN}.png`);
+      await exportStandingsPng(stageRef.current, `standings_after_${afterN}.png`);
     } finally {
       setBusy(null);
     }
@@ -62,7 +58,7 @@ export function StandingsSheet({
   async function onShare() {
     setBusy("share");
     try {
-      await shareStandings(stageRef.current, snapshotN);
+      await shareStandings(stageRef.current, afterN);
     } finally {
       setBusy(null);
     }
@@ -91,9 +87,9 @@ export function StandingsSheet({
           <div>
             <h2 className="text-lg font-bold">Team Standings</h2>
             <p className="text-xs text-white/70 mt-0.5">
-              {noResults
-                ? "Standings open after the first 5 results."
-                : `Snapshot after ${snapshotN} ${snapshotN === 1 ? "result" : "results"}`}
+              {hasData
+                ? `Snapshot after ${afterN} ${afterN === 1 ? "result" : "results"}`
+                : "Standings not published yet."}
             </p>
           </div>
           <button
@@ -106,21 +102,52 @@ export function StandingsSheet({
           </button>
         </div>
 
+        {/* Checkpoint selector — step through the standings history.
+            Only shown when there's more than one checkpoint. */}
+        {history.length > 1 && (
+          <div className="border-b border-black/10 bg-paper/60 px-3 py-2.5">
+            <p className="px-1 pb-1.5 text-[10px] font-bold uppercase tracking-[0.18em] text-ink-400">
+              Checkpoint
+            </p>
+            <div
+              role="tablist"
+              aria-label="Standings checkpoint"
+              className="flex gap-1.5 overflow-x-auto pb-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+            >
+              {history.map((s, i) => {
+                const active = i === sel;
+                return (
+                  <button
+                    key={s.afterN}
+                    type="button"
+                    role="tab"
+                    aria-selected={active}
+                    onClick={() => setSel(i)}
+                    className={`shrink-0 rounded-full px-3.5 py-1.5 text-xs font-semibold whitespace-nowrap transition-all duration-200 ${
+                      active
+                        ? "bg-red text-white shadow-[0_4px_12px_-4px_rgba(191,6,3,0.55)]"
+                        : "bg-white text-ink-700 ring-1 ring-black/10 hover:ring-yellow hover:bg-yellow/10"
+                    }`}
+                  >
+                    {i === 0 ? "Latest" : `After ${s.afterN}`}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
         {/* Body */}
         <div className="overflow-y-auto p-4 sm:p-5">
-          {noResults ? (
+          {!hasData ? (
             <EmptyState />
           ) : (
             <>
               <div className="overflow-hidden rounded-2xl ring-1 ring-black/10 shadow-[0_12px_30px_-16px_rgba(11,9,10,0.4)]">
                 <StandingsPosterCanvas
-                  data={{
-                    afterN: snapshotN,
-                    rows: rows.map((r) => ({
-                      name: r.team.name,
-                      points: r.points,
-                    })),
-                  }}
+                  key={snapshot!.afterN}
+                  data={{ afterN, rows: snapshot!.rows }}
+                  templateIndex={snapshot!.template}
                   stageRef={stageRef}
                 />
               </div>
@@ -145,12 +172,6 @@ export function StandingsSheet({
                   Share
                 </button>
               </div>
-
-              {totalPublished > snapshotN && (
-                <p className="text-[11px] text-ink-400 mt-3 text-center">
-                  Figures refresh at the next multiple of 5 results.
-                </p>
-              )}
             </>
           )}
         </div>
@@ -170,21 +191,14 @@ function Spinner() {
 
 function EmptyState() {
   return (
-    <div className="py-8 text-center">
+    <div className="py-10 text-center">
       <p className="text-sm text-ink-700">
-        No standings yet. Once 5 results are published, the first standings
-        poster will appear here.
+        Team standings haven't been published yet.
       </p>
-      <ul className="mt-4 grid grid-cols-2 gap-1.5 text-left">
-        {TEAMS.map((t) => (
-          <li
-            key={t.slug}
-            className="text-xs text-ink-500 px-2.5 py-1.5 border border-black/10 rounded-lg"
-          >
-            {t.name}
-          </li>
-        ))}
-      </ul>
+      <p className="text-xs text-ink-400 mt-2">
+        They'll appear here as soon as the organisers post the latest
+        standings.
+      </p>
     </div>
   );
 }

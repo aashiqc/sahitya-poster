@@ -3,6 +3,9 @@
 // a fresh event year.
 export const EVENT_SLUG = "saaheethyolsav-26";
 
-// Canonical public origin (Cloudflare Workers). Used for absolute
-// canonical / Open Graph / Twitter URLs in route meta.
-export const SITE_URL = "https://ssfpantharangadi.workers.dev";
+// Canonical public origin for absolute canonical / Open Graph / Twitter
+// URLs in route meta. Defaults to the Cloudflare Workers domain; build-time
+// overridable via VITE_SITE_URL for other deploy targets.
+export const SITE_URL =
+  (import.meta.env.VITE_SITE_URL as string | undefined) ??
+  "https://ssfpantharangadi.workers.dev";

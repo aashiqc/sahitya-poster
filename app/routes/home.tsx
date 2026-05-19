@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { Link, data } from "react-router";
+import { Link, data, useRevalidator } from "react-router";
 import type { Route } from "./+types/home";
 import { createSupabaseServerClient, loadEvent } from "~/lib/supabase.server";
 import { SITE_URL } from "~/lib/constants";
 import { TEAM_BY_SLUG } from "~/lib/teams";
 import type Konva from "konva";
 import {
+  POSTER_TEMPLATE_COUNT,
   PosterCanvas,
   exportPosterPng,
   prefetchPosterAssets,
@@ -24,13 +25,10 @@ import {
   Trophy,
 } from "lucide-react";
 
-export function meta({ data }: Route.MetaArgs) {
-  const eventName =
-    (data?.event as { name?: string; name_ml?: string } | null)?.name ??
-    (data?.event as { name_ml?: string } | null)?.name_ml ??
-    "Sahityotsav";
-  const title = `${eventName} · Results`;
-  const description = `Live results from ${eventName} — browse winners by category as they're announced.`;
+export function meta(_: Route.MetaArgs) {
+  const brand = "Pantharangadi Sector Sahityotsav";
+  const title = `${brand} · Results`;
+  const description = `Live results from ${brand} — browse winners by category as they're announced.`;
   const image = `${SITE_URL}/sahityotsav-logo.png`;
   return [
     { title },
@@ -40,10 +38,10 @@ export function meta({ data }: Route.MetaArgs) {
     { property: "og:description", content: description },
     { property: "og:type", content: "website" },
     { property: "og:url", content: SITE_URL },
-    { property: "og:site_name", content: "SSF Pantharangadi Sahityotsav" },
+    { property: "og:site_name", content: brand },
     { property: "og:locale", content: "en_IN" },
     { property: "og:image", content: image },
-    { property: "og:image:alt", content: `${eventName} logo` },
+    { property: "og:image:alt", content: `${brand} logo` },
     { name: "twitter:card", content: "summary_large_image" },
     { name: "twitter:title", content: title },
     { name: "twitter:description", content: description },
@@ -61,7 +59,7 @@ export async function loader({ request }: Route.LoaderArgs) {
     );
   }
 
-  const [levelsRes, programsRes, resultsRes] = await Promise.all([
+  const [levelsRes, programsRes, resultsRes, standingsRes] = await Promise.all([
     supabase
       .from("levels")
       .select("id, code, name_ml, sort_order")
@@ -82,6 +80,12 @@ export async function loader({ request }: Route.LoaderArgs) {
       `)
       .eq("event_id", event.id)
       .eq("status", "published"),
+    supabase
+      .from("team_standings")
+      .select("after_n, rank, team_name, points, template")
+      .eq("event_id", event.id)
+      .order("after_n", { ascending: false })
+      .order("rank", { ascending: true }),
   ]);
 
   const levels = levelsRes.data ?? [];
@@ -130,6 +134,38 @@ export async function loader({ request }: Route.LoaderArgs) {
     };
   });
 
+  // Latest admin-uploaded standings snapshot (rows are ordered after_n
+  // desc, rank asc — so the first group is the most recent checkpoint).
+  type SRow = {
+    after_n: number;
+    rank: number;
+    team_name: string;
+    points: number;
+    template: number | null;
+  };
+  const sRows = (standingsRes.data ?? []) as SRow[];
+  // Group every uploaded checkpoint by its `after_n` so the UI can let
+  // the reader step through the standings history. Newest first.
+  const byN = new Map<number, SRow[]>();
+  for (const r of sRows) {
+    const g = byN.get(r.after_n);
+    if (g) g.push(r);
+    else byN.set(r.after_n, [r]);
+  }
+  const standingsHistory = [...byN.entries()]
+    .sort((a, b) => b[0] - a[0])
+    .map(([afterN, rows]) => ({
+      afterN,
+      // Each checkpoint carries its own template (uniform across its
+      // rows) — the poster uses that checkpoint's own choice.
+      template: rows[0]?.template ?? 0,
+      rows: rows
+        .slice()
+        .sort((a, b) => a.rank - b.rank)
+        .map((r) => ({ name: r.team_name, points: Number(r.points) })),
+    }));
+  const standings = standingsHistory[0] ?? null;
+
   return data(
     {
       event,
@@ -138,6 +174,8 @@ export async function loader({ request }: Route.LoaderArgs) {
       totalPublished: results.length,
       totalPrograms: programs.length,
       allWinners,
+      standings,
+      standingsHistory,
     },
     {
       headers: {
@@ -184,6 +222,12 @@ type Level = {
   total: number;
 };
 
+type Standings = {
+  afterN: number;
+  template: number;
+  rows: { name: string; points: number }[];
+};
+
 // ─────────────────────────────────────────────────────────────────────
 // English display helpers — the bot speaks English. Levels carry no
 // name_en, so the slug code is title-cased (high-school → High School).
@@ -207,13 +251,20 @@ function programLabel(program: { name_en: string | null; code: string }): string
 // ─────────────────────────────────────────────────────────────────────
 
 export default function Home({ loaderData }: Route.ComponentProps) {
+  // Live auto-refresh: silently re-runs the loader so newly published
+  // results surface without a manual reload. Called before any early
+  // return so hook order stays stable if `published` flips false→true.
+  useLiveRefresh();
+  const [standingsOpen, setStandingsOpen] = useState(false);
+
   if (!loaderData.published) {
     return <NotYetLive event={loaderData.event} />;
   }
-  const { event, levels, totalPublished, allWinners } = loaderData;
+  const { event, levels, standings, standingsHistory } = loaderData;
   const org = (event.organizations as { name?: string } | null)?.name;
   const eventName = event.name ?? event.name_ml;
-  const [standingsOpen, setStandingsOpen] = useState(false);
+  const finalPosterUrl =
+    (event as { final_poster_url?: string | null }).final_poster_url ?? null;
 
   const sector = (org ? org.replace(/^SSF\s+/i, "") : "") || "Sahityotsav";
 
@@ -287,8 +338,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
 
       {standingsOpen && (
         <StandingsSheet
-          totalPublished={totalPublished}
-          winners={allWinners}
+          history={standingsHistory}
           onClose={() => setStandingsOpen(false)}
         />
       )}
@@ -298,10 +348,50 @@ export default function Home({ loaderData }: Route.ComponentProps) {
           levels={levels as Level[]}
           eventName={eventName ?? "Sahityotsav"}
           sector={sector}
+          standings={standings}
+          finalPosterUrl={finalPosterUrl}
+          onOpenStandings={() => setStandingsOpen(true)}
         />
       </main>
     </div>
   );
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Live auto-refresh — polls the loader on an interval and on tab
+// refocus / reconnect. Revalidation does NOT remount the route, so the
+// chat (its useState) is preserved: no flicker, no scroll jump, no lost
+// place. Pauses while the tab is hidden or offline to stay light.
+// ─────────────────────────────────────────────────────────────────────
+function useLiveRefresh(intervalMs = 60_000) {
+  const revalidator = useRevalidator();
+  const revalidateRef = useRef(revalidator.revalidate);
+  revalidateRef.current = revalidator.revalidate;
+  const stateRef = useRef(revalidator.state);
+  stateRef.current = revalidator.state;
+
+  useEffect(() => {
+    const tick = () => {
+      if (
+        document.visibilityState === "visible" &&
+        navigator.onLine !== false &&
+        stateRef.current === "idle"
+      ) {
+        revalidateRef.current();
+      }
+    };
+    const id = window.setInterval(tick, intervalMs);
+    const onVisible = () => {
+      if (document.visibilityState === "visible") tick();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("online", tick);
+    return () => {
+      window.clearInterval(id);
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("online", tick);
+    };
+  }, [intervalMs]);
 }
 
 // SSF wordmark — always rendered in the brand Cooper Black letterform.
@@ -341,13 +431,33 @@ function ChatFlow({
   levels,
   eventName,
   sector,
+  standings,
+  finalPosterUrl,
+  onOpenStandings,
 }: {
   levels: Level[];
   eventName: string;
   sector: string;
+  standings: Standings | null;
+  finalPosterUrl: string | null;
+  onOpenStandings: () => void;
 }) {
-  // Initial bubbles — rendered SSR, hydrated on client.
+  // Initial bubbles — rendered SSR, hydrated on client. When a final
+  // poster is published it leads the conversation (the event's finale);
+  // then the greeting, then the live standings top three.
+  const hasStandings = !!standings && standings.rows.length > 0;
   const initial: Bubble[] = [
+    ...(finalPosterUrl
+      ? [
+          {
+            id: "final-poster",
+            side: "bot" as const,
+            wide: true,
+            tight: true,
+            node: <FinalPosterBubble url={finalPosterUrl} />,
+          },
+        ]
+      : []),
     {
       id: "greet",
       side: "bot",
@@ -355,6 +465,20 @@ function ChatFlow({
         <GreetingBubble sector={sector} />
       ),
     },
+    ...(hasStandings
+      ? [
+          {
+            id: "standings",
+            side: "bot" as const,
+            node: (
+              <StandingsBubble
+                standings={standings!}
+                onOpenFull={onOpenStandings}
+              />
+            ),
+          },
+        ]
+      : []),
   ];
 
   const [bubbles, setBubbles] = useState<Bubble[]>(initial);
@@ -363,6 +487,14 @@ function ChatFlow({
   const endRef = useRef<HTMLDivElement | null>(null);
   const seqRef = useRef(0);
   const nextId = (prefix: string) => `${prefix}-${++seqRef.current}`;
+  // Mirrors `atBottom` for synchronous reads inside effects — lets us
+  // follow new bubbles only when the reader is already at the bottom,
+  // so an auto-announced result never yanks them out of history.
+  const atBottomRef = useRef(true);
+  // Skip the very first auto-scroll so the page opens at the top — the
+  // reader should see the lead bubble (e.g. the final poster), not be
+  // thrown to the bottom on load.
+  const firstRenderRef = useRef(true);
 
   const scrollToEnd = () =>
     endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
@@ -383,9 +515,15 @@ function ChatFlow({
     return () => window.clearTimeout(t);
   }, []);
 
-  // Auto-scroll to bottom on new message
+  // Auto-scroll to bottom on new message — but only if the reader is
+  // following along. If they've scrolled up, the "Latest" pill (which
+  // shows whenever !atBottom) is their cue instead.
   useEffect(() => {
-    scrollToEnd();
+    if (firstRenderRef.current) {
+      firstRenderRef.current = false;
+      return; // initial load — stay at the top, show the lead bubble
+    }
+    if (atBottomRef.current) scrollToEnd();
   }, [bubbles.length, typing]);
 
   // Track whether the reader has scrolled up through history
@@ -394,6 +532,7 @@ function ChatFlow({
       const nearBottom =
         window.innerHeight + window.scrollY >=
         document.body.offsetHeight - 120;
+      atBottomRef.current = nearBottom;
       setAtBottom(nearBottom);
     };
     onScroll();
@@ -434,8 +573,10 @@ function ChatFlow({
       side: "user",
       node: <span>{programLabel(program)}</span>,
     });
+    const ranked =
+      program.result?.winners.filter((w) => w.position >= 1) ?? [];
     withTyping(program.result ? 480 : 280, () => {
-      if (program.result) {
+      if (program.result && ranked.length >= 2) {
         push({
           id: nextId("b"),
           side: "bot",
@@ -448,6 +589,21 @@ function ChatFlow({
               program={program}
               winners={program.result.winners}
               resultNo={program.result.result_no}
+              onAnotherInLevel={() => handleAnotherInLevel(level)}
+              onDifferentLevel={handleDifferentLevel}
+            />
+          ),
+        });
+      } else if (program.result) {
+        // <2 ranked winners: published but no poster — compact text card.
+        push({
+          id: nextId("b"),
+          side: "bot",
+          node: (
+            <ResultTextBubble
+              level={level}
+              program={program}
+              winners={ranked}
               onAnotherInLevel={() => handleAnotherInLevel(level)}
               onDifferentLevel={handleDifferentLevel}
             />
@@ -500,6 +656,50 @@ function ChatFlow({
     });
   }
 
+  // Surface results that get published while the page is open. Auto-
+  // refresh keeps `levels` fresh; here we diff against what we've
+  // already seen and append a chat-native "just announced" bubble.
+  // Append-only — existing bubbles are never mutated.
+  const seenResultsRef = useRef<Set<string> | null>(null);
+  useEffect(() => {
+    // First run: snapshot everything already published so we don't
+    // announce the backlog that was present on page load.
+    if (seenResultsRef.current === null) {
+      const seed = new Set<string>();
+      for (const lv of levels)
+        for (const p of lv.programs) if (p.result) seed.add(p.id);
+      seenResultsRef.current = seed;
+      return;
+    }
+    const seen = seenResultsRef.current;
+    const fresh: { level: Level; program: Program }[] = [];
+    for (const lv of levels)
+      for (const p of lv.programs)
+        if (p.result && !seen.has(p.id)) {
+          seen.add(p.id);
+          fresh.push({ level: lv, program: p });
+        }
+    if (fresh.length === 0) return;
+    push({
+      id: nextId("new"),
+      side: "bot",
+      node: (
+        <NewResultsBubble
+          items={fresh}
+          onView={(lv, p) => handlePickProgram(lv, p)}
+        />
+      ),
+    });
+  }, [levels]);
+
+  // One-time party-popper when a final poster leads the chat. Gated on
+  // a mount effect so it's client-only — SSR renders nothing, so there's
+  // no hydration mismatch from the randomised pieces.
+  const [celebrate, setCelebrate] = useState(false);
+  useEffect(() => {
+    if (finalPosterUrl) setCelebrate(true);
+  }, [finalPosterUrl]);
+
   // Render
   return (
     <div
@@ -507,14 +707,16 @@ function ChatFlow({
       aria-relevant="additions"
       className="space-y-3.5 pb-2"
     >
+      {celebrate && <Confetti onDone={() => setCelebrate(false)} />}
       {bubbles.map((b) => (
         <BubbleRow key={b.id} side={b.side} wide={b.wide} tight={b.tight}>
           {b.node}
         </BubbleRow>
       ))}
 
-      {/* The seeded first interaction prompt — always shown initially, then user can re-enter via Different category */}
-      {bubbles.length === 1 && !typing && (
+      {/* The seeded first interaction prompt — shown until the reader
+          takes their first action, then re-enterable via Different category */}
+      {bubbles.length === initial.length && !typing && (
         <BubbleRow side="bot">
           <LevelPickerBubble levels={levels} onPick={handlePickLevel} />
         </BubbleRow>
@@ -631,6 +833,376 @@ function GreetingBubble({ sector }: { sector: string }) {
         Pick a category below to see the winners — new results appear here the
         moment they're announced.
       </p>
+    </div>
+  );
+}
+
+// Initial chat card — the current top three teams with points, plus a
+// way into the full poster + checkpoint history. Mirrors the bot
+// bubble visual language so it reads as the bot opening with the
+// headline standings.
+function StandingsBubble({
+  standings,
+  onOpenFull,
+}: {
+  standings: Standings;
+  onOpenFull: () => void;
+}) {
+  const top = standings.rows.slice(0, 3);
+  const TIER = [
+    { ring: "ring-yellow/60", chip: "bg-yellow text-black", label: "1st" },
+    { ring: "ring-ink-300", chip: "bg-ink-200 text-ink-800", label: "2nd" },
+    { ring: "ring-[#d8a26a]/60", chip: "bg-[#caa06a] text-white", label: "3rd" },
+  ] as const;
+  return (
+    <div>
+      <p className="inline-flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-[0.22em] text-red/80">
+        <Trophy className="size-3.5 text-red" strokeWidth={2.5} aria-hidden />
+        Team standings
+      </p>
+      <p className="text-[12px] leading-relaxed text-ink-500 mt-1">
+        Current top three after{" "}
+        <span className="font-semibold text-ink-700">
+          {standings.afterN} {standings.afterN === 1 ? "result" : "results"}
+        </span>
+        .
+      </p>
+
+      <ol className="mt-2.5 flex flex-col gap-1.5">
+        {top.map((t, i) => {
+          const tier = TIER[i] ?? TIER[2];
+          return (
+            <li
+              key={`${t.name}-${i}`}
+              className={`flex items-center gap-3 rounded-xl bg-white px-3 py-2.5 shadow-sm ring-1 ${tier.ring}`}
+            >
+              <span
+                className={`grid size-7 shrink-0 place-items-center rounded-full text-[11px] font-bold ${tier.chip}`}
+              >
+                {tier.label}
+              </span>
+              <span className="min-w-0 flex-1 truncate text-sm font-semibold text-ink-900">
+                {t.name}
+              </span>
+              <span className="shrink-0 font-opensans text-sm font-bold tabular-nums text-ink-900">
+                {t.points}
+                <span className="ml-1 text-[10px] font-semibold uppercase tracking-wide text-ink-400">
+                  pts
+                </span>
+              </span>
+            </li>
+          );
+        })}
+      </ol>
+
+      <button
+        type="button"
+        onClick={onOpenFull}
+        className="group mt-2.5 inline-flex items-center gap-1.5 rounded-full border border-black/15 bg-white px-4 py-2 text-xs font-semibold text-ink-800 shadow-sm transition-all duration-200 hover:-translate-y-px hover:border-yellow hover:bg-yellow/15 active:translate-y-0 active:scale-[0.97]"
+      >
+        Full standings &amp; history
+        <ChevronRight
+          className="size-3.5 text-ink-400 transition-transform duration-200 group-hover:translate-x-0.5 group-hover:text-red"
+          strokeWidth={2.5}
+          aria-hidden
+        />
+      </button>
+    </div>
+  );
+}
+
+// The published final standings poster — a finished image (real data
+// baked in, no template) that leads the chat. Tap to view full size;
+// download / share the image as-is.
+function FinalPosterBubble({ url }: { url: string }) {
+  const [zoom, setZoom] = useState(false);
+  const [busy, setBusy] = useState<null | "download" | "share">(null);
+
+  async function fetchBlob(): Promise<Blob | null> {
+    try {
+      const r = await fetch(url, { mode: "cors" });
+      if (!r.ok) return null;
+      return await r.blob();
+    } catch {
+      return null;
+    }
+  }
+
+  async function onDownload() {
+    setBusy("download");
+    try {
+      const blob = await fetchBlob();
+      if (!blob) {
+        window.open(url, "_blank", "noopener");
+        return;
+      }
+      const href = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = href;
+      a.download = "final-standings.png";
+      a.click();
+      URL.revokeObjectURL(href);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function onShare() {
+    setBusy("share");
+    try {
+      const blob = await fetchBlob();
+      const nav = navigator as Navigator & {
+        canShare?: (d: ShareData) => boolean;
+      };
+      const title = "Final standings";
+      if (blob && nav.share) {
+        const file = new File([blob], "final-standings.png", {
+          type: blob.type || "image/png",
+        });
+        if (nav.canShare?.({ files: [file] })) {
+          try {
+            await nav.share({ title, files: [file] });
+            return;
+          } catch {
+            /* dismissed — fall through */
+          }
+        }
+      }
+      if (nav.share) {
+        try {
+          await nav.share({ title, url });
+          return;
+        } catch {
+          /* dismissed */
+        }
+      }
+      window.open(url, "_blank", "noopener");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => setZoom(true)}
+        aria-label="View final standings poster full size"
+        style={{ touchAction: "manipulation" }}
+        className="block w-full overflow-hidden rounded-2xl focus:outline-none focus-visible:ring-2 focus-visible:ring-yellow"
+      >
+        <img
+          src={url}
+          alt="Final team standings"
+          className="block w-full h-auto select-none"
+          draggable={false}
+        />
+      </button>
+
+      <div className="mt-2 px-1 flex items-center gap-1.5">
+        <IconButton
+          label="Download final poster"
+          onClick={onDownload}
+          disabled={busy !== null}
+          tone="brand"
+        >
+          {busy === "download" ? <Spinner /> : <DownloadIcon />}
+        </IconButton>
+        <IconButton
+          label="Share final poster"
+          onClick={onShare}
+          disabled={busy !== null}
+          tone="brand"
+        >
+          {busy === "share" ? <Spinner /> : <ShareIcon />}
+        </IconButton>
+        <span className="ml-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-ink-400">
+          Final standings
+        </span>
+      </div>
+
+      {zoom && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Final standings poster"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4"
+          onClick={() => setZoom(false)}
+        >
+          <img
+            src={url}
+            alt="Final team standings"
+            className="max-h-[92vh] max-w-full w-auto rounded-xl shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          />
+          <button
+            type="button"
+            onClick={() => setZoom(false)}
+            aria-label="Close"
+            className="absolute top-4 right-4 size-10 grid place-items-center rounded-full bg-white/15 text-white hover:bg-white/25 transition-colors"
+          >
+            <span aria-hidden className="text-xl leading-none">
+              ✕
+            </span>
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Dependency-free party-popper. Renders a fixed, non-interactive layer
+// of pieces animated with the Web Animations API, then unmounts itself.
+// Honours prefers-reduced-motion (skips straight to done).
+function Confetti({ onDone }: { onDone: () => void }) {
+  const hostRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const host = hostRef.current;
+    if (!host) return;
+    const reduce = window.matchMedia?.(
+      "(prefers-reduced-motion: reduce)",
+    ).matches;
+    if (reduce) {
+      onDone();
+      return;
+    }
+
+    const COLORS = [
+      "#BF0603",
+      "#FFCE05",
+      "#E58C2A",
+      "#2BB3A3",
+      "#E84E8A",
+      "#FFFFFF",
+    ];
+    const W = window.innerWidth;
+    const H = window.innerHeight;
+    const COUNT = Math.min(90, Math.max(46, Math.round(W / 9)));
+    const anims: Animation[] = [];
+
+    for (let i = 0; i < COUNT; i++) {
+      const piece = document.createElement("span");
+      const size = 6 + Math.random() * 8;
+      const round = Math.random() < 0.35;
+      piece.style.cssText = `position:absolute;top:-24px;left:${
+        Math.random() * 100
+      }vw;width:${size}px;height:${size * (round ? 1 : 1.6)}px;background:${
+        COLORS[(Math.random() * COLORS.length) | 0]
+      };border-radius:${round ? "50%" : "1px"};will-change:transform,opacity;`;
+      host.appendChild(piece);
+
+      const driftX = (Math.random() - 0.5) * 280;
+      const fallY = H + 80;
+      const spin = (Math.random() < 0.5 ? -1 : 1) * (360 + Math.random() * 900);
+      const duration = 2400 + Math.random() * 1400;
+      const delay = Math.random() * 450;
+      const a = piece.animate(
+        [
+          { transform: "translate3d(0,0,0) rotate(0deg)", opacity: 1 },
+          {
+            transform: `translate3d(${driftX * 0.4}px, ${
+              fallY * 0.55
+            }px, 0) rotate(${spin * 0.6}deg)`,
+            opacity: 1,
+            offset: 0.7,
+          },
+          {
+            transform: `translate3d(${driftX}px, ${fallY}px, 0) rotate(${spin}deg)`,
+            opacity: 0,
+          },
+        ],
+        {
+          duration,
+          delay,
+          easing: "cubic-bezier(.18,.7,.42,1)",
+          fill: "forwards",
+        },
+      );
+      anims.push(a);
+    }
+
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      onDone();
+    };
+    const last = anims[anims.length - 1];
+    if (last) last.addEventListener("finish", finish);
+    const t = window.setTimeout(finish, 4200);
+
+    return () => {
+      window.clearTimeout(t);
+      anims.forEach((a) => a.cancel());
+      host.replaceChildren();
+    };
+  }, [onDone]);
+
+  return (
+    <div
+      ref={hostRef}
+      aria-hidden
+      className="pointer-events-none fixed inset-0 z-[60] overflow-hidden"
+    />
+  );
+}
+
+// Auto-injected when a result is published while the page is open.
+// Visual language matches the other bot bubbles (rounded rows, the
+// red/yellow palette, ChevronRight) so it never reads as a "system"
+// interruption — it's the bot continuing the conversation.
+function NewResultsBubble({
+  items,
+  onView,
+}: {
+  items: { level: Level; program: Program }[];
+  onView: (level: Level, program: Program) => void;
+}) {
+  const shown = items.slice(0, 6);
+  return (
+    <div>
+      <p className="inline-flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-[0.22em] text-red/80">
+        <span className="relative flex size-1.5">
+          <span className="absolute inline-flex size-full animate-ping rounded-full bg-red/70" />
+          <span className="relative inline-flex size-1.5 rounded-full bg-red" />
+        </span>
+        Just announced
+      </p>
+      <p className="font-opensans text-[15px] font-semibold text-ink-900 mt-1.5">
+        {items.length === 1
+          ? "A new result is in"
+          : `${items.length} new results are in`}
+      </p>
+      <div className="mt-2.5 flex flex-col gap-1.5">
+        {shown.map(({ level, program }) => (
+          <button
+            key={program.id}
+            type="button"
+            onClick={() => onView(level, program)}
+            className="group flex items-center justify-between gap-3 rounded-xl border border-black/10 bg-white px-3.5 py-2.5 text-left shadow-sm transition-all duration-200 hover:-translate-y-px hover:border-yellow hover:bg-yellow/10 active:translate-y-0 active:scale-[0.99]"
+          >
+            <span className="min-w-0">
+              <span className="block truncate text-sm font-semibold text-ink-900">
+                {programLabel(program)}
+              </span>
+              <span className="block truncate text-[11px] text-ink-500">
+                {levelLabel(level)}
+              </span>
+            </span>
+            <ChevronRight
+              className="size-4 shrink-0 text-ink-400 transition-transform duration-200 group-hover:translate-x-0.5 group-hover:text-red"
+              strokeWidth={2.5}
+              aria-hidden
+            />
+          </button>
+        ))}
+        {items.length > shown.length && (
+          <span className="px-1 pt-0.5 text-[11px] text-ink-500">
+            +{items.length - shown.length} more — pick a category to see all
+          </span>
+        )}
+      </div>
     </div>
   );
 }
@@ -791,6 +1363,74 @@ function AwaitingBubble({
   );
 }
 
+// Compact, poster-less result — used when a program has fewer than 2
+// ranked winners. Still published; points come from the uploaded
+// standings, so no poster is generated for these.
+function ResultTextBubble({
+  level,
+  program,
+  winners,
+  onAnotherInLevel,
+  onDifferentLevel,
+}: {
+  level: Level;
+  program: Program;
+  winners: Winner[];
+  onAnotherInLevel: () => void;
+  onDifferentLevel: () => void;
+}) {
+  const ranked = [...winners]
+    .filter((w) => w.position >= 1)
+    .sort((a, b) => a.position - b.position);
+  const ordinal = ["1st", "2nd", "3rd", "4th"];
+  return (
+    <div>
+      <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-red/80">
+        {levelLabel(level)}
+      </p>
+      <p className="text-base font-semibold text-ink-900 mt-1">
+        {programLabel(program)}
+      </p>
+      {ranked.length === 0 ? (
+        <p className="text-xs text-ink-500 mt-1.5">Result published.</p>
+      ) : (
+        <ul className="mt-2 space-y-1.5">
+          {ranked.map((w, i) => {
+            const slug = w.unit_ml?.toLowerCase() ?? null;
+            const unit = slug
+              ? TEAM_BY_SLUG[slug]?.name ?? w.unit_ml
+              : w.unit_ml;
+            return (
+              <li key={i} className="flex items-baseline gap-2 text-sm">
+                <span className="shrink-0 inline-flex w-9 justify-center rounded-full bg-red/10 py-0.5 text-[10px] font-bold text-red">
+                  {ordinal[Math.min(Math.max(w.position, 1), 4) - 1] ??
+                    w.position}
+                </span>
+                <span className="font-semibold text-ink-900">
+                  {w.name_en ?? w.name_ml}
+                </span>
+                {unit && (
+                  <span className="text-xs text-ink-500">· {unit}</span>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      <p className="text-[11px] text-ink-400 mt-2.5">
+        Small program — no poster for this one; points are in the team
+        standings.
+      </p>
+      <ChoiceRow>
+        <ChoiceButton onClick={onAnotherInLevel}>
+          Another in {levelLabel(level)}
+        </ChoiceButton>
+        <ChoiceButton onClick={onDifferentLevel}>Different category</ChoiceButton>
+      </ChoiceRow>
+    </div>
+  );
+}
+
 function ResultBubble({
   eventName,
   level,
@@ -811,7 +1451,9 @@ function ResultBubble({
   const stageRef = useRef<Konva.Stage | null>(null);
   const [busy, setBusy] = useState<null | "download" | "share">(null);
   const [zoom, setZoom] = useState(false);
-  const [tmpl, setTmpl] = useState(() => Math.floor(Math.random() * 3));
+  const [tmpl, setTmpl] = useState(() =>
+    Math.floor(Math.random() * POSTER_TEMPLATE_COUNT),
+  );
 
   const posterData: PosterData = {
     eventName,
@@ -880,7 +1522,7 @@ function ResultBubble({
           </IconButton>
           <IconButton
             label="Switch template"
-            onClick={() => setTmpl((t) => (t + 1) % 3)}
+            onClick={() => setTmpl((t) => (t + 1) % POSTER_TEMPLATE_COUNT)}
             tone="ghost"
           >
             <SwapIcon />
