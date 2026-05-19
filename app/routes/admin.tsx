@@ -46,15 +46,17 @@ import {
   POSTER_FONTS_EN,
   POSTER_FONTS_ML,
   PosterCanvas,
-  allowedTemplateIndices,
+  eventTemplateList,
   exportPosterPng,
-  pickTemplateIndex,
+  pickFromList,
   posterFontStack,
   sharePoster,
+  type CustomTpl,
   type ElOverride,
   type LayoutEl,
   type PosterData,
   type PosterLayoutMap,
+  type TemplateChoice,
   type TemplateOverride,
 } from "~/components/poster-canvas";
 import {
@@ -439,6 +441,7 @@ export async function action({ request }: Route.ActionArgs) {
       .from("events")
       .update({
         result_template,
+        result_template_id: txt("result_template_id"),
         poster_lang,
         poster_font_en: pickFont("poster_font_en", POSTER_FONTS_EN),
         poster_font_ml: pickFont("poster_font_ml", POSTER_FONTS_ML),
@@ -757,10 +760,10 @@ export async function action({ request }: Route.ActionArgs) {
         { headers: Object.fromEntries(headers) },
       );
     }
-    if (file.size > 4 * 1024 * 1024) {
+    if (file.size > 1024 * 1024) {
       return data(
         {
-          error: `Image is ${(file.size / 1024 / 1024).toFixed(1)} MB — keep it under 4 MB (compress or export at a lower scale).`,
+          error: `Image is ${(file.size / 1024 / 1024).toFixed(1)} MB — keep it under 1 MB (compress or export at a lower scale).`,
         },
         { headers: Object.fromEntries(headers) },
       );
@@ -809,6 +812,110 @@ export async function action({ request }: Route.ActionArgs) {
     if (error) return data({ error: error.message }, { headers: Object.fromEntries(headers) });
     return data(
       { ok: true, message: "Final poster removed." },
+      { headers: Object.fromEntries(headers) },
+    );
+  }
+
+  if (intent === "upload_template") {
+    const file = fd.get("template_file");
+    const name = String(fd.get("template_name") ?? "").trim() || "Custom";
+    if (!(file instanceof File) || file.size === 0) {
+      return data(
+        { error: "Choose an image file to upload." },
+        { headers: Object.fromEntries(headers) },
+      );
+    }
+    if (!file.type.startsWith("image/")) {
+      return data(
+        { error: "That's not an image — upload a PNG, JPG or WebP." },
+        { headers: Object.fromEntries(headers) },
+      );
+    }
+    if (file.size > 1024 * 1024) {
+      return data(
+        {
+          error: `Image is ${(file.size / 1024 / 1024).toFixed(1)} MB — keep custom templates under 1 MB.`,
+        },
+        { headers: Object.fromEntries(headers) },
+      );
+    }
+    const ext =
+      file.type === "image/png"
+        ? "png"
+        : file.type === "image/jpeg"
+        ? "jpg"
+        : file.type === "image/webp"
+        ? "webp"
+        : (file.name.split(".").pop() || "png").toLowerCase();
+    const id = crypto.randomUUID();
+    const path = `templates/${event.id}/${id}.${ext}`;
+    const up = await supabase.storage
+      .from("posters")
+      .upload(path, file, { upsert: true, contentType: file.type });
+    if (up.error) {
+      return data(
+        { error: `Upload failed: ${up.error.message}` },
+        { headers: Object.fromEntries(headers) },
+      );
+    }
+    const {
+      data: { publicUrl },
+    } = supabase.storage.from("posters").getPublicUrl(path);
+    const src = `${publicUrl}?v=${Date.now()}`;
+    const ev = event as { custom_templates?: CustomTpl[] | null };
+    const existing = Array.isArray(ev.custom_templates)
+      ? ev.custom_templates
+      : [];
+    const { error: updErr } = await supabase
+      .from("events")
+      .update({ custom_templates: [...existing, { id, name, src }] })
+      .eq("id", event.id);
+    if (updErr)
+      return data({ error: updErr.message }, { headers: Object.fromEntries(headers) });
+    return data(
+      {
+        ok: true,
+        message: `Template "${name}" uploaded — position the text in the editor below, then Save layout.`,
+      },
+      { headers: Object.fromEntries(headers) },
+    );
+  }
+
+  if (intent === "delete_template") {
+    const id = String(fd.get("template_id") ?? "");
+    const ev = event as {
+      custom_templates?: CustomTpl[] | null;
+      result_template_id?: string | null;
+    };
+    const existing = Array.isArray(ev.custom_templates)
+      ? ev.custom_templates
+      : [];
+    const target = existing.find((t) => t.id === id);
+    if (target?.src) {
+      try {
+        const p = new URL(target.src).pathname;
+        const m = "/object/public/posters/";
+        const i = p.indexOf(m);
+        if (i >= 0)
+          await supabase.storage
+            .from("posters")
+            .remove([decodeURIComponent(p.slice(i + m.length))]);
+      } catch {
+        /* best-effort; metadata removal below is what matters */
+      }
+    }
+    const patch: Record<string, unknown> = {
+      custom_templates: existing.filter((t) => t.id !== id),
+    };
+    if (ev.result_template_id === id) patch.result_template_id = null;
+    const { error } = await supabase
+      .from("events")
+      .update(patch)
+      .eq("id", event.id);
+    if (error)
+      return data({ error: error.message }, { headers: Object.fromEntries(headers) });
+    return data(
+      { ok: true, message: "Template deleted." },
       { headers: Object.fromEntries(headers) },
     );
   }
@@ -981,6 +1088,8 @@ export default function Admin({ loaderData }: Route.ComponentProps) {
   const eventName = event.name_ml ?? event.name;
   const evRel = event as {
     result_template?: number;
+    result_template_id?: string | null;
+    custom_templates?: CustomTpl[] | null;
     poster_lang?: string | null;
     poster_name?: string | null;
     poster_font_en?: string | null;
@@ -994,6 +1103,10 @@ export default function Admin({ loaderData }: Route.ComponentProps) {
   const posterMeta: PosterMeta = {
     subdomain: evRel.organizations?.subdomain ?? "",
     defaultTemplate: evRel.result_template ?? 0,
+    defaultTemplateId: evRel.result_template_id ?? null,
+    customTemplates: Array.isArray(evRel.custom_templates)
+      ? evRel.custom_templates
+      : [],
     lang: evRel.poster_lang === "ml" ? "ml" : "en",
     fontEn: evRel.poster_font_en ?? null,
     fontMl: evRel.poster_font_ml ?? null,
@@ -2458,6 +2571,8 @@ type ShareItem = {
 type PosterMeta = {
   subdomain: string;
   defaultTemplate: number;
+  defaultTemplateId: string | null;
+  customTemplates: CustomTpl[];
   lang: "ml" | "en";
   fontEn: string | null;
   fontMl: string | null;
@@ -2478,12 +2593,29 @@ function TemplateStudioView({
   const actionData = useActionData<typeof action>();
   const navigation = useNavigation();
   const busy = navigation.state !== "idle";
-  const allowed = allowedTemplateIndices(posterMeta.subdomain);
-  const savedPos =
-    (((posterMeta.defaultTemplate % allowed.length) + allowed.length) %
-      allowed.length) || 0;
+  const choices: TemplateChoice[] = eventTemplateList(
+    posterMeta.subdomain,
+    posterMeta.customTemplates,
+  );
+  const savedChoice = pickFromList(
+    choices,
+    posterMeta.defaultTemplate,
+    posterMeta.defaultTemplateId,
+    0,
+  );
+  const savedPos = savedChoice
+    ? Math.max(
+        0,
+        choices.findIndex((c) => c.key === savedChoice.key),
+      )
+    : 0;
   const [pick, setPick] = useState(savedPos);
-  const tplKey = String(allowed[pick] ?? 0);
+  const cur = choices[pick] ?? choices[0];
+  const tplKey = cur?.key ?? "0";
+  const builtinPos = Math.max(
+    0,
+    choices.filter((c) => c.builtinIndex !== null).findIndex((c) => c.key === tplKey),
+  );
   const [layoutMap, setLayoutMap] = useState<PosterLayoutMap>(
     posterMeta.layout ?? {},
   );
@@ -2558,7 +2690,8 @@ function TemplateStudioView({
         </p>
         <Form method="post" className="mt-4 grid gap-3 sm:grid-cols-3">
           <input type="hidden" name="intent" value="save_poster_settings" />
-          <input type="hidden" name="result_template" value={pick} />
+          <input type="hidden" name="result_template" value={builtinPos} />
+          <input type="hidden" name="result_template_id" value={tplKey} />
           <label className="space-y-1 sm:col-span-2">
             <span className={lbl}>Display / event name</span>
             <input
@@ -2655,9 +2788,9 @@ function TemplateStudioView({
               {busy ? "Saving…" : "Save poster settings"}
             </button>
             <span className="text-xs text-stone-400">
-              Default template:{" "}
+              Default:{" "}
               <span className="font-medium text-stone-600">
-                #{pick + 1} of {allowed.length}
+                {cur?.name ?? "—"}
               </span>
             </span>
             {actionData && "error" in actionData && (
@@ -2680,7 +2813,7 @@ function TemplateStudioView({
         <div className="flex items-baseline justify-between">
           <h2 className="text-lg font-semibold tracking-tight">Templates</h2>
           <span className="text-xs text-stone-400">
-            {allowed.length} available
+            {choices.length} available
           </span>
         </div>
         <p className="mt-1 text-xs text-stone-500">
@@ -2689,50 +2822,119 @@ function TemplateStudioView({
           still shuffle). Save to apply.
         </p>
         <div className="mt-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-          {allowed.map((tplIdx, pos) => {
+          {choices.map((c, pos) => {
             const selected = pos === pick;
+            const isCustom = c.builtinIndex === null;
             return (
               <div
-                key={tplIdx}
+                key={c.key}
                 className={`overflow-hidden rounded-lg border-2 ${
                   selected ? "border-brand-600" : "border-stone-200"
                 }`}
               >
-                <div className="flex items-center justify-between border-b border-stone-100 px-3 py-2">
-                  <span className="text-xs font-medium text-stone-800">
-                    Template {pos + 1}
+                <div className="flex items-center justify-between gap-2 border-b border-stone-100 px-3 py-2">
+                  <span className="min-w-0 truncate text-xs font-medium text-stone-800">
+                    {isCustom ? c.name : `Template ${pos + 1}`}
                     {selected && (
                       <span className="ml-1.5 text-[10px] font-semibold text-brand-700">
                         ● Default
                       </span>
                     )}
                   </span>
-                  <button
-                    type="button"
-                    onClick={() => setPick(pos)}
-                    disabled={selected}
-                    className={`rounded px-2 py-1 text-[11px] font-medium transition ${
-                      selected
-                        ? "bg-brand-50 text-brand-700"
-                        : "border border-stone-300 text-stone-700 hover:bg-stone-50"
-                    }`}
-                  >
-                    {selected ? "Default" : "Set default"}
-                  </button>
+                  <div className="flex shrink-0 items-center gap-1.5">
+                    {isCustom && (
+                      <Form method="post">
+                        <input
+                          type="hidden"
+                          name="intent"
+                          value="delete_template"
+                        />
+                        <input
+                          type="hidden"
+                          name="template_id"
+                          value={c.key}
+                        />
+                        <button
+                          type="submit"
+                          title="Delete template"
+                          aria-label="Delete template"
+                          onClick={(e) => {
+                            if (!confirm(`Delete template "${c.name}"?`))
+                              e.preventDefault();
+                          }}
+                          className="grid size-6 place-items-center rounded text-stone-400 hover:bg-red-50 hover:text-red-700"
+                        >
+                          <X className="size-3.5" />
+                        </button>
+                      </Form>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => setPick(pos)}
+                      disabled={selected}
+                      className={`rounded px-2 py-1 text-[11px] font-medium transition ${
+                        selected
+                          ? "bg-brand-50 text-brand-700"
+                          : "border border-stone-300 text-stone-700 hover:bg-stone-50"
+                      }`}
+                    >
+                      {selected ? "Default" : "Set default"}
+                    </button>
+                  </div>
                 </div>
                 <div className="bg-stone-100 p-2">
                   <PosterCanvas
-                    data={{
-                      ...sample(),
-                      overrides: layoutMap[String(tplIdx)],
-                    }}
-                    templateIndex={tplIdx}
+                    data={{ ...sample(), overrides: layoutMap[c.key] }}
+                    templateIndex={c.builtinIndex ?? 0}
+                    customSrc={c.src ?? undefined}
                   />
                 </div>
               </div>
             );
           })}
         </div>
+
+        {/* Upload a custom template */}
+        <Form
+          method="post"
+          encType="multipart/form-data"
+          className="mt-4 flex flex-wrap items-end gap-3 rounded-lg border border-dashed border-stone-300 bg-stone-50/60 p-4"
+        >
+          <input type="hidden" name="intent" value="upload_template" />
+          <label className="space-y-1">
+            <span className="block text-[10px] font-semibold uppercase tracking-wider text-stone-500">
+              Template name
+            </span>
+            <input
+              name="template_name"
+              required
+              placeholder="e.g. Sector blue"
+              className="rounded-md border border-stone-300 bg-white px-3 py-2 text-sm focus:outline-none focus:border-brand-600 focus:ring-2 focus:ring-brand-600/25"
+            />
+          </label>
+          <label className="inline-flex items-center gap-2 rounded-md border border-stone-300 bg-white px-3 py-2 text-sm font-medium text-stone-700 hover:bg-stone-50 cursor-pointer">
+            <Upload className="size-4 text-stone-400" />
+            Choose image
+            <input
+              type="file"
+              name="template_file"
+              accept="image/png,image/jpeg,image/webp"
+              required
+              className="sr-only"
+            />
+          </label>
+          <button
+            type="submit"
+            disabled={busy}
+            className="rounded-md bg-stone-900 px-4 py-2 text-sm font-medium text-white hover:bg-stone-800 disabled:opacity-50"
+          >
+            {busy ? "Uploading…" : "Upload template"}
+          </button>
+          <p className="w-full text-[11px] text-stone-400">
+            PNG/JPG/WebP, ideally 1080×1350 (4:5), under 1 MB. After
+            uploading, position the text with the editor below and Save.
+          </p>
+        </Form>
       </section>
 
       <section className="rounded-xl border border-stone-200 bg-white p-5">
@@ -2740,8 +2942,8 @@ function TemplateStudioView({
           <h2 className="text-lg font-semibold tracking-tight">
             Layout editor
           </h2>
-          <span className="text-xs text-stone-400">
-            Template {pick + 1}
+          <span className="text-xs text-stone-400 truncate max-w-[12rem]">
+            {cur?.name ?? "—"}
           </span>
         </div>
         <p className="mt-1 text-xs text-stone-500">
@@ -2754,7 +2956,8 @@ function TemplateStudioView({
             <PosterCanvas
               key={`edit-${tplKey}`}
               data={{ ...sample(), overrides: ov }}
-              templateIndex={allowed[pick]}
+              templateIndex={cur?.builtinIndex ?? 0}
+              customSrc={cur?.src ?? undefined}
               editable
               onMove={moveEl}
             />
@@ -2981,19 +3184,26 @@ function SharePostersView({
       <div className="overflow-hidden rounded-xl ring-1 ring-stone-200 shadow-sm bg-white">
         {item &&
           (() => {
-            const tplIdx = pickTemplateIndex(
+            const choices = eventTemplateList(
               posterMeta.subdomain,
-              posterMeta.defaultTemplate,
-              tmplShift,
+              posterMeta.customTemplates,
             );
+            const tpl =
+              pickFromList(
+                choices,
+                posterMeta.defaultTemplate,
+                posterMeta.defaultTemplateId,
+                tmplShift,
+              ) ?? choices[0];
             return (
               <PosterCanvas
                 key={item.key}
                 data={{
                   ...item.data,
-                  overrides: posterMeta.layout?.[String(tplIdx)],
+                  overrides: tpl ? posterMeta.layout?.[tpl.key] : undefined,
                 }}
-                templateIndex={tplIdx}
+                templateIndex={tpl?.builtinIndex ?? 0}
+                customSrc={tpl?.src ?? undefined}
                 stageRef={stageRef}
               />
             );

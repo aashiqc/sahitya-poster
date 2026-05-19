@@ -15,10 +15,12 @@ import {
 export function PosterZoomModal({
   data,
   templateIndex = 0,
+  customSrc,
   onClose,
 }: {
   data: PosterData;
   templateIndex?: number;
+  customSrc?: string;
   onClose: () => void;
 }) {
   const stageRef = useRef<Konva.Stage | null>(null);
@@ -92,6 +94,7 @@ export function PosterZoomModal({
           <PosterCanvas
             data={data}
             templateIndex={templateIndex}
+            customSrc={customSrc}
             stageRef={stageRef}
           />
         </div>

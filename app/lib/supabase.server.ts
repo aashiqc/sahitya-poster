@@ -79,7 +79,7 @@ export async function loadTenantEvent(
   const { data, error } = await supabase
     .from("events")
     .select(
-      "id, slug, name, name_ml, status, starts_on, ends_on, organization_id, standings_template, final_poster_url, result_template, poster_lang, poster_name, poster_font_en, poster_font_ml, poster_layout, poster_date, poster_time, poster_place, organizations!inner(name, slug, subdomain)",
+      "id, slug, name, name_ml, status, starts_on, ends_on, organization_id, standings_template, final_poster_url, result_template, result_template_id, custom_templates, poster_lang, poster_name, poster_font_en, poster_font_ml, poster_layout, poster_date, poster_time, poster_place, organizations!inner(name, slug, subdomain)",
     )
     .eq("organizations.subdomain", sub)
     .eq("is_current", true)

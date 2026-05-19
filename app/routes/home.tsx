@@ -9,11 +9,13 @@ import {
 import type Konva from "konva";
 import {
   PosterCanvas,
+  eventTemplateList,
   exportPosterPng,
-  pickTemplateIndex,
+  pickFromList,
   posterFontStack,
   prefetchPosterAssets,
   sharePoster,
+  type CustomTpl,
   type PosterData,
   type PosterLayoutMap,
 } from "~/components/poster-canvas";
@@ -302,6 +304,8 @@ export default function Home({ loaderData }: Route.ComponentProps) {
     | null;
   const evRel = event as {
     result_template?: number;
+    result_template_id?: string | null;
+    custom_templates?: CustomTpl[] | null;
     poster_lang?: string | null;
     poster_name?: string | null;
     poster_font_en?: string | null;
@@ -314,6 +318,10 @@ export default function Home({ loaderData }: Route.ComponentProps) {
   const posterMeta: PosterMeta = {
     subdomain: orgRel?.subdomain ?? "",
     defaultTemplate: evRel.result_template ?? 0,
+    defaultTemplateId: evRel.result_template_id ?? null,
+    customTemplates: Array.isArray(evRel.custom_templates)
+      ? evRel.custom_templates
+      : [],
     lang: evRel.poster_lang === "ml" ? "ml" : "en",
     fontEn: evRel.poster_font_en ?? null,
     fontMl: evRel.poster_font_ml ?? null,
@@ -488,6 +496,8 @@ type Bubble = {
 type PosterMeta = {
   subdomain: string;
   defaultTemplate: number;
+  defaultTemplateId: string | null;
+  customTemplates: CustomTpl[];
   lang: PosterLang;
   fontEn: string | null;
   fontMl: string | null;
@@ -1531,17 +1541,23 @@ function ResultBubble({
   const [zoom, setZoom] = useState(false);
   // Shuffle offset from the tenant's saved default within its allowed set.
   const [tmpl, setTmpl] = useState(0);
-  const templateIndex = pickTemplateIndex(
+  const tplChoices = eventTemplateList(
     posterMeta.subdomain,
-    posterMeta.defaultTemplate,
-    tmpl,
+    posterMeta.customTemplates,
   );
+  const tpl =
+    pickFromList(
+      tplChoices,
+      posterMeta.defaultTemplate,
+      posterMeta.defaultTemplateId,
+      tmpl,
+    ) ?? tplChoices[0];
 
   const posterData: PosterData = {
     eventName,
     siteUrl,
     fontFamily: posterFontStack(posterMeta.fontEn, posterMeta.fontMl),
-    overrides: posterMeta.layout?.[String(templateIndex)],
+    overrides: tpl ? posterMeta.layout?.[tpl.key] : undefined,
     orgName: posterMeta.orgName,
     posterDate: posterMeta.posterDate ?? undefined,
     posterTime: posterMeta.posterTime ?? undefined,
@@ -1587,7 +1603,12 @@ function ResultBubble({
         style={{ touchAction: "manipulation" }}
         className="block w-full overflow-hidden focus:outline-none focus-visible:ring-2 focus-visible:ring-yellow"
       >
-        <PosterCanvas data={posterData} templateIndex={templateIndex} stageRef={stageRef} />
+        <PosterCanvas
+          data={posterData}
+          templateIndex={tpl?.builtinIndex ?? 0}
+          customSrc={tpl?.src ?? undefined}
+          stageRef={stageRef}
+        />
       </button>
 
       <div className="mt-2 px-1 flex flex-wrap items-center justify-between gap-2">
@@ -1628,7 +1649,8 @@ function ResultBubble({
       {zoom && (
         <PosterZoomModal
           data={posterData}
-          templateIndex={templateIndex}
+          templateIndex={tpl?.builtinIndex ?? 0}
+          customSrc={tpl?.src ?? undefined}
           onClose={() => setZoom(false)}
         />
       )}

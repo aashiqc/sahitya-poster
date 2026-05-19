@@ -97,7 +97,7 @@ type TemplateLayout = {
   // are reserved for the Pantharangadi tenant. "general" templates are
   // tenant-neutral — used by every other tenant, with the org name /
   // date / place supplied dynamically via the `meta` block.
-  scope: "legacy" | "general";
+  scope: "legacy" | "general" | "custom";
   // Content block (level + program + winners) — top-left corner & width
   contentX: number;
   contentY: number;
@@ -236,6 +236,87 @@ const TEMPLATES: TemplateLayout[] = [
 ];
 
 export const POSTER_TEMPLATE_COUNT = TEMPLATES.length;
+
+// A tenant-uploaded template (image lives in Supabase Storage; its
+// positions live in events.poster_layout keyed by this id).
+export type CustomTpl = { id: string; name: string; src: string };
+
+// Default overlay layout for a freshly-uploaded custom image — a neutral
+// starting point (mirrors general-01); the admin then drags every block
+// to fit their art with the existing layout editor and saves it.
+const CUSTOM_DEFAULT_LAYOUT: TemplateLayout = {
+  src: "",
+  scope: "custom",
+  contentX: 560,
+  contentY: 470,
+  contentW: 460,
+  subtitleColor: "#E9E1CF",
+  titleColor: "#F3ECDC",
+  nameColor: "#FFFFFF",
+  unitColor: "#B7BECC",
+  resultNo: { x: 70, y: 230, boxW: 340, fontSize: 132, color: "#EFE6D2" },
+  meta: { x: 130, y: 320, w: 820, color: "#D9D2C0", align: "center" },
+};
+
+export type TemplateChoice = {
+  key: string;
+  name: string;
+  builtinIndex: number | null;
+  src: string | null;
+};
+
+/** Ordered, selectable templates for an event: the tenant's built-in set
+ *  (Pantharangadi → legacy, others → general) followed by its uploaded
+ *  custom templates. Built-in keys stay the global index (so existing
+ *  poster_layout / result_template keep working); customs key by id. */
+export function eventTemplateList(
+  subdomain: string | null | undefined,
+  custom: CustomTpl[],
+): TemplateChoice[] {
+  const want = subdomain === TEMPLATE_SUBDOMAIN ? "legacy" : "general";
+  const builtins = TEMPLATES.map((t, i) => ({ t, i })).filter(
+    (x) => x.t.scope === want,
+  );
+  const base = builtins.length
+    ? builtins
+    : TEMPLATES.map((t, i) => ({ t, i }));
+  const list: TemplateChoice[] = base.map((x, n) => ({
+    key: String(x.i),
+    name: `Template ${n + 1}`,
+    builtinIndex: x.i,
+    src: null,
+  }));
+  for (const c of custom)
+    list.push({
+      key: c.id,
+      name: c.name || "Custom",
+      builtinIndex: null,
+      src: c.src,
+    });
+  return list;
+}
+
+/** Resolve the active template from the saved default (custom id, else
+ *  numeric built-in position) + a shuffle offset. Inputs tolerated. */
+export function pickFromList(
+  list: TemplateChoice[],
+  defaultIndex: number,
+  defaultId: string | null,
+  shuffle = 0,
+): TemplateChoice | null {
+  if (list.length === 0) return null;
+  let start = 0;
+  if (defaultId) {
+    const i = list.findIndex((x) => x.key === defaultId);
+    if (i >= 0) start = i;
+  } else {
+    const builtinCount =
+      list.filter((x) => x.builtinIndex !== null).length || list.length;
+    start = (((defaultIndex % builtinCount) + builtinCount) % builtinCount);
+  }
+  const n = list.length;
+  return list[(((start + shuffle) % n) + n) % n];
+}
 
 /** Template indices a tenant may use. The Pantharangadi tenant keeps the
  *  legacy (baked-branding) set; every other tenant gets the general,
@@ -473,6 +554,7 @@ const TenantMeta = ({
 export const PosterCanvas = ({
   data,
   templateIndex = 0,
+  customSrc,
   stageRef,
   displayWidth,
   editable = false,
@@ -480,6 +562,10 @@ export const PosterCanvas = ({
 }: {
   data: PosterData;
   templateIndex?: number;
+  /** Tenant-uploaded background URL. When set, the built-in template is
+   *  ignored and the neutral custom layout is used (admin positions it
+   *  via the existing editor → poster_layout). */
+  customSrc?: string;
   stageRef?: React.MutableRefObject<Konva.Stage | null>;
   /** When omitted, the canvas fills the parent container width. */
   displayWidth?: number;
@@ -514,7 +600,9 @@ export const PosterCanvas = ({
     return () => ro.disconnect();
   }, [displayWidth, mounted]);
 
-  const layout = TEMPLATES[templateIndex % TEMPLATES.length];
+  const layout = customSrc
+    ? { ...CUSTOM_DEFAULT_LAYOUT, src: customSrc }
+    : TEMPLATES[templateIndex % TEMPLATES.length];
   const font = data.fontFamily || BODY_FONT;
   const { img: template, done: imgDone, slow } = usePosterImage(layout.src);
 
