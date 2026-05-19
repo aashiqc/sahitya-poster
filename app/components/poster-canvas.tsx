@@ -942,7 +942,13 @@ function LevelText({
  *  poster / share caption only — the stored name stays canonical. */
 export function displayProgramName(s: string): string {
   return s
-    .replace(/\s*\(\s*\d+\s*participants?\s*\)/i, "")
+    // organiser participant-count suffix, English or Malayalam:
+    // "(3 Participants)" / "( 5 Participants)" / "(4 പേർ)"
+    .replace(/\s*\(\s*\d+\s*(?:participants?|പേർ)\s*\)/i, "")
+    // internal girls marker carried in name_ml — gender is shown via
+    // the category, so drop it on the poster
+    .replace(/\s*\(\s*ഗെസ്റ്റ്\s*\)/, "")
+    // English girls qualifier → short form for the poster
     .replace(/\(\s*girls only\s*\)/i, "(Girls)")
     .replace(/\s{2,}/g, " ")
     .trim();
