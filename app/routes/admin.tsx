@@ -1290,6 +1290,7 @@ export default function Admin({ loaderData }: Route.ComponentProps) {
           key={editData.program.code}
           editData={editData}
           knownUnits={knownUnits}
+          levels={levels as LevelRow[]}
         />
       )}
     </div>
@@ -1900,9 +1901,11 @@ function StandingsView({
 function ResultModal({
   editData,
   knownUnits = [],
+  levels,
 }: {
   editData: EditData;
   knownUnits?: string[];
+  levels: LevelRow[];
 }) {
   const navigate = useNavigate();
   const navigation = useNavigation();
@@ -1930,8 +1933,7 @@ function ResultModal({
     };
   }, []);
 
-  const { program, level, result, winners, neighbors, nextResultNo } =
-    editData;
+  const { program, level, result, winners, nextResultNo } = editData;
   const status = result?.status ?? "none";
   const byPos = new Map<number, EditWinner>();
   for (const w of winners) byPos.set(w.position, w);
@@ -1952,8 +1954,8 @@ function ResultModal({
   const [csvOpen, setCsvOpen] = useState(false);
   const [csv, setCsv] = useState("");
   const [csvNote, setCsvNote] = useState<string | null>(null);
-  function fillFromCsv() {
-    const { rows } = parseResultsCsv(csv);
+  function fillFrom(text: string) {
+    const { rows } = parseResultsCsv(text);
     let filled = 0;
     for (const pos of [1, 2, 3] as const) {
       const r = rows.find((x) => x.rank === pos);
@@ -1968,6 +1970,31 @@ function ResultModal({
         : "No rank 1–3 rows found in that CSV.",
     );
   }
+  const onPickCsvFile = (e: ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const t = String(reader.result ?? "");
+      setCsv(t);
+      fillFrom(t);
+      setCsvOpen(true);
+    };
+    reader.readAsText(f);
+  };
+
+  // Program / level navigator — jump anywhere without closing.
+  const sortProg = (a: ProgramRow, b: ProgramRow) =>
+    a.sort_order - b.sort_order || a.code.localeCompare(b.code);
+  const curLevel = levels.find((l) => l.code === level.code) ?? null;
+  const levelPrograms = (curLevel?.programs ?? []).slice().sort(sortProg);
+  const goTo = (code: string) =>
+    navigate(`/admin?edit=${code}`, { preventScrollReset: true });
+  const onLevelChange = (e: ChangeEvent<HTMLSelectElement>) => {
+    const l = levels.find((x) => x.code === e.target.value);
+    const first = l?.programs.slice().sort(sortProg)[0];
+    if (first) goTo(first.code);
+  };
 
   const inputCls =
     "w-full rounded-lg border border-stone-300 bg-white px-3 py-2.5 text-[15px] text-stone-900 placeholder:text-stone-400 transition focus:outline-none focus:border-brand-600 focus:ring-2 focus:ring-brand-600/25";
@@ -1987,59 +2014,21 @@ function ResultModal({
       />
 
       <div className="relative w-full max-w-2xl max-h-[90dvh] bg-white rounded-2xl shadow-2xl ring-1 ring-stone-200 overflow-hidden flex flex-col">
-        {/* Header — context + program switcher (change program in place) */}
+        {/* Header — context + level/program selectors (jump anywhere) */}
         <div className="px-5 py-4 border-b border-stone-200">
           <div className="flex items-center gap-2">
             <span className="font-mono text-[11px] tracking-widest text-stone-400">
               {program.code}
             </span>
-            <span
-              lang="ml"
-              className="text-[11px] text-stone-500 bg-stone-100 rounded px-2 py-0.5"
-            >
-              {level.name_ml}
-            </span>
             <ProgramStatus status={status} />
-            <div className="ml-auto flex items-center gap-1">
-              {neighbors.prev ? (
-                <Link
-                  to={`/admin?edit=${neighbors.prev.code}`}
-                  preventScrollReset
-                  title={`Previous · ${neighbors.prev.code}`}
-                  aria-label="Previous program"
-                  className="size-9 grid place-items-center rounded-lg border border-stone-300 text-stone-600 hover:bg-stone-50"
-                >
-                  <ChevronLeft className="size-4" />
-                </Link>
-              ) : (
-                <span className="size-9 grid place-items-center rounded-lg border border-stone-200 text-stone-300">
-                  <ChevronLeft className="size-4" />
-                </span>
-              )}
-              {neighbors.next ? (
-                <Link
-                  to={`/admin?edit=${neighbors.next.code}`}
-                  preventScrollReset
-                  title={`Next · ${neighbors.next.code}`}
-                  aria-label="Next program"
-                  className="size-9 grid place-items-center rounded-lg border border-stone-300 text-stone-600 hover:bg-stone-50"
-                >
-                  <ChevronRight className="size-4" />
-                </Link>
-              ) : (
-                <span className="size-9 grid place-items-center rounded-lg border border-stone-200 text-stone-300">
-                  <ChevronRight className="size-4" />
-                </span>
-              )}
-              <button
-                type="button"
-                onClick={close}
-                className="size-9 grid place-items-center rounded-lg text-stone-500 hover:text-stone-900 hover:bg-stone-100 ml-1"
-                aria-label="Close"
-              >
-                <X className="size-5" strokeWidth={2.25} />
-              </button>
-            </div>
+            <button
+              type="button"
+              onClick={close}
+              className="ml-auto size-9 grid place-items-center rounded-lg text-stone-500 hover:text-stone-900 hover:bg-stone-100"
+              aria-label="Close"
+            >
+              <X className="size-5" strokeWidth={2.25} />
+            </button>
           </div>
           <h2
             id="result-modal-title"
@@ -2050,43 +2039,80 @@ function ResultModal({
           <p lang="ml" className="text-sm text-stone-500 truncate">
             {program.name_ml}
           </p>
+
+          <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <label className="space-y-1">
+              <span className="block text-[10px] font-semibold uppercase tracking-wider text-stone-500">
+                Category / level
+              </span>
+              <select
+                value={level.code}
+                onChange={onLevelChange}
+                lang="ml"
+                className={`${inputCls} py-2`}
+              >
+                {levels.map((l) => (
+                  <option key={l.code} value={l.code}>
+                    {l.name_ml}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="space-y-1">
+              <span className="block text-[10px] font-semibold uppercase tracking-wider text-stone-500">
+                Program
+              </span>
+              <select
+                value={program.code}
+                onChange={(e) => goTo(e.target.value)}
+                lang="ml"
+                className={`${inputCls} py-2`}
+              >
+                {levelPrograms.map((p) => (
+                  <option key={p.code} value={p.code}>
+                    {p.code} · {p.name_ml}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
         </div>
 
         <Form method="post" className="flex-1 min-h-0 flex flex-col">
           <input type="hidden" name="program_code" value={program.code} />
 
-          <div className="flex-1 overflow-auto px-5 py-4 space-y-4">
-            {/* Result number */}
-            <div className="space-y-1.5">
-              <label
-                htmlFor="result_no"
-                className="flex items-baseline gap-2 text-[11px] font-semibold uppercase tracking-wider text-stone-500"
-              >
-                Result number
-                {!result && (
-                  <span className="font-normal normal-case tracking-normal text-stone-400">
-                    auto · editable
+          <div className="flex-1 overflow-auto px-5 py-4 space-y-3">
+            {/* Winners — primary section. Result # is a compact inline
+                field in the header, not a wasted standalone row. */}
+            <section className="rounded-xl border border-stone-200">
+              <div className="flex items-center justify-between gap-3 border-b border-stone-100 px-3 py-2">
+                <h3 className="text-[11px] font-semibold uppercase tracking-wider text-stone-500">
+                  Winners
+                </h3>
+                <label className="flex items-center gap-2">
+                  <span className="text-[11px] font-medium text-stone-500">
+                    Result&nbsp;#
                   </span>
-                )}
-              </label>
-              <input
-                id="result_no"
-                name="result_no"
-                value={resultNo}
-                onChange={(e) => setResultNo(e.target.value)}
-                placeholder="e.g. 30"
-                inputMode="numeric"
-                className={`${inputCls} w-28 tabular-nums`}
-              />
-            </div>
-
-            {/* Winners */}
-            <div className="space-y-2.5">
-              <div className="hidden sm:grid grid-cols-[3rem_minmax(0,1fr)_12rem] gap-2 text-[10px] font-semibold uppercase tracking-wider text-stone-400">
-                <span>Place</span>
-                <span>Name</span>
-                <span>Team / unit</span>
+                  <input
+                    id="result_no"
+                    name="result_no"
+                    value={resultNo}
+                    onChange={(e) => setResultNo(e.target.value)}
+                    placeholder="30"
+                    inputMode="numeric"
+                    className="w-14 rounded-md border border-stone-300 bg-white px-2 py-1 text-sm tabular-nums text-center focus:outline-none focus:border-brand-600 focus:ring-2 focus:ring-brand-600/25"
+                  />
+                  {!result && (
+                    <span className="text-[10px] text-stone-400">auto</span>
+                  )}
+                </label>
               </div>
+              <div className="p-3 space-y-2.5">
+                <div className="hidden sm:grid grid-cols-[3rem_minmax(0,1fr)_12rem] gap-2 text-[10px] font-semibold uppercase tracking-wider text-stone-400">
+                  <span>Place</span>
+                  <span>Name</span>
+                  <span>Team / unit</span>
+                </div>
               {[1, 2, 3].map((pos) => {
                 const meta = POSITION_META[pos];
                 const v = values[pos as 1 | 2 | 3];
@@ -2131,7 +2157,8 @@ function ResultModal({
                   <option key={u} value={u} />
                 ))}
               </datalist>
-            </div>
+              </div>
+            </section>
 
             {/* Import from CSV — fills the winners above for review */}
             <div className="rounded-lg border border-stone-200">
@@ -2159,20 +2186,30 @@ function ResultModal({
                     </code>
                     . Ranks 1–3 fill the winners above.
                   </p>
+                  <label className="inline-flex items-center gap-2 rounded-md border border-stone-300 bg-white px-3 py-1.5 text-xs font-medium text-stone-700 hover:bg-stone-50 cursor-pointer">
+                    <Upload className="size-3.5 text-stone-400" />
+                    Upload .csv file
+                    <input
+                      type="file"
+                      accept=".csv,text/csv,text/plain"
+                      onChange={onPickCsvFile}
+                      className="sr-only"
+                    />
+                  </label>
                   <textarea
                     value={csv}
                     onChange={(e) => setCsv(e.target.value)}
                     rows={4}
                     spellCheck={false}
                     placeholder={
-                      "Elocution,Senior,1,A-12,Ayisha,Anithara,18,A\nElocution,Senior,2,B-07,Hana,Cheerpingal,15,A"
+                      "…or paste:\nElocution,Senior,1,A-12,Ayisha,Anithara,18,A\nElocution,Senior,2,B-07,Hana,Cheerpingal,15,A"
                     }
                     className="w-full rounded-md border border-stone-300 bg-white px-3 py-2 font-mono text-xs focus:outline-none focus:border-brand-600 focus:ring-2 focus:ring-brand-600/25"
                   />
                   <div className="flex items-center gap-3">
                     <button
                       type="button"
-                      onClick={fillFromCsv}
+                      onClick={() => fillFrom(csv)}
                       className="rounded-md border border-stone-300 px-3 py-1.5 text-xs font-medium text-stone-700 hover:bg-stone-50"
                     >
                       Fill winners
@@ -2221,9 +2258,7 @@ function ResultModal({
           {/* Footer */}
           <div className="border-t border-stone-200 px-5 py-3 flex items-center gap-2 bg-stone-50/60">
             <span className="text-[11px] text-stone-400">
-              {neighbors.next
-                ? "Save, then → for the next program"
-                : "Esc to close"}
+              Save, then pick the next program above · Esc to close
             </span>
             <div className="ml-auto flex gap-2">
               <button
