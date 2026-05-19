@@ -23,6 +23,8 @@ import {
   ChevronRight,
   Clock,
   Download,
+  Eye,
+  EyeOff,
   ExternalLink,
   LayoutGrid,
   Menu,
@@ -51,7 +53,9 @@ import {
   exportPosterPng,
   pickFromList,
   posterFontStack,
+  rotationOffset,
   sharePoster,
+  usableTemplates,
   type CustomTpl,
   type ElOverride,
   type LayoutEl,
@@ -476,6 +480,35 @@ export async function action({ request }: Route.ActionArgs) {
       return data({ error: error.message }, { headers: Object.fromEntries(headers) });
     return data(
       { ok: true, message: "Default template updated." },
+      { headers: Object.fromEntries(headers) },
+    );
+  }
+
+  if (intent === "toggle_template_disabled") {
+    const id = String(fd.get("template_id") ?? "").trim();
+    if (!id)
+      return data({ error: "Missing template." }, { headers: Object.fromEntries(headers) });
+    const ev = event as { disabled_templates?: string[] | null };
+    const cur = Array.isArray(ev.disabled_templates)
+      ? ev.disabled_templates
+      : [];
+    const wasDisabled = cur.includes(id);
+    const next = wasDisabled
+      ? cur.filter((k) => k !== id)
+      : [...cur, id];
+    const { error } = await supabase
+      .from("events")
+      .update({ disabled_templates: next })
+      .eq("id", event.id);
+    if (error)
+      return data({ error: error.message }, { headers: Object.fromEntries(headers) });
+    return data(
+      {
+        ok: true,
+        message: wasDisabled
+          ? "Template enabled — back in the poster rotation."
+          : "Template hidden — skipped in posters & the public site.",
+      },
       { headers: Object.fromEntries(headers) },
     );
   }
@@ -1207,6 +1240,7 @@ export default function Admin({ loaderData }: Route.ComponentProps) {
     result_template?: number;
     result_template_id?: string | null;
     custom_templates?: CustomTpl[] | null;
+    disabled_templates?: string[] | null;
     poster_lang?: string | null;
     poster_name?: string | null;
     poster_font_en?: string | null;
@@ -1223,6 +1257,9 @@ export default function Admin({ loaderData }: Route.ComponentProps) {
     defaultTemplateId: evRel.result_template_id ?? null,
     customTemplates: Array.isArray(evRel.custom_templates)
       ? evRel.custom_templates
+      : [],
+    disabledTemplates: Array.isArray(evRel.disabled_templates)
+      ? evRel.disabled_templates
       : [],
     lang: evRel.poster_lang === "ml" ? "ml" : "en",
     fontEn: evRel.poster_font_en ?? null,
@@ -2795,6 +2832,7 @@ type PosterMeta = {
   defaultTemplate: number;
   defaultTemplateId: string | null;
   customTemplates: CustomTpl[];
+  disabledTemplates: string[];
   lang: "ml" | "en";
   fontEn: string | null;
   fontMl: string | null;
@@ -2819,6 +2857,7 @@ function TemplateStudioView({
     posterMeta.subdomain,
     posterMeta.customTemplates,
   );
+  const disabledSet = new Set(posterMeta.disabledTemplates ?? []);
   // Position of a template among the built-in set (for the numeric
   // `result_template` the default needs to keep working).
   const builtinPosOf = (key: string) =>
@@ -2904,9 +2943,9 @@ function TemplateStudioView({
     programCode: "P-001",
     resultNo: "12",
     winners: [
-      { position: 1, name: "Ayisha Rahman", unit: "Anithara" },
-      { position: 2, name: "Hana Fathima", unit: "Cheerpingal" },
-      { position: 3, name: "Sara Mariyam", unit: "Vidyanagar" },
+      { position: 1, name: "Muhammed Adnan", unit: "Anithara" },
+      { position: 2, name: "Anas Rahman", unit: "Cheerpingal" },
+      { position: 3, name: "Fawaz Ahammed", unit: "Vidyanagar" },
     ],
   });
 
@@ -3111,14 +3150,21 @@ function TemplateStudioView({
             </span>
           </h2>
           <span className="text-[11px] text-stone-400">
-            Click to edit · ★ sets the public default
+            Click to edit · ★ default · 👁 hide from posters
           </span>
         </div>
+        <p className="mb-3 text-[11px] leading-relaxed text-stone-500">
+          Every result automatically rotates through all enabled
+          templates (so posters vary, in order, across results). Hide a
+          template to drop it from that rotation and the public site —
+          it stays here so you can re-enable it anytime.
+        </p>
         <div className="-mx-1 flex gap-3 overflow-x-auto px-1 pb-1">
           {choices.map((c) => {
             const active = c.key === editKey;
             const isDefault = c.key === defaultKey;
             const isCustom = c.builtinIndex === null;
+            const isDisabled = disabledSet.has(c.key);
             return (
               <div
                 key={c.key}
@@ -3133,18 +3179,52 @@ function TemplateStudioView({
                   onClick={() => setEditKey(c.key)}
                   aria-pressed={active}
                   title={`Edit ${labelOf(c)}`}
-                  className="block w-full cursor-pointer bg-stone-100 p-1.5"
+                  className={`relative block w-full cursor-pointer bg-stone-100 p-1.5 ${
+                    isDisabled ? "opacity-40 grayscale" : ""
+                  }`}
                 >
                   <PosterCanvas
                     data={{ ...sample(), overrides: layoutMap[c.key] }}
                     templateIndex={c.builtinIndex ?? 0}
                     customSrc={c.src ?? undefined}
                   />
+                  {isDisabled && (
+                    <span className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded bg-stone-900/80 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-white">
+                      Hidden
+                    </span>
+                  )}
                 </button>
                 <div className="flex items-center gap-1 px-2 py-1.5">
                   <span className="min-w-0 flex-1 truncate text-[11px] font-medium text-stone-700">
                     {labelOf(c)}
                   </span>
+                  <Form method="post" className="contents">
+                    <input
+                      type="hidden"
+                      name="intent"
+                      value="toggle_template_disabled"
+                    />
+                    <input type="hidden" name="template_id" value={c.key} />
+                    <button
+                      type="submit"
+                      disabled={busy}
+                      title={
+                        isDisabled
+                          ? "Enable — use in posters"
+                          : "Hide — skip in posters & public site"
+                      }
+                      aria-label={
+                        isDisabled ? "Enable template" : "Hide template"
+                      }
+                      className="grid size-6 shrink-0 place-items-center rounded text-stone-400 transition hover:bg-stone-100 hover:text-stone-700 disabled:opacity-50"
+                    >
+                      {isDisabled ? (
+                        <EyeOff className="size-3.5" />
+                      ) : (
+                        <Eye className="size-3.5" />
+                      )}
+                    </button>
+                  </Form>
                   {isDefault ? (
                     <span
                       title="Public default"
@@ -3337,52 +3417,23 @@ function TemplateStudioView({
                 return (
                   <div
                     key={el}
-                    className="rounded-lg border border-stone-200 p-3"
+                    className="flex items-center justify-between gap-3 rounded-lg border border-stone-200 px-3 py-2"
                   >
-                    <div className="flex items-center justify-between gap-3">
-                      <div className="min-w-0">
-                        <p className="truncate text-sm font-medium text-stone-800">
-                          {label}
-                        </p>
-                        <p className="truncate text-[11px] text-stone-400">
-                          {desc}
-                        </p>
-                      </div>
-                      <div className="flex shrink-0 items-center gap-2">
-                        <span
-                          className={`w-11 text-right text-xs tabular-nums ${
-                            pct === 100
-                              ? "text-stone-400"
-                              : "font-semibold text-brand-700"
-                          }`}
-                        >
-                          {pct}%
-                        </span>
-                        <div className="flex items-center overflow-hidden rounded-md border border-stone-300">
-                          <button
-                            type="button"
-                            aria-label={`Shrink ${label}`}
-                            onClick={() => sizeEl(el, -0.05)}
-                            className="grid size-7 place-items-center text-stone-600 transition hover:bg-stone-100"
-                          >
-                            −
-                          </button>
-                          <span className="h-7 w-px bg-stone-300" />
-                          <button
-                            type="button"
-                            aria-label={`Enlarge ${label}`}
-                            onClick={() => sizeEl(el, 0.05)}
-                            className="grid size-7 place-items-center text-stone-600 transition hover:bg-stone-100"
-                          >
-                            ＋
-                          </button>
-                        </div>
-                      </div>
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-medium text-stone-800">
+                        {label}
+                      </p>
+                      <p className="truncate text-[11px] text-stone-400">
+                        {desc}
+                      </p>
                     </div>
-
-                    <div className="mt-2.5 flex flex-wrap items-center gap-2 border-t border-stone-100 pt-2.5">
+                    <div className="flex shrink-0 items-center gap-1.5">
                       <label
-                        title={`${label} text color`}
+                        title={
+                          hasColor
+                            ? `${label} text color`
+                            : `${label} · using template color`
+                        }
                         className="relative grid size-7 cursor-pointer place-items-center rounded-md border border-stone-300"
                       >
                         <span
@@ -3396,19 +3447,6 @@ function TemplateStudioView({
                           className="absolute inset-0 cursor-pointer opacity-0"
                         />
                       </label>
-                      {hasColor ? (
-                        <button
-                          type="button"
-                          onClick={() => autoColor(el)}
-                          className="rounded-md border border-stone-300 px-2 py-1 text-[11px] font-medium text-stone-600 transition hover:bg-stone-50"
-                        >
-                          Auto
-                        </button>
-                      ) : (
-                        <span className="text-[11px] text-stone-400">
-                          Template color
-                        </span>
-                      )}
                       <button
                         type="button"
                         aria-pressed={isBold}
@@ -3435,6 +3473,57 @@ function TemplateStudioView({
                       >
                         I
                       </button>
+                      {hasColor && (
+                        <button
+                          type="button"
+                          onClick={() => autoColor(el)}
+                          title="Reset to template color"
+                          aria-label={`Reset ${label} to template color`}
+                          className="grid size-7 place-items-center rounded-md border border-stone-300 text-stone-500 transition hover:bg-stone-50"
+                        >
+                          <svg
+                            viewBox="0 0 24 24"
+                            className="size-3.5"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="2.5"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          >
+                            <path d="M3 12a9 9 0 1 0 3-6.7" />
+                            <path d="M3 4v5h5" />
+                          </svg>
+                        </button>
+                      )}
+                      <span className="mx-0.5 h-6 w-px bg-stone-200" />
+                      <span
+                        className={`w-10 text-right text-xs tabular-nums ${
+                          pct === 100
+                            ? "text-stone-400"
+                            : "font-semibold text-brand-700"
+                        }`}
+                      >
+                        {pct}%
+                      </span>
+                      <div className="flex items-center overflow-hidden rounded-md border border-stone-300">
+                        <button
+                          type="button"
+                          aria-label={`Shrink ${label}`}
+                          onClick={() => sizeEl(el, -0.05)}
+                          className="grid size-7 place-items-center text-stone-600 transition hover:bg-stone-100"
+                        >
+                          −
+                        </button>
+                        <span className="h-7 w-px bg-stone-300" />
+                        <button
+                          type="button"
+                          aria-label={`Enlarge ${label}`}
+                          onClick={() => sizeEl(el, 0.05)}
+                          className="grid size-7 place-items-center text-stone-600 transition hover:bg-stone-100"
+                        >
+                          ＋
+                        </button>
+                      </div>
                     </div>
                   </div>
                 );
@@ -3598,16 +3687,19 @@ function SharePostersView({
       <div className="overflow-hidden rounded-xl ring-1 ring-stone-200 shadow-sm bg-white">
         {item &&
           (() => {
-            const choices = eventTemplateList(
-              posterMeta.subdomain,
-              posterMeta.customTemplates,
+            const choices = usableTemplates(
+              eventTemplateList(
+                posterMeta.subdomain,
+                posterMeta.customTemplates,
+              ),
+              posterMeta.disabledTemplates,
             );
             const tpl =
               pickFromList(
                 choices,
                 posterMeta.defaultTemplate,
                 posterMeta.defaultTemplateId,
-                tmplShift,
+                rotationOffset(item.data.resultNo, item.code) + tmplShift,
               ) ?? choices[0];
             return (
               <PosterCanvas

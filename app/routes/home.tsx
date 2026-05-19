@@ -14,7 +14,9 @@ import {
   pickFromList,
   posterFontStack,
   prefetchPosterAssets,
+  rotationOffset,
   sharePoster,
+  usableTemplates,
   type CustomTpl,
   type PosterData,
   type PosterLayoutMap,
@@ -306,6 +308,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
     result_template?: number;
     result_template_id?: string | null;
     custom_templates?: CustomTpl[] | null;
+    disabled_templates?: string[] | null;
     poster_lang?: string | null;
     poster_name?: string | null;
     poster_font_en?: string | null;
@@ -321,6 +324,9 @@ export default function Home({ loaderData }: Route.ComponentProps) {
     defaultTemplateId: evRel.result_template_id ?? null,
     customTemplates: Array.isArray(evRel.custom_templates)
       ? evRel.custom_templates
+      : [],
+    disabledTemplates: Array.isArray(evRel.disabled_templates)
+      ? evRel.disabled_templates
       : [],
     lang: evRel.poster_lang === "ml" ? "ml" : "en",
     fontEn: evRel.poster_font_en ?? null,
@@ -498,6 +504,7 @@ type PosterMeta = {
   defaultTemplate: number;
   defaultTemplateId: string | null;
   customTemplates: CustomTpl[];
+  disabledTemplates: string[];
   lang: PosterLang;
   fontEn: string | null;
   fontMl: string | null;
@@ -1541,16 +1548,18 @@ function ResultBubble({
   const [zoom, setZoom] = useState(false);
   // Shuffle offset from the tenant's saved default within its allowed set.
   const [tmpl, setTmpl] = useState(0);
-  const tplChoices = eventTemplateList(
-    posterMeta.subdomain,
-    posterMeta.customTemplates,
+  const tplChoices = usableTemplates(
+    eventTemplateList(posterMeta.subdomain, posterMeta.customTemplates),
+    posterMeta.disabledTemplates,
   );
+  // Each result steps through the whole template set (deterministic by
+  // result number); the shuffle button still adds on top of that.
   const tpl =
     pickFromList(
       tplChoices,
       posterMeta.defaultTemplate,
       posterMeta.defaultTemplateId,
-      tmpl,
+      rotationOffset(resultNo, program.code) + tmpl,
     ) ?? tplChoices[0];
 
   const posterData: PosterData = {

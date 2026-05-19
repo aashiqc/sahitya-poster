@@ -81,6 +81,35 @@ function ovFontStyle(ov: ElOverride | undefined, defBold: boolean): string {
     "normal"
   );
 }
+// Konva's default Text hit region is the full width×height box (see
+// Konva Text._hitFunc), so the empty padding around short / centered /
+// wrapped text is still draggable. With several wide text boxes stacked
+// in the content column they overlap, and pressing visually-empty space
+// grabs whichever block's box covers that point. Restrict the hit area
+// to the glyphs' actual extent (respecting alignment) so a block only
+// drags when you press on its visible text. Full line height is kept so
+// the whole visible text — every wrapped line — stays grabbable.
+function tightTextHit(
+  ctx: Konva.Context,
+  shape: Konva.Shape,
+): void {
+  const t = shape as Konva.Text;
+  const boxW = t.width();
+  const glyphW = t.textWidth || boxW;
+  const tw = Math.min(glyphW, boxW);
+  const align = t.align();
+  const x =
+    align === "center"
+      ? (boxW - tw) / 2
+      : align === "right"
+        ? boxW - tw
+        : 0;
+  ctx.beginPath();
+  ctx.rect(x, 0, tw, t.height());
+  ctx.closePath();
+  ctx.fillStrokeShape(t);
+}
+
 /** Shift a (migrated) override down by `dy` so a split-out sub-block
  *  keeps its original on-poster position. Preserves size/colour/weight. */
 function shiftY(
@@ -89,6 +118,26 @@ function shiftY(
 ): ElOverride | undefined {
   if (!o) return undefined;
   return { ...o, y: o.y != null ? o.y + dy : undefined };
+}
+
+/** Layer a baked default under a tenant's (already legacy-resolved)
+ *  override: the tenant's value wins per property, the default fills
+ *  every gap. Legacy `content`/`meta`-only layouts are unaffected
+ *  because they're resolved into `resolved` before this runs. */
+function withDefaultOv(
+  def: ElOverride | undefined,
+  resolved: ElOverride | undefined,
+): ElOverride | undefined {
+  if (!def) return resolved;
+  if (!resolved) return def;
+  return {
+    x: resolved.x ?? def.x,
+    y: resolved.y ?? def.y,
+    s: resolved.s ?? def.s,
+    color: resolved.color ?? def.color,
+    bold: resolved.bold ?? def.bold,
+    italic: resolved.italic ?? def.italic,
+  };
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -270,17 +319,7 @@ const TEMPLATES: TemplateLayout[] = [
     resultNo: { x: 70, y: 255, boxW: 360, fontSize: 165, color: "#EFE6D2" },
     // Right column, centered on the baked "Sahityotsav" wordmark.
     meta: { x: 547, y: 212, w: 440, color: "#D9D2C0", align: "center" },
-    // Tuned to the reference poster: org name above the wordmark; date
-    // + place just below it; category / program / winners stacked in
-    // the open navy band on the right.
-    defaults: {
-      orgName: { x: 547, y: 212 },
-      date: { x: 547, y: 372 },
-      place: { x: 547, y: 410 },
-      level: { x: 560, y: 452 },
-      program: { x: 560, y: 520 },
-      winners: { x: 560, y: 662 },
-    },
+    // Out-of-the-box positions & styling come from GENERAL_DEFAULT_LAYOUT.
   },
   // general-02 — maroon, lantern bottom-right, "Result" top-right, cyan
   // "Sahityotsav" wordmark upper-left. Tenant-neutral. Content in the
@@ -299,21 +338,42 @@ const TEMPLATES: TemplateLayout[] = [
     resultNo: { x: 680, y: 210, boxW: 340, fontSize: 150, color: "#F4A9C4" },
     // Left column, under the baked cyan "Sahityotsav" wordmark.
     meta: { x: 80, y: 330, w: 540, color: "#E9D9DF", align: "left" },
-    // Mirror of general-01: org name / date / place under the left
-    // wordmark; category / program / winners stacked in the open
-    // maroon band on the left.
-    defaults: {
-      orgName: { x: 80, y: 330 },
-      date: { x: 80, y: 388 },
-      place: { x: 80, y: 424 },
-      level: { x: 90, y: 486 },
-      program: { x: 90, y: 552 },
-      winners: { x: 90, y: 690 },
-    },
+    // Out-of-the-box positions & styling come from GENERAL_DEFAULT_LAYOUT.
   },
 ];
 
 export const POSTER_TEMPLATE_COUNT = TEMPLATES.length;
+
+// Hand-tuned baseline for the two tenant-neutral "general" templates,
+// captured verbatim from a finished layout (saved via the SSF Cheerpingal
+// Unit admin) so every tenant gets an accurate poster — correct positions
+// AND styling (size scale) — out of the box without dragging anything.
+// Keyed by built-in TEMPLATES index: general-01 = 5, general-02 = 6.
+// A tenant's own saved poster_layout still wins, per element AND per prop
+// (see withDefaultOv) — this is only the fallback when they haven't set
+// one. winners (general-01) / winners (general-02) keep their prior
+// default position (Cheerpingal didn't move them); only the scale and the
+// other blocks' positions came from the saved layout.
+const GENERAL_DEFAULT_LAYOUT: Record<number, TemplateOverride> = {
+  5: {
+    orgName: { x: 524, y: 234 },
+    date: { x: 436, y: 396 },
+    place: { x: 618, y: 393 },
+    level: { x: 563, y: 520 },
+    program: { x: 563, y: 560 },
+    winners: { x: 560, y: 662, s: 1.05 },
+    resultNo: { x: 43, y: 273, s: 1.1 },
+  },
+  6: {
+    orgName: { x: 136, y: 227 },
+    date: { x: 111, y: 397 },
+    place: { x: 305, y: 397 },
+    level: { x: 96, y: 539 },
+    program: { x: 93, y: 583 },
+    winners: { x: 90, y: 690 },
+    resultNo: { x: 649, y: 182 },
+  },
+};
 
 // A tenant-uploaded template (image lives in Supabase Storage; its
 // positions live in events.poster_layout keyed by this id).
@@ -402,6 +462,36 @@ export function pickFromList(
   }
   const n = list.length;
   return list[(((start + shuffle) % n) + n) % n];
+}
+
+/** Public posters cycle through ALL available templates instead of
+ *  always using the default — a stable, deterministic offset per result
+ *  so consecutive results step through the list in order and the same
+ *  result always renders the same template (consistent shares). Numeric
+ *  result number drives it; falls back to a hash of the program code. */
+export function rotationOffset(
+  resultNo: string | null | undefined,
+  programCode?: string | null,
+): number {
+  const n = parseInt(String(resultNo ?? "").trim(), 10);
+  if (Number.isFinite(n)) return ((n % 100000) + 100000) % 100000;
+  const s = String(programCode ?? "");
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (Math.imul(h, 31) + s.charCodeAt(i)) | 0;
+  return ((h % 100000) + 100000) % 100000;
+}
+
+/** Templates usable for public posters / share: the full list minus the
+ *  admin-disabled keys. Never empty — if every template is disabled it
+ *  falls back to the full list so a poster always renders. */
+export function usableTemplates(
+  list: TemplateChoice[],
+  disabled: string[] | null | undefined,
+): TemplateChoice[] {
+  if (!disabled || disabled.length === 0) return list;
+  const d = new Set(disabled);
+  const keep = list.filter((c) => !d.has(c.key));
+  return keep.length ? keep : list;
 }
 
 /** Template indices a tenant may use. The Pantharangadi tenant keeps the
@@ -628,6 +718,7 @@ const MetaLine = ({
       fontStyle={ovFontStyle(ov, defBold)}
       fill={ovColor(ov, m.color)}
       lineHeight={1.2}
+      hitFunc={tightTextHit}
     />
   );
 };
@@ -696,23 +787,39 @@ export const PosterCanvas = ({
   const displayHeight = STAGE_H * scale;
   const ready = mounted && w > 0 && imgDone;
 
+  // Baked global baseline for the two general templates (custom uploads
+  // get none — the admin positions those from scratch). Layered UNDER
+  // the tenant's resolved override so it only fills what they haven't set.
+  const def = customSrc
+    ? undefined
+    : GENERAL_DEFAULT_LAYOUT[templateIndex % TEMPLATES.length];
+
   // Some blocks used to be merged and have since been split so each is
   // movable on its own. Fall back to the old combined override so
   // already-positioned layouts keep their look; new edits write the
   // split keys. Sub-blocks inherit the parent's offset + their old gap.
+  // The baked default is then layered beneath the resolved value.
   //   content → level + program
   //   meta    → orgName + date + place
   const co = data.overrides?.content;
-  const levelOv: ElOverride | undefined = data.overrides?.level ?? co;
-  const programOv: ElOverride | undefined =
-    data.overrides?.program ?? shiftY(co, PROGRAM_DY);
+  const levelOv = withDefaultOv(def?.level, data.overrides?.level ?? co);
+  const programOv = withDefaultOv(
+    def?.program,
+    data.overrides?.program ?? shiftY(co, PROGRAM_DY),
+  );
 
   const mo = data.overrides?.meta;
-  const orgNameOv: ElOverride | undefined = data.overrides?.orgName ?? mo;
-  const dateOv: ElOverride | undefined =
-    data.overrides?.date ?? shiftY(mo, META_DATE_DY);
-  const placeOv: ElOverride | undefined =
-    data.overrides?.place ?? shiftY(mo, META_PLACE_DY);
+  const orgNameOv = withDefaultOv(def?.orgName, data.overrides?.orgName ?? mo);
+  const dateOv = withDefaultOv(
+    def?.date,
+    data.overrides?.date ?? shiftY(mo, META_DATE_DY),
+  );
+  const placeOv = withDefaultOv(
+    def?.place,
+    data.overrides?.place ?? shiftY(mo, META_PLACE_DY),
+  );
+  const winnersOv = withDefaultOv(def?.winners, data.overrides?.winners);
+  const resultNoOv = withDefaultOv(def?.resultNo, data.overrides?.resultNo);
 
   return (
     <div
@@ -852,7 +959,7 @@ export const PosterCanvas = ({
             el="winners"
             baseX={layout.defaults?.winners?.x ?? layout.contentX}
             baseY={layout.defaults?.winners?.y ?? winnersStartY(layout)}
-            ov={data.overrides?.winners}
+            ov={winnersOv}
             editable={editable}
             onMove={onMove}
           >
@@ -860,7 +967,7 @@ export const PosterCanvas = ({
               winners={data.winners}
               layout={layout}
               font={font}
-              ov={data.overrides?.winners}
+              ov={winnersOv}
             />
           </DraggableEl>
 
@@ -870,7 +977,7 @@ export const PosterCanvas = ({
               el="resultNo"
               baseX={layout.resultNo.x}
               baseY={layout.resultNo.y}
-              ov={data.overrides?.resultNo}
+              ov={resultNoOv}
               editable={editable}
               onMove={onMove}
             >
@@ -882,8 +989,9 @@ export const PosterCanvas = ({
                 text={formatResultNo(data.resultNo)}
                 fontFamily={font}
                 fontSize={layout.resultNo.fontSize}
-                fontStyle={ovFontStyle(data.overrides?.resultNo, true)}
-                fill={ovColor(data.overrides?.resultNo, layout.resultNo.color)}
+                fontStyle={ovFontStyle(resultNoOv, true)}
+                fill={ovColor(resultNoOv, layout.resultNo.color)}
+                hitFunc={tightTextHit}
               />
             </DraggableEl>
           )}
@@ -932,6 +1040,7 @@ function LevelText({
       fontSize={SUBTITLE_SIZE}
       fontStyle={ovFontStyle(ov, true)}
       fill={ovColor(ov, layout.subtitleColor)}
+      hitFunc={tightTextHit}
     />
   );
 }
@@ -981,6 +1090,7 @@ function ProgramText({
       fill={ovColor(ov, layout.titleColor)}
       lineHeight={TITLE_LH}
       wrap="word"
+      hitFunc={tightTextHit}
     />
   );
 }
@@ -1098,6 +1208,7 @@ function WinnerRow({
         lineHeight={1.05}
         wrap="none"
         ellipsis
+        hitFunc={tightTextHit}
       />
       {winner.unit && (
         <Text
@@ -1112,6 +1223,7 @@ function WinnerRow({
           lineHeight={1}
           wrap="none"
           ellipsis
+          hitFunc={tightTextHit}
         />
       )}
     </Group>
