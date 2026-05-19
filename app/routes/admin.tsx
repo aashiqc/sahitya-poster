@@ -137,12 +137,15 @@ const RESULTS_HEADER_KEYS = [
   "grade",
 ] as const;
 
-export function parseResultsCsv(text: string): ResultsCsvRow[] {
+export function parseResultsCsv(text: string): {
+  rows: ResultsCsvRow[];
+  skipped: string[];
+} {
   const lines = text
     .split(/\r?\n/)
     .map((l) => l.trim())
     .filter(Boolean);
-  if (lines.length === 0) return [];
+  if (lines.length === 0) return { rows: [], skipped: [] };
 
   let idx: Record<string, number> = {
     competition: 0,
@@ -168,13 +171,19 @@ export function parseResultsCsv(text: string): ResultsCsvRow[] {
   }
 
   const rows: ResultsCsvRow[] = [];
+  const skipped: string[] = [];
   for (let i = start; i < lines.length; i++) {
     const c = csvCells(lines[i]);
     const competition = (c[idx.competition] ?? "").trim();
     const category = (c[idx.category] ?? "").trim();
     const participant = (c[idx.participant] ?? "").trim();
     const rank = parseInt((c[idx.rank] ?? "").trim(), 10);
-    if (!competition || !participant || !Number.isFinite(rank)) continue;
+    if (!competition || !participant || !Number.isFinite(rank)) {
+      // A non-blank data line we couldn't parse — never silently drop
+      // it; surface it so the operator sees exactly what was ignored.
+      skipped.push(lines[i]);
+      continue;
+    }
     const pointsCell = (c[idx.points] ?? "").trim();
     const pointsNum = Number(pointsCell);
     rows.push({
@@ -187,7 +196,7 @@ export function parseResultsCsv(text: string): ResultsCsvRow[] {
       grade: (c[idx.grade] ?? "").trim().toUpperCase() || null,
     });
   }
-  return rows;
+  return { rows, skipped };
 }
 
 /** Match key: case/whitespace-insensitive; keeps the "(girls)" qualifier
@@ -475,12 +484,13 @@ export async function action({ request }: Route.ActionArgs) {
 
   if (intent === "upload_results") {
     const publish = String(fd.get("publish") ?? "") === "on";
-    const rows = parseResultsCsv(String(fd.get("csv") ?? ""));
+    const { rows, skipped } = parseResultsCsv(String(fd.get("csv") ?? ""));
     if (rows.length === 0) {
       return data(
         {
           error:
             "No valid rows. Expected: Competition,Category,Rank,Chest Number,Participant,Team,Points,Grade",
+          report: skipped.map((l) => `✗ unparseable row: ${l}`),
         },
         { headers: Object.fromEntries(headers) },
       );
@@ -526,7 +536,8 @@ export async function action({ request }: Route.ActionArgs) {
       g.rows.push(r);
     }
 
-    const report: string[] = [];
+    // Surface unparseable rows up front — never silently dropped.
+    const report: string[] = skipped.map((l) => `✗ unparseable row: ${l}`);
     let okCount = 0;
     let winnerCount = 0;
 
@@ -628,9 +639,9 @@ export async function action({ request }: Route.ActionArgs) {
       report.push(`✓ ${program.code} ${tag}: ${winners.length} winners`);
     }
 
-    const skipped = report.filter((r) => r.startsWith("✗")).length;
+    const issues = report.filter((r) => r.startsWith("✗")).length;
     const message = `Imported ${okCount} result${okCount === 1 ? "" : "s"} (${winnerCount} winners)${
-      skipped ? ` · ${skipped} skipped` : ""
+      issues ? ` · ${issues} issue${issues === 1 ? "" : "s"} (see below)` : ""
     } · ${publish ? "published" : "saved as draft"}`;
     return data(
       okCount === 0 ? { error: message, report } : { ok: true, message, report },

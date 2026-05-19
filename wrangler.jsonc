@@ -2,5 +2,9 @@
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "sahityotsav",
   "compatibility_date": "2025-04-04",
-  "main": "./workers/app.ts"
+  "main": "./workers/app.ts",
+  // Serve ONLY via the custom domain (*.sahityotsav.live). Disabling the
+  // workers.dev host avoids duplicate-host serving and closes the owner
+  // console's dev-host gate bypass.
+  "workers_dev": false
 }

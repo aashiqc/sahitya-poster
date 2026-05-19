@@ -130,13 +130,48 @@ export async function action({
         .eq("event_id", tplEvent.id),
     ]);
 
+    // Create the admin auth user FIRST. The most common failure
+    // (duplicate email / weak password) then aborts with ZERO writes,
+    // so the subdomain stays free and the owner can simply retry.
+    const { data: createdUser, error: uErr } =
+      await svc.auth.admin.createUser({
+        email: adminEmail,
+        password: adminPassword,
+        email_confirm: true,
+      });
+    if (uErr || !createdUser.user) {
+      return {
+        error: `Admin login not created: ${
+          uErr?.message ?? "unknown"
+        }. Use a different email — nothing else was changed.`,
+      };
+    }
+    const userId = createdUser.user.id;
+
+    // From here every failure rolls back so create-tenant is
+    // all-or-nothing and always retryable. Deletes are best-effort and
+    // run in reverse FK order (programs/levels → event → org → user).
+    let orgId: string | null = null;
+    let eventId: string | null = null;
+    const fail = async (msg: string): Promise<ActionResult> => {
+      if (eventId) {
+        await svc.from("programs").delete().eq("event_id", eventId);
+        await svc.from("levels").delete().eq("event_id", eventId);
+        await svc.from("events").delete().eq("id", eventId);
+      }
+      if (orgId) await svc.from("organizations").delete().eq("id", orgId);
+      await svc.auth.admin.deleteUser(userId);
+      return { error: `${msg} — rolled back; safe to retry.` };
+    };
+
     // 1. Org
     const { data: org, error: oErr } = await svc
       .from("organizations")
       .insert({ slug: subdomain, name: orgName, subdomain })
       .select("id")
       .single();
-    if (oErr || !org) return { error: `Org: ${oErr?.message ?? "failed"}` };
+    if (oErr || !org) return await fail(`Org: ${oErr?.message ?? "failed"}`);
+    orgId = org.id;
 
     // 2. Event (current, draft)
     const { data: ev, error: eErr } = await svc
@@ -151,7 +186,8 @@ export async function action({
       })
       .select("id")
       .single();
-    if (eErr || !ev) return { error: `Event: ${eErr?.message ?? "failed"}` };
+    if (eErr || !ev) return await fail(`Event: ${eErr?.message ?? "failed"}`);
+    eventId = ev.id;
 
     // 3. Levels (remember code → new id)
     const levelIdByCode = new Map<string, string>();
@@ -167,7 +203,7 @@ export async function action({
           })),
         )
         .select("id, code");
-      if (lErr) return { error: `Levels: ${lErr.message}` };
+      if (lErr) return await fail(`Levels: ${lErr.message}`);
       for (const nl of newLevels ?? []) levelIdByCode.set(nl.code, nl.id);
     }
     const tplLevelCodeById = new Map(
@@ -189,29 +225,17 @@ export async function action({
           is_active: p.is_active,
         })),
       );
-      if (pErr) return { error: `Programs: ${pErr.message}` };
+      if (pErr) return await fail(`Programs: ${pErr.message}`);
     }
 
-    // 5. Admin auth user + org-bound profile
-    const { data: created, error: uErr } = await svc.auth.admin.createUser({
-      email: adminEmail,
-      password: adminPassword,
-      email_confirm: true,
-    });
-    if (uErr || !created.user) {
-      return {
-        error: `Tenant created, but admin user failed: ${
-          uErr?.message ?? "unknown"
-        }. Fix and re-run, or add the profile manually.`,
-      };
-    }
+    // 5. Org-bound admin profile
     const { error: prErr } = await svc.from("profiles").insert({
-      user_id: created.user.id,
+      user_id: userId,
       organization_id: org.id,
       role: "admin",
       full_name: `${orgName} admin`,
     });
-    if (prErr) return { error: `Profile: ${prErr.message}` };
+    if (prErr) return await fail(`Profile: ${prErr.message}`);
 
     return {
       ok: true,

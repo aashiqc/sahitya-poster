@@ -85,9 +85,21 @@ export async function loadTenantEvent(
     .eq("is_current", true)
     .maybeSingle();
   if (error || !data) {
-    throw new Response(`No current Sahityotsav found for “${sub}”.`, {
-      status: 404,
-    });
+    // No event visible. organizations is public-readable, so we can
+    // tell "sector not live yet" (org exists, event still draft/private
+    // — RLS hides it from the public client) apart from a genuinely
+    // unknown subdomain, and word the 404 accordingly.
+    const { data: org } = await supabase
+      .from("organizations")
+      .select("name")
+      .eq("subdomain", sub)
+      .maybeSingle();
+    throw new Response(
+      org
+        ? `${org.name}’s results aren’t published yet — please check back soon.`
+        : `No Sahityotsav sector at “${sub}”.`,
+      { status: 404 },
+    );
   }
   return data;
 }
