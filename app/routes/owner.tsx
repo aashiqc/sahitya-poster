@@ -70,7 +70,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
 
   const { data: orgs } = await svc
     .from("organizations")
-    .select("id, name, subdomain, created_at")
+    .select("id, name, subdomain, org_level, created_at")
     .order("created_at", { ascending: true });
 
   const { data: events } = await svc
@@ -103,6 +103,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     const adminUserId = adminProf?.user_id ?? null;
     return {
       name: o.name,
+      level: (o.org_level as string | null) ?? null,
       subdomain: sub,
       url: sub ? tenantUrl(request, sub) : null,
       event: ev ? { name: ev.name, status: ev.status } : null,
@@ -160,6 +161,14 @@ export async function action({
       .trim()
       .toLowerCase();
     const adminPassword = String(fd.get("admin_password") ?? "");
+    const orgLevel = (() => {
+      const v = String(fd.get("org_level") ?? "")
+        .trim()
+        .toLowerCase();
+      return ["unit", "sector", "division", "district"].includes(v)
+        ? v
+        : "unit";
+    })();
 
     if (!orgName || !eventName || !adminEmail) {
       return { error: "Org name, event name and admin email are required." };
@@ -244,7 +253,7 @@ export async function action({
     // 1. Org
     const { data: org, error: oErr } = await svc
       .from("organizations")
-      .insert({ slug: subdomain, name: orgName, subdomain })
+      .insert({ slug: subdomain, name: orgName, subdomain, org_level: orgLevel })
       .select("id")
       .single();
     if (oErr || !org) return await fail(`Org: ${oErr?.message ?? "failed"}`);
@@ -490,7 +499,7 @@ export default function OwnerConsole({ loaderData }: Route.ComponentProps) {
           </div>
           <div className="flex items-center gap-4">
             <span className="hidden text-xs text-[#9b9080] sm:inline">
-              {tenants.length} sector{tenants.length === 1 ? "" : "s"} ·{" "}
+              {tenants.length} org{tenants.length === 1 ? "" : "s"} ·{" "}
               <span className="text-[#C8A24A]">{liveCount} live</span>
             </span>
             <Form method="post">
@@ -520,7 +529,7 @@ export default function OwnerConsole({ loaderData }: Route.ComponentProps) {
             </span>
           </div>
           <p className="text-xs text-stone-400">
-            One deployment · per-sector subdomains · RLS-isolated
+            One deployment · per-org subdomains · RLS-isolated
           </p>
         </div>
 
@@ -544,7 +553,7 @@ export default function OwnerConsole({ loaderData }: Route.ComponentProps) {
           >
             <div className="flex items-center justify-between border-b border-stone-100 px-5 py-3">
               <h2 className="font-[Fraunces,serif] text-base tracking-tight">
-                Active sectors
+                Active organizations
               </h2>
               <span className="rounded-full bg-stone-100 px-2 py-0.5 text-[11px] font-medium tabular-nums text-stone-500">
                 {tenants.length}
@@ -552,7 +561,7 @@ export default function OwnerConsole({ loaderData }: Route.ComponentProps) {
             </div>
             {tenants.length === 0 ? (
               <p className="px-5 py-12 text-center text-sm text-stone-400">
-                No sectors yet — create the first one →
+                No organizations yet — create the first one →
               </p>
             ) : (
               <div className="overflow-x-auto">
@@ -560,7 +569,9 @@ export default function OwnerConsole({ loaderData }: Route.ComponentProps) {
                   <thead>
                     <tr className="text-left text-[10px] uppercase tracking-[0.14em] text-stone-400">
                       <th className="w-9 py-2.5 pl-5 pr-2 font-semibold">#</th>
-                      <th className="px-3 py-2.5 font-semibold">Sector</th>
+                      <th className="px-3 py-2.5 font-semibold">
+                        Organization
+                      </th>
                       <th className="px-3 py-2.5 font-semibold">Event</th>
                       <th className="px-3 py-2.5 pr-5 font-semibold">Admin</th>
                     </tr>
@@ -575,8 +586,15 @@ export default function OwnerConsole({ loaderData }: Route.ComponentProps) {
                           {String(i + 1).padStart(2, "0")}
                         </td>
                         <td className="px-3 py-3">
-                          <div className="font-medium text-stone-900">
-                            {t.name}
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="font-medium text-stone-900">
+                              {t.name}
+                            </span>
+                            {t.level && (
+                              <span className="rounded border border-stone-200 bg-stone-50 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-[0.12em] text-stone-500">
+                                {t.level}
+                              </span>
+                            )}
                           </div>
                           {t.url ? (
                             <a
@@ -674,13 +692,26 @@ export default function OwnerConsole({ loaderData }: Route.ComponentProps) {
               <Form method="post" className="mt-4 grid gap-3 sm:grid-cols-2">
                 <input type="hidden" name="intent" value="create_tenant" />
                 <label className="space-y-1">
-                  <span className={lbl}>Sector / org name</span>
+                  <span className={lbl}>Organization name</span>
                   <input
                     name="org_name"
                     required
                     className={field}
                     placeholder="SSF Valanchery Sector"
                   />
+                </label>
+                <label className="space-y-1">
+                  <span className={lbl}>Level</span>
+                  <select
+                    name="org_level"
+                    defaultValue="unit"
+                    className={field}
+                  >
+                    <option value="unit">Unit</option>
+                    <option value="sector">Sector</option>
+                    <option value="division">Division</option>
+                    <option value="district">District</option>
+                  </select>
                 </label>
                 <label className="space-y-1">
                   <span className={lbl}>Subdomain</span>
