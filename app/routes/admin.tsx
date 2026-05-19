@@ -426,6 +426,7 @@ export async function action({ request }: Route.ActionArgs) {
       .from("events")
       .update({
         result_template,
+        poster_name: txt("poster_name"),
         poster_date: txt("poster_date"),
         poster_time: txt("poster_time"),
         poster_place: txt("poster_place"),
@@ -938,6 +939,7 @@ export default function Admin({ loaderData }: Route.ComponentProps) {
   const eventName = event.name_ml ?? event.name;
   const evRel = event as {
     result_template?: number;
+    poster_name?: string | null;
     poster_date?: string | null;
     poster_time?: string | null;
     poster_place?: string | null;
@@ -946,7 +948,7 @@ export default function Admin({ loaderData }: Route.ComponentProps) {
   const posterMeta: PosterMeta = {
     subdomain: evRel.organizations?.subdomain ?? "",
     defaultTemplate: evRel.result_template ?? 0,
-    orgName: evRel.organizations?.name ?? "",
+    orgName: evRel.poster_name?.trim() || evRel.organizations?.name || "",
     posterDate: evRel.poster_date ?? null,
     posterTime: evRel.poster_time ?? null,
     posterPlace: evRel.poster_place ?? null,
@@ -2202,15 +2204,16 @@ function TemplateStudioView({
       allowed.length) || 0;
   const [pick, setPick] = useState(savedPos);
   const [meta, setMeta] = useState({
+    name: posterMeta.orgName ?? "",
     date: posterMeta.posterDate ?? "",
     time: posterMeta.posterTime ?? "",
     place: posterMeta.posterPlace ?? "",
   });
 
   const sample = (): PosterData => ({
-    eventName: posterMeta.orgName || "Sahityotsav",
+    eventName: meta.name || "Sahityotsav",
     siteUrl,
-    orgName: posterMeta.orgName,
+    orgName: meta.name || undefined,
     posterDate: meta.date || undefined,
     posterTime: meta.time || undefined,
     posterPlace: meta.place || undefined,
@@ -2247,6 +2250,18 @@ function TemplateStudioView({
         <Form method="post" className="mt-4 grid gap-3 sm:grid-cols-3">
           <input type="hidden" name="intent" value="save_poster_settings" />
           <input type="hidden" name="result_template" value={pick} />
+          <label className="space-y-1 sm:col-span-3">
+            <span className={lbl}>Display / event name</span>
+            <input
+              name="poster_name"
+              value={meta.name}
+              onChange={(e) =>
+                setMeta((m) => ({ ...m, name: e.target.value }))
+              }
+              className={field}
+              placeholder="SSF Cheerpingal Unit · Sahityotsav"
+            />
+          </label>
           <label className="space-y-1">
             <span className={lbl}>Date</span>
             <input
@@ -2321,45 +2336,48 @@ function TemplateStudioView({
           </span>
         </div>
         <p className="mt-1 text-xs text-stone-500">
-          Click a template to set it as the default. It's used on the public
-          site and shares; viewers can still shuffle. Save to apply.
+          Live preview at the poster's true 4:5 ratio. Set one as the
+          default; it's used on the public site and shares (viewers can
+          still shuffle). Save to apply.
         </p>
-        <div className="mt-4 grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
+        <div className="mt-4 space-y-6">
           {allowed.map((tplIdx, pos) => {
             const selected = pos === pick;
             return (
-              <button
-                type="button"
+              <div
                 key={tplIdx}
-                onClick={() => setPick(pos)}
-                className={`rounded-xl border-2 p-2 text-left transition ${
-                  selected
-                    ? "border-brand-600 ring-2 ring-brand-600/15"
-                    : "border-stone-200 hover:border-stone-300"
+                className={`overflow-hidden rounded-xl border-2 ${
+                  selected ? "border-brand-600" : "border-stone-200"
                 }`}
               >
-                <div className="overflow-hidden rounded-lg bg-stone-100">
-                  <PosterCanvas
-                    data={sample()}
-                    templateIndex={tplIdx}
-                    displayWidth={360}
-                  />
-                </div>
-                <div className="mt-2 flex items-center justify-between px-1 pb-0.5">
+                <div className="flex items-center justify-between border-b border-stone-100 px-4 py-2.5">
                   <span className="text-sm font-medium text-stone-800">
                     Template {pos + 1}
+                    {selected && (
+                      <span className="ml-2 text-[11px] font-semibold text-brand-700">
+                        ● Default
+                      </span>
+                    )}
                   </span>
-                  {selected ? (
-                    <span className="text-[11px] font-semibold text-brand-700">
-                      ● Default
-                    </span>
-                  ) : (
-                    <span className="text-[11px] text-stone-400">
-                      Set as default
-                    </span>
-                  )}
+                  <button
+                    type="button"
+                    onClick={() => setPick(pos)}
+                    disabled={selected}
+                    className={`rounded-md px-3 py-1.5 text-xs font-medium transition ${
+                      selected
+                        ? "bg-brand-50 text-brand-700"
+                        : "border border-stone-300 text-stone-700 hover:bg-stone-50"
+                    }`}
+                  >
+                    {selected ? "Default" : "Set as default"}
+                  </button>
                 </div>
-              </button>
+                <div className="bg-stone-100 p-3">
+                  <div className="mx-auto max-w-lg">
+                    <PosterCanvas data={sample()} templateIndex={tplIdx} />
+                  </div>
+                </div>
+              </div>
             );
           })}
         </div>

@@ -280,6 +280,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
     | null;
   const evRel = event as {
     result_template?: number;
+    poster_name?: string | null;
     poster_date?: string | null;
     poster_time?: string | null;
     poster_place?: string | null;
@@ -287,7 +288,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
   const posterMeta: PosterMeta = {
     subdomain: orgRel?.subdomain ?? "",
     defaultTemplate: evRel.result_template ?? 0,
-    orgName: orgRel?.name ?? "",
+    orgName: evRel.poster_name?.trim() || orgRel?.name || "",
     posterDate: evRel.poster_date ?? null,
     posterTime: evRel.poster_time ?? null,
     posterPlace: evRel.poster_place ?? null,
