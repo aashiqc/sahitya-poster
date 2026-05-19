@@ -936,6 +936,18 @@ function LevelText({
   );
 }
 
+/** Program names are stored verbatim as the official competition names
+ *  (so CSV imports match exactly), which include organiser noise like
+ *  "(3 Participants)" and "(Girls Only)". Strip that for the printed
+ *  poster / share caption only — the stored name stays canonical. */
+export function displayProgramName(s: string): string {
+  return s
+    .replace(/\s*\(\s*\d+\s*participants?\s*\)/i, "")
+    .replace(/\(\s*girls only\s*\)/i, "(Girls)")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+}
+
 function ProgramText({
   data,
   layout,
@@ -945,17 +957,18 @@ function ProgramText({
   layout: TemplateLayout;
   ov?: ElOverride;
 }) {
+  const programName = displayProgramName(data.programName);
   // Girls' programs carry a longer "(Girls)" qualifier, so trim a touch
   // more so they still fit the title block.
   const titleSize =
-    TITLE_SIZE - (/girls/i.test(data.programName) ? 6 : 4);
+    TITLE_SIZE - (/girls/i.test(programName) ? 6 : 4);
   const font = data.fontFamily || BODY_FONT;
   return (
     <Text
       x={0}
       y={0}
       width={layout.contentW}
-      text={data.programName}
+      text={programName}
       fontFamily={font}
       fontSize={titleSize}
       fontStyle={ovFontStyle(ov, true)}
@@ -1157,7 +1170,8 @@ function buildShareCaption(data: PosterData): { title: string; text: string } {
       return `${place} ${w.name}${w.unit ? ` — ${w.unit}` : ""}`;
     });
 
-  const heading = `🏆 ${data.programName} · ${data.levelName}`;
+  const prog = displayProgramName(data.programName);
+  const heading = `🏆 ${prog} · ${data.levelName}`;
   const sub = data.resultNo
     ? `${data.eventName} · Result No. ${data.resultNo}`
     : data.eventName;
@@ -1167,7 +1181,7 @@ function buildShareCaption(data: PosterData): { title: string; text: string } {
     .join("\n")
     .trim();
 
-  return { title: `${data.programName} — ${data.levelName}`, text };
+  return { title: `${prog} — ${data.levelName}`, text };
 }
 
 export async function sharePoster(

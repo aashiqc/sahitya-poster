@@ -637,9 +637,15 @@ export async function action({ request }: Route.ActionArgs) {
 
     for (const g of groups.values()) {
       const tag = `${g.competition} · ${g.category}`;
+      // Group Song A/B come through as category "General Category-A/B";
+      // they belong to the General level (the suffix is the song group).
+      const catSlug = categorySlug(g.category);
       const levelId =
-        levelByKey.get(categorySlug(g.category)) ??
-        levelByKey.get(normMatch(g.category));
+        levelByKey.get(catSlug) ??
+        levelByKey.get(normMatch(g.category)) ??
+        (catSlug.startsWith("general-category")
+          ? levelByKey.get("general")
+          : undefined);
       if (!levelId) {
         report.push(`✗ ${tag}: unknown category (no matching level)`);
         continue;
