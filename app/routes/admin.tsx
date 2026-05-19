@@ -29,6 +29,7 @@ import {
   RefreshCw,
   Search,
   Share2,
+  Images,
   Shuffle,
   Trophy,
   Upload,
@@ -42,9 +43,10 @@ import {
   siteUrlFromRequest,
 } from "~/lib/supabase.server";
 import {
-  POSTER_TEMPLATE_COUNT,
   PosterCanvas,
+  allowedTemplateIndices,
   exportPosterPng,
+  pickTemplateIndex,
   sharePoster,
   type PosterData,
 } from "~/components/poster-canvas";
@@ -410,6 +412,31 @@ export async function action({ request }: Route.ActionArgs) {
     const { error } = await supabase.from("events").update({ status: next }).eq("id", event.id);
     if (error) return data({ error: error.message }, { headers: Object.fromEntries(headers) });
     return data({ ok: true }, { headers: Object.fromEntries(headers) });
+  }
+
+  if (intent === "save_poster_settings") {
+    const tplRaw = parseInt(String(fd.get("result_template") ?? "0"), 10);
+    const result_template =
+      Number.isFinite(tplRaw) && tplRaw >= 0 ? tplRaw : 0;
+    const txt = (k: string) => {
+      const v = String(fd.get(k) ?? "").trim();
+      return v.length ? v : null;
+    };
+    const { error } = await supabase
+      .from("events")
+      .update({
+        result_template,
+        poster_date: txt("poster_date"),
+        poster_time: txt("poster_time"),
+        poster_place: txt("poster_place"),
+      })
+      .eq("id", event.id);
+    if (error)
+      return data({ error: error.message }, { headers: Object.fromEntries(headers) });
+    return data(
+      { ok: true, message: "Poster settings saved." },
+      { headers: Object.fromEntries(headers) },
+    );
   }
 
 
@@ -909,6 +936,21 @@ export default function Admin({ loaderData }: Route.ComponentProps) {
   } = loaderData;
   const orgName = (profile.organizations as { name?: string } | null)?.name ?? "";
   const eventName = event.name_ml ?? event.name;
+  const evRel = event as {
+    result_template?: number;
+    poster_date?: string | null;
+    poster_time?: string | null;
+    poster_place?: string | null;
+    organizations?: { name?: string; subdomain?: string } | null;
+  };
+  const posterMeta: PosterMeta = {
+    subdomain: evRel.organizations?.subdomain ?? "",
+    defaultTemplate: evRel.result_template ?? 0,
+    orgName: evRel.organizations?.name ?? "",
+    posterDate: evRel.poster_date ?? null,
+    posterTime: evRel.poster_time ?? null,
+    posterPlace: evRel.poster_place ?? null,
+  };
   // Units already seen this event — powers the result-modal datalist so
   // admins reuse exact names instead of typo-splitting standings.
   const knownUnits = useMemo(
@@ -929,7 +971,8 @@ export default function Admin({ loaderData }: Route.ComponentProps) {
     | "dashboard"
     | "standings"
     | "share"
-    | "import";
+    | "import"
+    | "templates";
 
   const editCode = searchParams.get("edit");
   const editData = useMemo(
@@ -1006,6 +1049,12 @@ export default function Admin({ loaderData }: Route.ComponentProps) {
             to="/admin?view=import"
           />
           <NavItem
+            active={view === "templates"}
+            label="Poster templates"
+            icon={<Images className="size-4" />}
+            to="/admin?view=templates"
+          />
+          <NavItem
             label="Public site"
             icon={<ExternalLink className="size-4" />}
             href="/"
@@ -1080,6 +1129,8 @@ export default function Admin({ loaderData }: Route.ComponentProps) {
                 ? "Share posters"
                 : view === "import"
                 ? "Import results"
+                : view === "templates"
+                ? "Poster templates"
                 : "Dashboard"}
             </h1>
 
@@ -1107,9 +1158,13 @@ export default function Admin({ loaderData }: Route.ComponentProps) {
               levels={levels as LevelRow[]}
               eventName={event.name ?? event.name_ml ?? "Sahityotsav"}
               siteUrl={siteUrl}
+              posterMeta={posterMeta}
             />
           )}
           {view === "import" && <ImportResultsView />}
+          {view === "templates" && (
+            <TemplateStudioView posterMeta={posterMeta} siteUrl={siteUrl} />
+          )}
           {view === "dashboard" && (
             <DashboardView
               levels={levels}
@@ -2122,14 +2177,207 @@ type ShareItem = {
   data: PosterData;
 };
 
+type PosterMeta = {
+  subdomain: string;
+  defaultTemplate: number;
+  orgName: string;
+  posterDate: string | null;
+  posterTime: string | null;
+  posterPlace: string | null;
+};
+
+function TemplateStudioView({
+  posterMeta,
+  siteUrl,
+}: {
+  posterMeta: PosterMeta;
+  siteUrl: string;
+}) {
+  const actionData = useActionData<typeof action>();
+  const navigation = useNavigation();
+  const busy = navigation.state !== "idle";
+  const allowed = allowedTemplateIndices(posterMeta.subdomain);
+  const savedPos =
+    (((posterMeta.defaultTemplate % allowed.length) + allowed.length) %
+      allowed.length) || 0;
+  const [pick, setPick] = useState(savedPos);
+  const [meta, setMeta] = useState({
+    date: posterMeta.posterDate ?? "",
+    time: posterMeta.posterTime ?? "",
+    place: posterMeta.posterPlace ?? "",
+  });
+
+  const sample = (): PosterData => ({
+    eventName: posterMeta.orgName || "Sahityotsav",
+    siteUrl,
+    orgName: posterMeta.orgName,
+    posterDate: meta.date || undefined,
+    posterTime: meta.time || undefined,
+    posterPlace: meta.place || undefined,
+    levelName: "സീനിയർ",
+    programName: "Elocution",
+    programCode: "P-001",
+    resultNo: "12",
+    winners: [
+      { position: 1, name: "Ayisha Rahman", unit: "Anithara" },
+      { position: 2, name: "Hana Fathima", unit: "Cheerpingal" },
+      { position: 3, name: "Sara Mariyam", unit: "Vidyanagar" },
+    ],
+  });
+
+  const field =
+    "w-full rounded-md border border-stone-300 bg-white px-3 py-2 text-sm focus:outline-none focus:border-stone-400";
+  const lbl =
+    "block text-[11px] font-semibold uppercase tracking-wide text-stone-500";
+
+  return (
+    <div className="max-w-5xl space-y-6">
+      <section className="rounded-xl border border-stone-200 bg-white p-5">
+        <h2 className="text-lg font-semibold tracking-tight">
+          Poster details
+        </h2>
+        <p className="mt-1 text-xs text-stone-500">
+          These appear on every result poster for{" "}
+          <span className="font-medium text-stone-700">
+            {posterMeta.orgName || "this organization"}
+          </span>{" "}
+          — type them once, preview live below. Free text, so format them
+          exactly as you want them printed.
+        </p>
+        <Form method="post" className="mt-4 grid gap-3 sm:grid-cols-3">
+          <input type="hidden" name="intent" value="save_poster_settings" />
+          <input type="hidden" name="result_template" value={pick} />
+          <label className="space-y-1">
+            <span className={lbl}>Date</span>
+            <input
+              name="poster_date"
+              value={meta.date}
+              onChange={(e) =>
+                setMeta((m) => ({ ...m, date: e.target.value }))
+              }
+              className={field}
+              placeholder="28–31 January 2027"
+            />
+          </label>
+          <label className="space-y-1">
+            <span className={lbl}>Time</span>
+            <input
+              name="poster_time"
+              value={meta.time}
+              onChange={(e) =>
+                setMeta((m) => ({ ...m, time: e.target.value }))
+              }
+              className={field}
+              placeholder="9:00 AM onwards"
+            />
+          </label>
+          <label className="space-y-1">
+            <span className={lbl}>Place / venue</span>
+            <input
+              name="poster_place"
+              value={meta.place}
+              onChange={(e) =>
+                setMeta((m) => ({ ...m, place: e.target.value }))
+              }
+              className={field}
+              placeholder="Vadi Hussain, Malappuram"
+            />
+          </label>
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-2 pt-1 sm:col-span-3">
+            <button
+              type="submit"
+              disabled={busy}
+              className="rounded-md bg-stone-900 px-4 py-2 text-sm font-medium text-white hover:bg-stone-800 disabled:opacity-50"
+            >
+              {busy ? "Saving…" : "Save poster settings"}
+            </button>
+            <span className="text-xs text-stone-400">
+              Default template:{" "}
+              <span className="font-medium text-stone-600">
+                #{pick + 1} of {allowed.length}
+              </span>
+            </span>
+            {actionData && "error" in actionData && (
+              <span className="text-xs font-medium text-red-700">
+                {actionData.error}
+              </span>
+            )}
+            {actionData &&
+              "ok" in actionData &&
+              "message" in actionData && (
+                <span className="text-xs font-medium text-emerald-700">
+                  ✓ {actionData.message as string}
+                </span>
+              )}
+          </div>
+        </Form>
+      </section>
+
+      <section>
+        <div className="flex items-baseline justify-between">
+          <h2 className="text-lg font-semibold tracking-tight">Templates</h2>
+          <span className="text-xs text-stone-400">
+            {allowed.length} available
+          </span>
+        </div>
+        <p className="mt-1 text-xs text-stone-500">
+          Click a template to set it as the default. It's used on the public
+          site and shares; viewers can still shuffle. Save to apply.
+        </p>
+        <div className="mt-4 grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
+          {allowed.map((tplIdx, pos) => {
+            const selected = pos === pick;
+            return (
+              <button
+                type="button"
+                key={tplIdx}
+                onClick={() => setPick(pos)}
+                className={`rounded-xl border-2 p-2 text-left transition ${
+                  selected
+                    ? "border-brand-600 ring-2 ring-brand-600/15"
+                    : "border-stone-200 hover:border-stone-300"
+                }`}
+              >
+                <div className="overflow-hidden rounded-lg bg-stone-100">
+                  <PosterCanvas
+                    data={sample()}
+                    templateIndex={tplIdx}
+                    displayWidth={360}
+                  />
+                </div>
+                <div className="mt-2 flex items-center justify-between px-1 pb-0.5">
+                  <span className="text-sm font-medium text-stone-800">
+                    Template {pos + 1}
+                  </span>
+                  {selected ? (
+                    <span className="text-[11px] font-semibold text-brand-700">
+                      ● Default
+                    </span>
+                  ) : (
+                    <span className="text-[11px] text-stone-400">
+                      Set as default
+                    </span>
+                  )}
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      </section>
+    </div>
+  );
+}
+
 function SharePostersView({
   levels,
   eventName,
   siteUrl,
+  posterMeta,
 }: {
   levels: LevelRow[];
   eventName: string;
   siteUrl: string;
+  posterMeta: PosterMeta;
 }) {
   const items = useMemo<ShareItem[]>(() => {
     const pubs: { level: LevelRow; program: ProgramRow }[] = [];
@@ -2170,6 +2418,10 @@ function SharePostersView({
         data: {
           eventName,
           siteUrl,
+          orgName: posterMeta.orgName,
+          posterDate: posterMeta.posterDate ?? undefined,
+          posterTime: posterMeta.posterTime ?? undefined,
+          posterPlace: posterMeta.posterPlace ?? undefined,
           levelName: levelLabelFromCode(level.code, level.name_ml),
           programName,
           programCode: program.code,
@@ -2179,7 +2431,7 @@ function SharePostersView({
       });
     });
     return out;
-  }, [levels, eventName, siteUrl]);
+  }, [levels, eventName, siteUrl, posterMeta]);
 
   const [idx, setIdx] = useState(0);
   const [tmplShift, setTmplShift] = useState(0);
@@ -2262,7 +2514,11 @@ function SharePostersView({
           <PosterCanvas
             key={item.key}
             data={item.data}
-            templateIndex={(clampedIdx + tmplShift) % POSTER_TEMPLATE_COUNT}
+            templateIndex={pickTemplateIndex(
+              posterMeta.subdomain,
+              posterMeta.defaultTemplate,
+              tmplShift,
+            )}
             stageRef={stageRef}
           />
         )}

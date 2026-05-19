@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type Konva from "konva";
 import { Stage, Layer, Image as KImage, Text, Rect, Group } from "react-konva";
-import { SITE_URL_FALLBACK } from "~/lib/constants";
+import { SITE_URL_FALLBACK, TEMPLATE_SUBDOMAIN } from "~/lib/constants";
 
 // ─────────────────────────────────────────────────────────────────────
 // Public types
@@ -23,6 +23,13 @@ export type PosterData = {
   programCode: string;
   resultNo: string | null;
   winners: PosterWinner[];
+  /** Admin-managed overlay (general templates). Org/sector display name
+   *  plus the event date / time / place — rendered in the template's
+   *  empty `meta` zone when present. */
+  orgName?: string;
+  posterDate?: string;
+  posterTime?: string;
+  posterPlace?: string;
 };
 
 // ─────────────────────────────────────────────────────────────────────
@@ -47,6 +54,11 @@ const TIER_COLOR = ["#C89412", "#6F6F6F", "#A05A1D", "#3A1414"] as const;
 
 type TemplateLayout = {
   src: string;
+  // "legacy" templates carry baked Pantharangadi/date/place branding and
+  // are reserved for the Pantharangadi tenant. "general" templates are
+  // tenant-neutral — used by every other tenant, with the org name /
+  // date / place supplied dynamically via the `meta` block.
+  scope: "legacy" | "general";
   // Content block (level + program + winners) — top-left corner & width
   contentX: number;
   contentY: number;
@@ -65,12 +77,22 @@ type TemplateLayout = {
     fontSize: number;
     color: string;
   };
+  // Admin overlay zone (general templates): org/sector name + date·time
+  // + place, stacked from (x,y) within width w.
+  meta?: {
+    x: number;
+    y: number;
+    w: number;
+    color: string;
+    align?: "left" | "center" | "right";
+  };
 };
 
 const TEMPLATES: TemplateLayout[] = [
   // 01 — cream backdrop, floral panel right-bottom, "Result" top-right
   {
     src: "/poster/templates/01.png",
+    scope: "legacy",
     contentX: 80,
     contentY: 460,
     contentW: 560,
@@ -83,6 +105,7 @@ const TEMPLATES: TemplateLayout[] = [
   // 02 — pink backdrop, landscape right-bottom, white "Result" top-right
   {
     src: "/poster/templates/02.png",
+    scope: "legacy",
     contentX: 80,
     contentY: 460,
     contentW: 400,
@@ -95,6 +118,7 @@ const TEMPLATES: TemplateLayout[] = [
   // 03 — cream backdrop, Matisse cutouts bottom-left, header on the right
   {
     src: "/poster/templates/03.png",
+    scope: "legacy",
     contentX: 540,
     contentY: 520,
     contentW: 460,
@@ -105,10 +129,10 @@ const TEMPLATES: TemplateLayout[] = [
     resultNo: { x: 50, y: 270, boxW: 360, fontSize: 136, color: "#3D5DBF" },
   },
   // 04 — dark navy, "Result" script top-left, sage "Sahityotsav"
-  // wordmark top-right, flowers bottom-left. Content sits in the open
-  // navy band on the right; light text.
+  // wordmark top-right, flowers bottom-left (Pantharangadi-baked).
   {
     src: "/poster/templates/result-04.png",
+    scope: "legacy",
     contentX: 560,
     contentY: 470,
     contentW: 470,
@@ -119,10 +143,11 @@ const TEMPLATES: TemplateLayout[] = [
     resultNo: { x: 65, y: 271, boxW: 360, fontSize: 150, color: "#EFE6D2" },
   },
   // 05 — dark maroon, pink "Result" script top-right, cyan
-  // "Sahityotsav" wordmark top-left, lantern bottom-right. Content
-  // sits in the open maroon band on the left; light text.
+  // "Sahityotsav" wordmark top-left, lantern bottom-right
+  // (Pantharangadi-baked).
   {
     src: "/poster/templates/result-05.png",
+    scope: "legacy",
     contentX: 90,
     contentY: 470,
     contentW: 480,
@@ -132,9 +157,69 @@ const TEMPLATES: TemplateLayout[] = [
     unitColor: "#CDB8C6",
     resultNo: { x: 659, y: 188, boxW: 340, fontSize: 150, color: "#F4A9C4" },
   },
+  // general-01 — navy, flowers bottom-left, "Result" top-left, sage
+  // "Sahityotsav" wordmark center-right. Tenant-neutral: org name /
+  // date / place come from the admin (meta block). Content in the open
+  // navy band on the right; light text.
+  {
+    src: "/poster/templates/general-01.png",
+    scope: "general",
+    contentX: 560,
+    contentY: 560,
+    contentW: 470,
+    subtitleColor: "#E9E1CF",
+    titleColor: "#F3ECDC",
+    nameColor: "#FFFFFF",
+    unitColor: "#B7BECC",
+    resultNo: { x: 70, y: 250, boxW: 360, fontSize: 140, color: "#EFE6D2" },
+    meta: { x: 560, y: 395, w: 470, color: "#D9D2C0", align: "left" },
+  },
+  // general-02 — maroon, lantern bottom-right, "Result" top-right, cyan
+  // "Sahityotsav" wordmark upper-left. Tenant-neutral. Content in the
+  // open maroon band on the left; light text.
+  {
+    src: "/poster/templates/general-02.png",
+    scope: "general",
+    contentX: 90,
+    contentY: 560,
+    contentW: 470,
+    subtitleColor: "#F0E4DA",
+    titleColor: "#F4E8DC",
+    nameColor: "#FFFFFF",
+    unitColor: "#CDB8C6",
+    resultNo: { x: 640, y: 175, boxW: 360, fontSize: 140, color: "#F4A9C4" },
+    meta: { x: 90, y: 395, w: 480, color: "#E9D9DF", align: "left" },
+  },
 ];
 
 export const POSTER_TEMPLATE_COUNT = TEMPLATES.length;
+
+/** Template indices a tenant may use. The Pantharangadi tenant keeps the
+ *  legacy (baked-branding) set; every other tenant gets the general,
+ *  tenant-neutral set. */
+export function allowedTemplateIndices(
+  subdomain: string | null | undefined,
+): number[] {
+  const want = subdomain === TEMPLATE_SUBDOMAIN ? "legacy" : "general";
+  const idx = TEMPLATES.map((t, i) => (t.scope === want ? i : -1)).filter(
+    (i) => i >= 0,
+  );
+  return idx.length ? idx : TEMPLATES.map((_, i) => i);
+}
+
+/** Resolve the concrete template index from the tenant's allowed set,
+ *  the saved default position, and a shuffle offset. All inputs are
+ *  tolerated (wrapped/clamped) so callers can pass raw DB values. */
+export function pickTemplateIndex(
+  subdomain: string | null | undefined,
+  defaultPos: number,
+  shuffle = 0,
+): number {
+  const allowed = allowedTemplateIndices(subdomain);
+  const n = allowed.length;
+  const base = (((defaultPos % n) + n) % n + shuffle) % n;
+  return allowed[((base % n) + n) % n];
+}
 
 // ─────────────────────────────────────────────────────────────────────
 // Image loading — tracks loaded/error + a "slow network" flag, and a
@@ -245,6 +330,60 @@ function formatResultNo(s: string): string {
 }
 
 // ─────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────
+// Tenant meta — org/sector name + date·time + place, in the general
+// template's empty `meta` zone. Renders nothing for legacy templates
+// (no meta config) or when the admin hasn't supplied any values.
+// ─────────────────────────────────────────────────────────────────────
+
+const TenantMeta = ({
+  data,
+  layout,
+}: {
+  data: PosterData;
+  layout: TemplateLayout;
+}) => {
+  const m = layout.meta;
+  if (!m) return null;
+  const dt = [data.posterDate, data.posterTime]
+    .map((s) => s?.trim())
+    .filter(Boolean)
+    .join("   ·   ");
+  const lines: { text: string; size: number; bold?: boolean }[] = [];
+  if (data.orgName?.trim())
+    lines.push({ text: data.orgName.trim(), size: 36, bold: true });
+  if (dt) lines.push({ text: dt, size: 24 });
+  if (data.posterPlace?.trim())
+    lines.push({ text: data.posterPlace.trim(), size: 24 });
+  if (lines.length === 0) return null;
+
+  let acc = m.y;
+  const placed = lines.map((ln) => {
+    const y = acc;
+    acc += ln.size * 1.32 + 7;
+    return { ...ln, y };
+  });
+  return (
+    <>
+      {placed.map((ln, i) => (
+        <Text
+          key={i}
+          x={m.x}
+          y={ln.y}
+          width={m.w}
+          align={m.align ?? "left"}
+          text={ln.text}
+          fontFamily={BODY_FONT}
+          fontSize={ln.size}
+          fontStyle={ln.bold ? "bold" : "normal"}
+          fill={m.color}
+          lineHeight={1.2}
+        />
+      ))}
+    </>
+  );
+};
+
 // Poster — client-only Konva stage. Overlays level/program/winners and
 // the result number on top of a chosen template.
 // ─────────────────────────────────────────────────────────────────────
@@ -333,6 +472,9 @@ export const PosterCanvas = ({
               listening={false}
             />
           )}
+
+          {/* Admin overlay (general templates): org name + date/place */}
+          <TenantMeta data={data} layout={layout} />
 
           {/* Level (subtitle) + Program (title) block */}
           <SubtitleTitle data={data} layout={layout} />

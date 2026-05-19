@@ -8,9 +8,9 @@ import {
 } from "~/lib/supabase.server";
 import type Konva from "konva";
 import {
-  POSTER_TEMPLATE_COUNT,
   PosterCanvas,
   exportPosterPng,
+  pickTemplateIndex,
   prefetchPosterAssets,
   sharePoster,
   type PosterData,
@@ -275,6 +275,24 @@ export default function Home({ loaderData }: Route.ComponentProps) {
 
   const sector = (org ? org.replace(/^SSF\s+/i, "") : "") || "Sahityotsav";
 
+  const orgRel = event.organizations as
+    | { name?: string; subdomain?: string }
+    | null;
+  const evRel = event as {
+    result_template?: number;
+    poster_date?: string | null;
+    poster_time?: string | null;
+    poster_place?: string | null;
+  };
+  const posterMeta: PosterMeta = {
+    subdomain: orgRel?.subdomain ?? "",
+    defaultTemplate: evRel.result_template ?? 0,
+    orgName: orgRel?.name ?? "",
+    posterDate: evRel.poster_date ?? null,
+    posterTime: evRel.poster_time ?? null,
+    posterPlace: evRel.poster_place ?? null,
+  };
+
   return (
     <div className="relative min-h-dvh flex flex-col">
       {/* Flowing layered waves — clean warm base + parallax wave bands */}
@@ -355,6 +373,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
           levels={levels as Level[]}
           eventName={eventName ?? "Sahityotsav"}
           siteUrl={siteUrl}
+          posterMeta={posterMeta}
           sector={sector}
           standings={standings}
           finalPosterUrl={finalPosterUrl}
@@ -435,10 +454,20 @@ type Bubble = {
   tight?: boolean;
 };
 
+type PosterMeta = {
+  subdomain: string;
+  defaultTemplate: number;
+  orgName: string;
+  posterDate: string | null;
+  posterTime: string | null;
+  posterPlace: string | null;
+};
+
 function ChatFlow({
   levels,
   eventName,
   siteUrl,
+  posterMeta,
   sector,
   standings,
   finalPosterUrl,
@@ -447,6 +476,7 @@ function ChatFlow({
   levels: Level[];
   eventName: string;
   siteUrl: string;
+  posterMeta: PosterMeta;
   sector: string;
   standings: Standings | null;
   finalPosterUrl: string | null;
@@ -596,6 +626,7 @@ function ChatFlow({
             <ResultBubble
               eventName={eventName}
               siteUrl={siteUrl}
+              posterMeta={posterMeta}
               level={level}
               program={program}
               winners={program.result.winners}
@@ -1442,6 +1473,7 @@ function ResultTextBubble({
 function ResultBubble({
   eventName,
   siteUrl,
+  posterMeta,
   level,
   program,
   winners,
@@ -1450,6 +1482,7 @@ function ResultBubble({
 }: {
   eventName: string;
   siteUrl: string;
+  posterMeta: PosterMeta;
   level: Level;
   program: Program;
   winners: Winner[];
@@ -1461,13 +1494,21 @@ function ResultBubble({
   const stageRef = useRef<Konva.Stage | null>(null);
   const [busy, setBusy] = useState<null | "download" | "share">(null);
   const [zoom, setZoom] = useState(false);
-  const [tmpl, setTmpl] = useState(() =>
-    Math.floor(Math.random() * POSTER_TEMPLATE_COUNT),
+  // Shuffle offset from the tenant's saved default within its allowed set.
+  const [tmpl, setTmpl] = useState(0);
+  const templateIndex = pickTemplateIndex(
+    posterMeta.subdomain,
+    posterMeta.defaultTemplate,
+    tmpl,
   );
 
   const posterData: PosterData = {
     eventName,
     siteUrl,
+    orgName: posterMeta.orgName,
+    posterDate: posterMeta.posterDate ?? undefined,
+    posterTime: posterMeta.posterTime ?? undefined,
+    posterPlace: posterMeta.posterPlace ?? undefined,
     levelName: levelLabel(level),
     programName: program.name_en ?? program.code,
     programCode: program.code,
@@ -1509,7 +1550,7 @@ function ResultBubble({
         style={{ touchAction: "manipulation" }}
         className="block w-full overflow-hidden focus:outline-none focus-visible:ring-2 focus-visible:ring-yellow"
       >
-        <PosterCanvas data={posterData} templateIndex={tmpl} stageRef={stageRef} />
+        <PosterCanvas data={posterData} templateIndex={templateIndex} stageRef={stageRef} />
       </button>
 
       <div className="mt-2 px-1 flex flex-wrap items-center justify-between gap-2">
@@ -1532,7 +1573,7 @@ function ResultBubble({
           </IconButton>
           <IconButton
             label="Switch template"
-            onClick={() => setTmpl((t) => (t + 1) % POSTER_TEMPLATE_COUNT)}
+            onClick={() => setTmpl((t) => t + 1)}
             tone="ghost"
           >
             <SwapIcon />
@@ -1550,7 +1591,7 @@ function ResultBubble({
       {zoom && (
         <PosterZoomModal
           data={posterData}
-          templateIndex={tmpl}
+          templateIndex={templateIndex}
           onClose={() => setZoom(false)}
         />
       )}
