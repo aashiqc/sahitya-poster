@@ -43,10 +43,13 @@ import {
   siteUrlFromRequest,
 } from "~/lib/supabase.server";
 import {
+  POSTER_FONTS_EN,
+  POSTER_FONTS_ML,
   PosterCanvas,
   allowedTemplateIndices,
   exportPosterPng,
   pickTemplateIndex,
+  posterFontStack,
   sharePoster,
   type PosterData,
 } from "~/components/poster-canvas";
@@ -424,11 +427,17 @@ export async function action({ request }: Route.ActionArgs) {
     };
     const poster_lang =
       String(fd.get("poster_lang") ?? "") === "ml" ? "ml" : "en";
+    const pickFont = (k: string, list: readonly string[]) => {
+      const v = String(fd.get(k) ?? "");
+      return list.includes(v) ? v : null;
+    };
     const { error } = await supabase
       .from("events")
       .update({
         result_template,
         poster_lang,
+        poster_font_en: pickFont("poster_font_en", POSTER_FONTS_EN),
+        poster_font_ml: pickFont("poster_font_ml", POSTER_FONTS_ML),
         poster_name: txt("poster_name"),
         poster_date: txt("poster_date"),
         poster_time: txt("poster_time"),
@@ -944,6 +953,8 @@ export default function Admin({ loaderData }: Route.ComponentProps) {
     result_template?: number;
     poster_lang?: string | null;
     poster_name?: string | null;
+    poster_font_en?: string | null;
+    poster_font_ml?: string | null;
     poster_date?: string | null;
     poster_time?: string | null;
     poster_place?: string | null;
@@ -953,6 +964,8 @@ export default function Admin({ loaderData }: Route.ComponentProps) {
     subdomain: evRel.organizations?.subdomain ?? "",
     defaultTemplate: evRel.result_template ?? 0,
     lang: evRel.poster_lang === "ml" ? "ml" : "en",
+    fontEn: evRel.poster_font_en ?? null,
+    fontMl: evRel.poster_font_ml ?? null,
     orgName: evRel.poster_name?.trim() || evRel.organizations?.name || "",
     posterDate: evRel.poster_date ?? null,
     posterTime: evRel.poster_time ?? null,
@@ -2188,6 +2201,8 @@ type PosterMeta = {
   subdomain: string;
   defaultTemplate: number;
   lang: "ml" | "en";
+  fontEn: string | null;
+  fontMl: string | null;
   orgName: string;
   posterDate: string | null;
   posterTime: string | null;
@@ -2212,6 +2227,8 @@ function TemplateStudioView({
   const [meta, setMeta] = useState({
     name: posterMeta.orgName ?? "",
     lang: posterMeta.lang,
+    fontEn: posterMeta.fontEn ?? POSTER_FONTS_EN[0],
+    fontMl: posterMeta.fontMl ?? POSTER_FONTS_ML[0],
     date: posterMeta.posterDate ?? "",
     time: posterMeta.posterTime ?? "",
     place: posterMeta.posterPlace ?? "",
@@ -2220,6 +2237,7 @@ function TemplateStudioView({
   const sample = (): PosterData => ({
     eventName: meta.name || "Sahityotsav",
     siteUrl,
+    fontFamily: posterFontStack(meta.fontEn, meta.fontMl),
     orgName: meta.name || undefined,
     posterDate: meta.date || undefined,
     posterTime: meta.time || undefined,
@@ -2284,6 +2302,40 @@ function TemplateStudioView({
             >
               <option value="en">English</option>
               <option value="ml">Malayalam</option>
+            </select>
+          </label>
+          <label className="space-y-1">
+            <span className={lbl}>English font</span>
+            <select
+              name="poster_font_en"
+              value={meta.fontEn}
+              onChange={(e) =>
+                setMeta((m) => ({ ...m, fontEn: e.target.value }))
+              }
+              className={field}
+            >
+              {POSTER_FONTS_EN.map((f) => (
+                <option key={f} value={f}>
+                  {f}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="space-y-1">
+            <span className={lbl}>Malayalam font</span>
+            <select
+              name="poster_font_ml"
+              value={meta.fontMl}
+              onChange={(e) =>
+                setMeta((m) => ({ ...m, fontMl: e.target.value }))
+              }
+              className={field}
+            >
+              {POSTER_FONTS_ML.map((f) => (
+                <option key={f} value={f}>
+                  {f}
+                </option>
+              ))}
             </select>
           </label>
           <label className="space-y-1">
@@ -2465,6 +2517,7 @@ function SharePostersView({
         data: {
           eventName,
           siteUrl,
+          fontFamily: posterFontStack(posterMeta.fontEn, posterMeta.fontMl),
           orgName: posterMeta.orgName,
           posterDate: posterMeta.posterDate ?? undefined,
           posterTime: posterMeta.posterTime ?? undefined,

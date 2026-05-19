@@ -30,6 +30,9 @@ export type PosterData = {
   posterDate?: string;
   posterTime?: string;
   posterPlace?: string;
+  /** Full CSS font stack applied to ALL poster text. Build it with
+   *  posterFontStack(); falls back to BODY_FONT when omitted. */
+  fontFamily?: string;
 };
 
 // ─────────────────────────────────────────────────────────────────────
@@ -40,8 +43,34 @@ export type PosterData = {
 const STAGE_W = 1080;
 const STAGE_H = 1350;
 
-const BODY_FONT = '"Plus Jakarta Sans", system-ui, sans-serif';
-const ORDINAL_FONT = '"Plus Jakarta Sans", system-ui, sans-serif';
+const BODY_FONT = '"Plus Jakarta Sans", "Anek Malayalam", system-ui, sans-serif';
+
+// Selectable poster fonts. One choice per script; the resolved stack is
+// applied to EVERY text element on the poster (posterFontStack). The
+// families must also be loaded in app/root.tsx.
+export const POSTER_FONTS_EN = [
+  "Plus Jakarta Sans",
+  "Montserrat",
+  "Open Sans",
+  "Poppins",
+] as const;
+export const POSTER_FONTS_ML = ["Anek Malayalam", "Manjari"] as const;
+
+/** CSS stack = Latin font, then Malayalam font, then system fallback —
+ *  so mixed English/Malayalam posters render correctly with one stack.
+ *  Unknown/blank inputs fall back to the first option. */
+export function posterFontStack(
+  fontEn?: string | null,
+  fontMl?: string | null,
+): string {
+  const en = (POSTER_FONTS_EN as readonly string[]).includes(fontEn ?? "")
+    ? (fontEn as string)
+    : POSTER_FONTS_EN[0];
+  const ml = (POSTER_FONTS_ML as readonly string[]).includes(fontMl ?? "")
+    ? (fontMl as string)
+    : POSTER_FONTS_ML[0];
+  return `"${en}", "${ml}", system-ui, sans-serif`;
+}
 
 // Tier colors for the position badges (1st → 4th)
 const ORDINAL = ["1st", "2nd", "3rd", "4th"] as const;
@@ -373,7 +402,7 @@ const TenantMeta = ({
           width={m.w}
           align={m.align ?? "left"}
           text={ln.text}
-          fontFamily={BODY_FONT}
+          fontFamily={data.fontFamily || BODY_FONT}
           fontSize={ln.size}
           fontStyle={ln.bold ? "bold" : "normal"}
           fill={m.color}
@@ -428,6 +457,7 @@ export const PosterCanvas = ({
   }, [displayWidth, mounted]);
 
   const layout = TEMPLATES[templateIndex % TEMPLATES.length];
+  const font = data.fontFamily || BODY_FONT;
   const { img: template, done: imgDone, slow } = usePosterImage(layout.src);
 
   const w = displayWidth ?? autoW;
@@ -480,7 +510,7 @@ export const PosterCanvas = ({
           <SubtitleTitle data={data} layout={layout} />
 
           {/* Winners list — directly below the title block */}
-          <WinnersList winners={data.winners} layout={layout} />
+          <WinnersList winners={data.winners} layout={layout} font={font} />
 
           {/* Result number — large, centered under the "Result" script */}
           {data.resultNo && (
@@ -490,7 +520,7 @@ export const PosterCanvas = ({
               width={layout.resultNo.boxW}
               align="center"
               text={formatResultNo(data.resultNo)}
-              fontFamily={ORDINAL_FONT}
+              fontFamily={font}
               fontSize={layout.resultNo.fontSize}
               fontStyle="bold"
               fill={layout.resultNo.color}
@@ -524,7 +554,7 @@ const PILL_H = SUBTITLE_SIZE + PILL_PADY * 2;
 
 /** Level name on a rounded highlight. The pill auto-fits the text by
  *  measuring the rendered Konva.Text width after mount. */
-function CategoryPill({ text }: { text: string }) {
+function CategoryPill({ text, font }: { text: string; font: string }) {
   const tref = useRef<Konva.Text | null>(null);
   const [w, setW] = useState(0);
   useEffect(() => {
@@ -544,7 +574,7 @@ function CategoryPill({ text }: { text: string }) {
         x={PILL_PADX}
         y={PILL_PADY}
         text={text}
-        fontFamily={BODY_FONT}
+        fontFamily={font}
         fontSize={SUBTITLE_SIZE}
         fontStyle="bold"
         fill={PILL_TEXT}
@@ -564,15 +594,16 @@ function SubtitleTitle({
   // more so they still fit the title block.
   const titleSize =
     TITLE_SIZE - (/girls/i.test(data.programName) ? 6 : 4);
+  const font = data.fontFamily || BODY_FONT;
   return (
     <Group x={layout.contentX} y={layout.contentY}>
-      <CategoryPill text={data.levelName} />
+      <CategoryPill text={data.levelName} font={font} />
       <Text
         x={0}
         y={PILL_H + SUBTITLE_GAP}
         width={layout.contentW}
         text={data.programName}
-        fontFamily={BODY_FONT}
+        fontFamily={font}
         fontSize={titleSize}
         fontStyle="bold"
         fill={layout.titleColor}
@@ -609,9 +640,11 @@ function winnersStartY(layout: TemplateLayout): number {
 function WinnersList({
   winners,
   layout,
+  font,
 }: {
   winners: PosterWinner[];
   layout: TemplateLayout;
+  font: string;
 }) {
   const startY = winnersStartY(layout);
   // position < 1 ⇒ grade-only entries (counted for team points, never
@@ -629,6 +662,7 @@ function WinnersList({
           winner={w}
           y={i * (ROW_H + ROW_GAP)}
           layout={layout}
+          font={font}
         />
       ))}
     </Group>
@@ -639,10 +673,12 @@ function WinnerRow({
   winner,
   y,
   layout,
+  font,
 }: {
   winner: PosterWinner;
   y: number;
   layout: TemplateLayout;
+  font: string;
 }) {
   const idx = Math.min(Math.max(winner.position, 1), 4) - 1;
   const chipR = CHIP_SIZE / 2;
@@ -669,7 +705,7 @@ function WinnerRow({
         align="center"
         verticalAlign="middle"
         text={ORDINAL[idx]}
-        fontFamily={ORDINAL_FONT}
+        fontFamily={font}
         fontSize={20}
         fontStyle="bold"
         fill="#FFFFFF"
@@ -681,7 +717,7 @@ function WinnerRow({
         y={0}
         width={textW}
         text={winner.name}
-        fontFamily={BODY_FONT}
+        fontFamily={font}
         fontSize={NAME_SIZE}
         fontStyle="bold"
         fill={layout.nameColor}
@@ -695,7 +731,7 @@ function WinnerRow({
           y={NAME_SIZE + NAME_TO_UNIT_GAP}
           width={textW}
           text={winner.unit}
-          fontFamily={BODY_FONT}
+          fontFamily={font}
           fontSize={UNIT_SIZE}
           fill={layout.unitColor}
           lineHeight={1}

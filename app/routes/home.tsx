@@ -11,6 +11,7 @@ import {
   PosterCanvas,
   exportPosterPng,
   pickTemplateIndex,
+  posterFontStack,
   prefetchPosterAssets,
   sharePoster,
   type PosterData,
@@ -302,6 +303,8 @@ export default function Home({ loaderData }: Route.ComponentProps) {
     result_template?: number;
     poster_lang?: string | null;
     poster_name?: string | null;
+    poster_font_en?: string | null;
+    poster_font_ml?: string | null;
     poster_date?: string | null;
     poster_time?: string | null;
     poster_place?: string | null;
@@ -310,6 +313,8 @@ export default function Home({ loaderData }: Route.ComponentProps) {
     subdomain: orgRel?.subdomain ?? "",
     defaultTemplate: evRel.result_template ?? 0,
     lang: evRel.poster_lang === "ml" ? "ml" : "en",
+    fontEn: evRel.poster_font_en ?? null,
+    fontMl: evRel.poster_font_ml ?? null,
     orgName: evRel.poster_name?.trim() || orgRel?.name || "",
     posterDate: evRel.poster_date ?? null,
     posterTime: evRel.poster_time ?? null,
@@ -481,6 +486,8 @@ type PosterMeta = {
   subdomain: string;
   defaultTemplate: number;
   lang: PosterLang;
+  fontEn: string | null;
+  fontMl: string | null;
   orgName: string;
   posterDate: string | null;
   posterTime: string | null;
@@ -1529,6 +1536,7 @@ function ResultBubble({
   const posterData: PosterData = {
     eventName,
     siteUrl,
+    fontFamily: posterFontStack(posterMeta.fontEn, posterMeta.fontMl),
     orgName: posterMeta.orgName,
     posterDate: posterMeta.posterDate ?? undefined,
     posterTime: posterMeta.posterTime ?? undefined,
