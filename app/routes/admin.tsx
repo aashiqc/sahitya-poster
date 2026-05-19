@@ -1375,13 +1375,13 @@ function DashboardView({
         </label>
       </section>
 
-      {/* Categories grid */}
-      <section className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+      {/* Level sections — single scroll, collapsible, no nested panes */}
+      <section className="space-y-3">
         {filteredLevels.map((l) => (
           <CategoryCard key={l.id} level={l} />
         ))}
         {filteredLevels.length === 0 && (
-          <div className="col-span-full rounded-xl border border-stone-200 bg-white px-6 py-12 text-center">
+          <div className="rounded-xl border border-stone-200 bg-white px-6 py-14 text-center">
             <p className="text-sm text-stone-600">No programs match your filter.</p>
             <button
               type="button"
@@ -3021,49 +3021,66 @@ function FilterChip({
 }
 
 function CategoryCard({ level }: { level: LevelRow }) {
-  const pct = level.total === 0 ? 0 : Math.round((level.published / level.total) * 100);
+  const pct =
+    level.total === 0 ? 0 : Math.round((level.published / level.total) * 100);
   return (
-    <article className="rounded-xl border border-stone-200 bg-white overflow-hidden flex flex-col">
-      <header className="px-4 py-3 border-b border-stone-100 bg-stone-50">
-        <div className="flex items-baseline justify-between gap-2">
-          <p lang="ml" className="font-semibold text-sm truncate">
-            {level.name_ml}
-          </p>
-          <span className="shrink-0 font-[Fraunces,serif] text-sm tabular-nums text-stone-500">
-            {level.published}
-            <span className="text-stone-300">/{level.total}</span>
-          </span>
+    <details
+      open
+      className="group rounded-xl border border-stone-200 bg-white overflow-hidden"
+    >
+      <summary className="cursor-pointer list-none select-none flex items-center gap-3 px-4 py-3 bg-stone-50 hover:bg-stone-100/70 transition [&::-webkit-details-marker]:hidden">
+        <ChevronRight className="size-4 shrink-0 text-stone-400 transition-transform group-open:rotate-90" />
+        <div className="min-w-0 flex-1">
+          <div className="flex items-baseline justify-between gap-2">
+            <p lang="ml" className="font-semibold text-sm truncate">
+              {level.name_ml}
+            </p>
+            <span className="shrink-0 font-[Fraunces,serif] text-base tabular-nums text-stone-500">
+              {level.published}
+              <span className="text-stone-300">/{level.total}</span>
+            </span>
+          </div>
+          <div className="mt-2 h-1 rounded-full bg-stone-200 overflow-hidden">
+            <div
+              className="h-full bg-yellow transition-all"
+              style={{ width: `${pct}%` }}
+            />
+          </div>
         </div>
-        <div className="mt-2 h-1.5 rounded-full bg-stone-200 overflow-hidden">
-          <div className="h-full bg-yellow transition-all" style={{ width: `${pct}%` }} />
-        </div>
-        <div className="mt-1.5 flex items-center gap-3 text-[10px] text-stone-500">
-          {level.drafts > 0 && <span>{level.drafts} draft</span>}
+        <div className="hidden sm:flex items-center gap-3 text-[10px] tabular-nums text-stone-500 shrink-0">
           {level.pending > 0 && <span>{level.pending} pending</span>}
-          {level.inactive > 0 && <span className="text-red-700">{level.inactive} inactive</span>}
+          {level.drafts > 0 && <span>{level.drafts} draft</span>}
+          {level.inactive > 0 && (
+            <span className="text-red-700">{level.inactive} off</span>
+          )}
         </div>
-      </header>
-
-      <ul className="divide-y divide-stone-100 max-h-[420px] overflow-y-auto">
+      </summary>
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 border-t border-stone-100">
         {level.programs.map((p) => (
-          <li key={p.id} className="group">
-            <ProgramListItem program={p} />
-          </li>
+          <ProgramListItem key={p.id} program={p} />
         ))}
-      </ul>
-    </article>
+      </div>
+    </details>
   );
 }
 
 function ProgramListItem({ program: p }: { program: ProgramRow }) {
+  const status = p.is_active ? p.result?.status ?? "none" : "inactive";
   return (
-    <div className={`flex items-center gap-3 px-3 py-2 hover:bg-yellow/10 ${p.is_active ? "" : "opacity-60"}`}>
+    <div
+      className={`group/row relative border-b border-stone-100 ${
+        p.is_active ? "" : "bg-stone-50/60"
+      }`}
+    >
+      {/* Whole row is the single primary action — open the result modal */}
       <Link
         to={`/admin?edit=${p.code}`}
         preventScrollReset
-        className="flex items-center gap-3 min-w-0 flex-1"
+        className={`flex items-center gap-3 py-2.5 pl-4 pr-11 transition hover:bg-yellow/10 ${
+          p.is_active ? "" : "opacity-60"
+        }`}
       >
-        <span className="text-[10px] font-mono text-stone-400 tabular-nums w-10 shrink-0">
+        <span className="font-mono text-[10px] tabular-nums text-stone-400 w-9 shrink-0">
           {p.code}
         </span>
         <div className="min-w-0 flex-1">
@@ -3076,9 +3093,14 @@ function ProgramListItem({ program: p }: { program: ProgramRow }) {
             </p>
           )}
         </div>
-        <ProgramStatus status={p.is_active ? p.result?.status ?? "none" : "inactive"} />
+        <ProgramStatus status={status} />
       </Link>
-      <Form method="post" className="shrink-0">
+      {/* Deactivate — demoted: revealed on row hover/focus (always shown
+          when inactive so it can be turned back on). */}
+      <Form
+        method="post"
+        className="absolute right-1.5 top-1/2 -translate-y-1/2"
+      >
         <input type="hidden" name="program_code" value={p.code} />
         <button
           type="submit"
@@ -3086,10 +3108,10 @@ function ProgramListItem({ program: p }: { program: ProgramRow }) {
           value="toggle_active"
           title={p.is_active ? "Deactivate program" : "Activate program"}
           aria-label={p.is_active ? "Deactivate program" : "Activate program"}
-          className={`cursor-pointer size-7 grid place-items-center rounded-md border transition ${
+          className={`size-7 grid place-items-center rounded-md border transition focus-visible:opacity-100 ${
             p.is_active
-              ? "border-stone-300 text-stone-500 hover:border-red-500 hover:bg-red-50 hover:text-red-700"
-              : "border-yellow bg-yellow text-black hover:bg-yellow/80"
+              ? "opacity-0 group-hover/row:opacity-100 group-focus-within/row:opacity-100 border-stone-300 text-stone-400 hover:border-red-500 hover:bg-red-50 hover:text-red-700"
+              : "opacity-100 border-yellow bg-yellow text-black hover:bg-yellow/80"
           }`}
           onClick={(e) => {
             if (
@@ -3149,8 +3171,8 @@ function ProgramStatus({ status }: { status: string }) {
     );
   }
   return (
-    <span className="text-[10px] font-semibold tracking-wider uppercase text-stone-600 bg-stone-100 border border-stone-200 rounded-full px-2 py-0.5">
-      + Add
+    <span className="text-[10px] font-semibold tracking-wider uppercase text-stone-500 bg-white border border-stone-300 rounded-full px-2 py-0.5 transition group-hover/row:border-stone-900 group-hover/row:text-stone-900">
+      + Add result
     </span>
   );
 }
