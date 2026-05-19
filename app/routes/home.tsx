@@ -253,6 +253,26 @@ function programLabel(program: { name_en: string | null; code: string }): string
   return program.name_en?.trim() || program.code;
 }
 
+type PosterLang = "ml" | "en";
+
+function posterLevelName(
+  level: { code: string; name_ml: string },
+  lang: PosterLang,
+): string {
+  return lang === "ml"
+    ? level.name_ml?.trim() || levelLabel(level)
+    : levelLabel(level);
+}
+
+function posterProgramName(
+  p: { name_en: string | null; name_ml: string; code: string },
+  lang: PosterLang,
+): string {
+  return lang === "ml"
+    ? p.name_ml?.trim() || p.name_en?.trim() || p.code
+    : p.name_en?.trim() || p.name_ml?.trim() || p.code;
+}
+
 // ─────────────────────────────────────────────────────────────────────
 // Page
 // ─────────────────────────────────────────────────────────────────────
@@ -280,6 +300,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
     | null;
   const evRel = event as {
     result_template?: number;
+    poster_lang?: string | null;
     poster_name?: string | null;
     poster_date?: string | null;
     poster_time?: string | null;
@@ -288,6 +309,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
   const posterMeta: PosterMeta = {
     subdomain: orgRel?.subdomain ?? "",
     defaultTemplate: evRel.result_template ?? 0,
+    lang: evRel.poster_lang === "ml" ? "ml" : "en",
     orgName: evRel.poster_name?.trim() || orgRel?.name || "",
     posterDate: evRel.poster_date ?? null,
     posterTime: evRel.poster_time ?? null,
@@ -458,6 +480,7 @@ type Bubble = {
 type PosterMeta = {
   subdomain: string;
   defaultTemplate: number;
+  lang: PosterLang;
   orgName: string;
   posterDate: string | null;
   posterTime: string | null;
@@ -1510,8 +1533,8 @@ function ResultBubble({
     posterDate: posterMeta.posterDate ?? undefined,
     posterTime: posterMeta.posterTime ?? undefined,
     posterPlace: posterMeta.posterPlace ?? undefined,
-    levelName: levelLabel(level),
-    programName: program.name_en ?? program.code,
+    levelName: posterLevelName(level, posterMeta.lang),
+    programName: posterProgramName(program, posterMeta.lang),
     programCode: program.code,
     resultNo,
     winners: sorted.map((w) => {

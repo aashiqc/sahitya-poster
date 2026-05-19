@@ -422,10 +422,13 @@ export async function action({ request }: Route.ActionArgs) {
       const v = String(fd.get(k) ?? "").trim();
       return v.length ? v : null;
     };
+    const poster_lang =
+      String(fd.get("poster_lang") ?? "") === "ml" ? "ml" : "en";
     const { error } = await supabase
       .from("events")
       .update({
         result_template,
+        poster_lang,
         poster_name: txt("poster_name"),
         poster_date: txt("poster_date"),
         poster_time: txt("poster_time"),
@@ -939,6 +942,7 @@ export default function Admin({ loaderData }: Route.ComponentProps) {
   const eventName = event.name_ml ?? event.name;
   const evRel = event as {
     result_template?: number;
+    poster_lang?: string | null;
     poster_name?: string | null;
     poster_date?: string | null;
     poster_time?: string | null;
@@ -948,6 +952,7 @@ export default function Admin({ loaderData }: Route.ComponentProps) {
   const posterMeta: PosterMeta = {
     subdomain: evRel.organizations?.subdomain ?? "",
     defaultTemplate: evRel.result_template ?? 0,
+    lang: evRel.poster_lang === "ml" ? "ml" : "en",
     orgName: evRel.poster_name?.trim() || evRel.organizations?.name || "",
     posterDate: evRel.poster_date ?? null,
     posterTime: evRel.poster_time ?? null,
@@ -2182,6 +2187,7 @@ type ShareItem = {
 type PosterMeta = {
   subdomain: string;
   defaultTemplate: number;
+  lang: "ml" | "en";
   orgName: string;
   posterDate: string | null;
   posterTime: string | null;
@@ -2205,6 +2211,7 @@ function TemplateStudioView({
   const [pick, setPick] = useState(savedPos);
   const [meta, setMeta] = useState({
     name: posterMeta.orgName ?? "",
+    lang: posterMeta.lang,
     date: posterMeta.posterDate ?? "",
     time: posterMeta.posterTime ?? "",
     place: posterMeta.posterPlace ?? "",
@@ -2217,8 +2224,8 @@ function TemplateStudioView({
     posterDate: meta.date || undefined,
     posterTime: meta.time || undefined,
     posterPlace: meta.place || undefined,
-    levelName: "സീനിയർ",
-    programName: "Elocution",
+    levelName: meta.lang === "ml" ? "സീനിയർ" : "Senior",
+    programName: meta.lang === "ml" ? "പ്രസംഗം" : "Elocution",
     programCode: "P-001",
     resultNo: "12",
     winners: [
@@ -2250,7 +2257,7 @@ function TemplateStudioView({
         <Form method="post" className="mt-4 grid gap-3 sm:grid-cols-3">
           <input type="hidden" name="intent" value="save_poster_settings" />
           <input type="hidden" name="result_template" value={pick} />
-          <label className="space-y-1 sm:col-span-3">
+          <label className="space-y-1 sm:col-span-2">
             <span className={lbl}>Display / event name</span>
             <input
               name="poster_name"
@@ -2261,6 +2268,23 @@ function TemplateStudioView({
               className={field}
               placeholder="SSF Cheerpingal Unit · Sahityotsav"
             />
+          </label>
+          <label className="space-y-1">
+            <span className={lbl}>Poster language</span>
+            <select
+              name="poster_lang"
+              value={meta.lang}
+              onChange={(e) =>
+                setMeta((m) => ({
+                  ...m,
+                  lang: e.target.value === "ml" ? "ml" : "en",
+                }))
+              }
+              className={field}
+            >
+              <option value="en">English</option>
+              <option value="ml">Malayalam</option>
+            </select>
           </label>
           <label className="space-y-1">
             <span className={lbl}>Date</span>
@@ -2426,7 +2450,14 @@ function SharePostersView({
       // Skip the poster for <2-winner results — still published, they
       // count via the uploaded standings, just no poster.
       if (winners.length < 2) return;
-      const programName = program.name_en ?? program.code;
+      const ml = posterMeta.lang === "ml";
+      const programName = ml
+        ? program.name_ml?.trim() || program.name_en?.trim() || program.code
+        : program.name_en?.trim() || program.name_ml?.trim() || program.code;
+      const levelName = ml
+        ? level.name_ml?.trim() ||
+          levelLabelFromCode(level.code, level.name_ml)
+        : levelLabelFromCode(level.code, level.name_ml);
       out.push({
         key: `r-${r.id}`,
         code: program.code,
@@ -2438,7 +2469,7 @@ function SharePostersView({
           posterDate: posterMeta.posterDate ?? undefined,
           posterTime: posterMeta.posterTime ?? undefined,
           posterPlace: posterMeta.posterPlace ?? undefined,
-          levelName: levelLabelFromCode(level.code, level.name_ml),
+          levelName,
           programName,
           programCode: program.code,
           resultNo: r.result_no,
