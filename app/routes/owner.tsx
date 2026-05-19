@@ -212,8 +212,11 @@ export async function action({
         .eq("event_id", tplEvent.id),
       svc
         .from("programs")
-        .select("code, name_ml, name_en, sort_order, level_id, is_active")
-        .eq("event_id", tplEvent.id),
+        .select("code, name_ml, name_en, sort_order, level_id")
+        // Seed only the canonical ACTIVE programs — the template's own
+        // per-program deactivations must not propagate to new tenants.
+        .eq("event_id", tplEvent.id)
+        .eq("is_active", true),
     ]);
 
     // Create the admin auth user FIRST. The most common failure
@@ -308,7 +311,7 @@ export async function action({
           level_id: p.level_id
             ? levelIdByCode.get(tplLevelCodeById.get(p.level_id) ?? "") ?? null
             : null,
-          is_active: p.is_active,
+          is_active: true,
         })),
       );
       if (pErr) return await fail(`Programs: ${pErr.message}`);
@@ -370,7 +373,8 @@ export async function action({
         svc
           .from("programs")
           .select("code, name_ml, name_en, sort_order, level_id")
-          .eq("event_id", tplEvent.id),
+          .eq("event_id", tplEvent.id)
+          .eq("is_active", true),
         svc.from("levels").select("id, code").eq("event_id", ev.id),
         svc.from("programs").select("code").eq("event_id", ev.id),
       ]);
