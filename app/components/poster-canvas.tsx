@@ -171,6 +171,16 @@ type TemplateLayout = {
     color: string;
     align?: "left" | "center" | "right";
   };
+  // Per-element default placement (native px), tuned so the poster is
+  // accurate out of the box for every variable — no admin drag needed.
+  // Falls back to the computed stack when an element is omitted; admin
+  // overrides (poster_layout) still win over these.
+  defaults?: Partial<
+    Record<
+      "orgName" | "date" | "place" | "level" | "program" | "winners",
+      { x: number; y: number }
+    >
+  >;
 };
 
 const TEMPLATES: TemplateLayout[] = [
@@ -249,17 +259,28 @@ const TEMPLATES: TemplateLayout[] = [
   {
     src: "/poster/templates/general-01.png",
     scope: "general",
-    contentX: 580,
-    contentY: 470,
-    contentW: 450,
+    contentX: 560,
+    contentY: 452,
+    contentW: 460,
     subtitleColor: "#E9E1CF",
     titleColor: "#F3ECDC",
     nameColor: "#FFFFFF",
     unitColor: "#B7BECC",
-    resultNo: { x: 70, y: 225, boxW: 340, fontSize: 132, color: "#EFE6D2" },
-    // Cluster under the baked "Sahityotsav" wordmark (mirrors the old
-    // Pantharangadi result-04 sector/date/place position).
-    meta: { x: 130, y: 320, w: 820, color: "#D9D2C0", align: "center" },
+    // Big number centered under the baked "Result" script (left).
+    resultNo: { x: 70, y: 255, boxW: 360, fontSize: 165, color: "#EFE6D2" },
+    // Right column, centered on the baked "Sahityotsav" wordmark.
+    meta: { x: 547, y: 212, w: 440, color: "#D9D2C0", align: "center" },
+    // Tuned to the reference poster: org name above the wordmark; date
+    // + place just below it; category / program / winners stacked in
+    // the open navy band on the right.
+    defaults: {
+      orgName: { x: 547, y: 212 },
+      date: { x: 547, y: 372 },
+      place: { x: 547, y: 410 },
+      level: { x: 560, y: 452 },
+      program: { x: 560, y: 520 },
+      winners: { x: 560, y: 662 },
+    },
   },
   // general-02 — maroon, lantern bottom-right, "Result" top-right, cyan
   // "Sahityotsav" wordmark upper-left. Tenant-neutral. Content in the
@@ -268,16 +289,27 @@ const TEMPLATES: TemplateLayout[] = [
     src: "/poster/templates/general-02.png",
     scope: "general",
     contentX: 90,
-    contentY: 480,
+    contentY: 486,
     contentW: 470,
     subtitleColor: "#F0E4DA",
     titleColor: "#F4E8DC",
     nameColor: "#FFFFFF",
     unitColor: "#CDB8C6",
-    resultNo: { x: 645, y: 150, boxW: 340, fontSize: 132, color: "#F4A9C4" },
-    // Cluster under the baked upper-left wordmark (mirrors the old
-    // Pantharangadi result-05 sector/date/place position).
-    meta: { x: 90, y: 300, w: 560, color: "#E9D9DF", align: "left" },
+    // Big number centered under the baked "Result" script (top-right).
+    resultNo: { x: 680, y: 210, boxW: 340, fontSize: 150, color: "#F4A9C4" },
+    // Left column, under the baked cyan "Sahityotsav" wordmark.
+    meta: { x: 80, y: 330, w: 540, color: "#E9D9DF", align: "left" },
+    // Mirror of general-01: org name / date / place under the left
+    // wordmark; category / program / winners stacked in the open
+    // maroon band on the left.
+    defaults: {
+      orgName: { x: 80, y: 330 },
+      date: { x: 80, y: 388 },
+      place: { x: 80, y: 424 },
+      level: { x: 90, y: 486 },
+      program: { x: 90, y: 552 },
+      winners: { x: 90, y: 690 },
+    },
   },
 ];
 
@@ -294,14 +326,22 @@ const CUSTOM_DEFAULT_LAYOUT: TemplateLayout = {
   src: "",
   scope: "custom",
   contentX: 560,
-  contentY: 470,
+  contentY: 452,
   contentW: 460,
   subtitleColor: "#E9E1CF",
   titleColor: "#F3ECDC",
   nameColor: "#FFFFFF",
   unitColor: "#B7BECC",
-  resultNo: { x: 70, y: 230, boxW: 340, fontSize: 132, color: "#EFE6D2" },
-  meta: { x: 130, y: 320, w: 820, color: "#D9D2C0", align: "center" },
+  resultNo: { x: 70, y: 255, boxW: 360, fontSize: 165, color: "#EFE6D2" },
+  meta: { x: 547, y: 212, w: 440, color: "#D9D2C0", align: "center" },
+  defaults: {
+    orgName: { x: 547, y: 212 },
+    date: { x: 547, y: 372 },
+    place: { x: 547, y: 410 },
+    level: { x: 560, y: 452 },
+    program: { x: 560, y: 520 },
+    winners: { x: 560, y: 662 },
+  },
 };
 
 export type TemplateChoice = {
@@ -717,8 +757,11 @@ export const PosterCanvas = ({
           {layout.meta && data.orgName?.trim() && (
             <DraggableEl
               el="orgName"
-              baseX={layout.meta.x}
-              baseY={layout.meta.y + META_NAME_DY}
+              baseX={layout.defaults?.orgName?.x ?? layout.meta.x}
+              baseY={
+                layout.defaults?.orgName?.y ??
+                layout.meta.y + META_NAME_DY
+              }
               ov={orgNameOv}
               editable={editable}
               onMove={onMove}
@@ -736,8 +779,10 @@ export const PosterCanvas = ({
           {layout.meta && data.posterDate?.trim() && (
             <DraggableEl
               el="date"
-              baseX={layout.meta.x}
-              baseY={layout.meta.y + META_DATE_DY}
+              baseX={layout.defaults?.date?.x ?? layout.meta.x}
+              baseY={
+                layout.defaults?.date?.y ?? layout.meta.y + META_DATE_DY
+              }
               ov={dateOv}
               editable={editable}
               onMove={onMove}
@@ -755,8 +800,11 @@ export const PosterCanvas = ({
           {layout.meta && data.posterPlace?.trim() && (
             <DraggableEl
               el="place"
-              baseX={layout.meta.x}
-              baseY={layout.meta.y + META_PLACE_DY}
+              baseX={layout.defaults?.place?.x ?? layout.meta.x}
+              baseY={
+                layout.defaults?.place?.y ??
+                layout.meta.y + META_PLACE_DY
+              }
               ov={placeOv}
               editable={editable}
               onMove={onMove}
@@ -775,8 +823,8 @@ export const PosterCanvas = ({
           {/* Category / level — independently positioned & styled */}
           <DraggableEl
             el="level"
-            baseX={layout.contentX}
-            baseY={layout.contentY}
+            baseX={layout.defaults?.level?.x ?? layout.contentX}
+            baseY={layout.defaults?.level?.y ?? layout.contentY}
             ov={levelOv}
             editable={editable}
             onMove={onMove}
@@ -787,8 +835,11 @@ export const PosterCanvas = ({
           {/* Program name — its own block, moved & styled separately */}
           <DraggableEl
             el="program"
-            baseX={layout.contentX}
-            baseY={layout.contentY + PROGRAM_DY}
+            baseX={layout.defaults?.program?.x ?? layout.contentX}
+            baseY={
+              layout.defaults?.program?.y ??
+              layout.contentY + PROGRAM_DY
+            }
             ov={programOv}
             editable={editable}
             onMove={onMove}
@@ -799,8 +850,8 @@ export const PosterCanvas = ({
           {/* Winners list */}
           <DraggableEl
             el="winners"
-            baseX={layout.contentX}
-            baseY={winnersStartY(layout)}
+            baseX={layout.defaults?.winners?.x ?? layout.contentX}
+            baseY={layout.defaults?.winners?.y ?? winnersStartY(layout)}
             ov={data.overrides?.winners}
             editable={editable}
             onMove={onMove}
