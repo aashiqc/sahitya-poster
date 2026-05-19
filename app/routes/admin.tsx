@@ -1285,7 +1285,13 @@ export default function Admin({ loaderData }: Route.ComponentProps) {
         </main>
       </div>
 
-      {editData && <ResultModal editData={editData} knownUnits={knownUnits} />}
+      {editData && (
+        <ResultModal
+          key={editData.program.code}
+          editData={editData}
+          knownUnits={knownUnits}
+        />
+      )}
     </div>
   );
 }
@@ -1924,10 +1930,47 @@ function ResultModal({
     };
   }, []);
 
-  const { program, level, result, winners, neighbors } = editData;
+  const { program, level, result, winners, neighbors, nextResultNo } =
+    editData;
   const status = result?.status ?? "none";
-  const winnersByPos = new Map<number, typeof winners[number]>();
-  for (const w of winners) winnersByPos.set(w.position, w);
+  const byPos = new Map<number, EditWinner>();
+  for (const w of winners) byPos.set(w.position, w);
+  const seed = (pos: number) => {
+    const w = byPos.get(pos);
+    return { name: w?.name_en ?? w?.name_ml ?? "", unit: w?.unit_ml ?? "" };
+  };
+
+  const [w1, setW1] = useState(() => seed(1));
+  const [w2, setW2] = useState(() => seed(2));
+  const [w3, setW3] = useState(() => seed(3));
+  const setters = { 1: setW1, 2: setW2, 3: setW3 };
+  const values = { 1: w1, 2: w2, 3: w3 };
+  const [resultNo, setResultNo] = useState(
+    result?.result_no ?? String(nextResultNo),
+  );
+
+  const [csvOpen, setCsvOpen] = useState(false);
+  const [csv, setCsv] = useState("");
+  const [csvNote, setCsvNote] = useState<string | null>(null);
+  function fillFromCsv() {
+    const { rows } = parseResultsCsv(csv);
+    let filled = 0;
+    for (const pos of [1, 2, 3] as const) {
+      const r = rows.find((x) => x.rank === pos);
+      if (r) {
+        setters[pos]({ name: titleCaseName(r.participant), unit: r.team ?? "" });
+        filled++;
+      }
+    }
+    setCsvNote(
+      filled
+        ? `Filled ${filled} winner${filled === 1 ? "" : "s"} — review, then save.`
+        : "No rank 1–3 rows found in that CSV.",
+    );
+  }
+
+  const inputCls =
+    "w-full rounded-lg border border-stone-300 bg-white px-3 py-2.5 text-[15px] text-stone-900 placeholder:text-stone-400 transition focus:outline-none focus:border-brand-600 focus:ring-2 focus:ring-brand-600/25";
 
   return (
     <div
@@ -1936,7 +1979,6 @@ function ResultModal({
       aria-modal="true"
       aria-labelledby="result-modal-title"
     >
-      {/* Backdrop */}
       <button
         type="button"
         onClick={close}
@@ -1944,114 +1986,206 @@ function ResultModal({
         aria-label="Close"
       />
 
-      {/* Panel — compact, centered, laptop-first */}
-      <div className="relative w-full max-w-2xl max-h-[88dvh] bg-white rounded-xl shadow-2xl ring-1 ring-stone-200 overflow-hidden flex flex-col">
-        {/* Header */}
-        <div className="px-4 py-3 border-b border-stone-200 flex items-center gap-3">
-          <span className="text-[10px] font-mono tracking-widest text-stone-400 shrink-0">
-            {program.code}
-          </span>
-          <div className="min-w-0 flex-1">
-            <h2
-              id="result-modal-title"
-              className="font-[Fraunces,serif] text-lg leading-tight tracking-tight truncate"
+      <div className="relative w-full max-w-2xl max-h-[90dvh] bg-white rounded-2xl shadow-2xl ring-1 ring-stone-200 overflow-hidden flex flex-col">
+        {/* Header — context + program switcher (change program in place) */}
+        <div className="px-5 py-4 border-b border-stone-200">
+          <div className="flex items-center gap-2">
+            <span className="font-mono text-[11px] tracking-widest text-stone-400">
+              {program.code}
+            </span>
+            <span
+              lang="ml"
+              className="text-[11px] text-stone-500 bg-stone-100 rounded px-2 py-0.5"
             >
-              {program.name_en ?? program.name_ml}
-            </h2>
+              {level.name_ml}
+            </span>
+            <ProgramStatus status={status} />
+            <div className="ml-auto flex items-center gap-1">
+              {neighbors.prev ? (
+                <Link
+                  to={`/admin?edit=${neighbors.prev.code}`}
+                  preventScrollReset
+                  title={`Previous · ${neighbors.prev.code}`}
+                  aria-label="Previous program"
+                  className="size-9 grid place-items-center rounded-lg border border-stone-300 text-stone-600 hover:bg-stone-50"
+                >
+                  <ChevronLeft className="size-4" />
+                </Link>
+              ) : (
+                <span className="size-9 grid place-items-center rounded-lg border border-stone-200 text-stone-300">
+                  <ChevronLeft className="size-4" />
+                </span>
+              )}
+              {neighbors.next ? (
+                <Link
+                  to={`/admin?edit=${neighbors.next.code}`}
+                  preventScrollReset
+                  title={`Next · ${neighbors.next.code}`}
+                  aria-label="Next program"
+                  className="size-9 grid place-items-center rounded-lg border border-stone-300 text-stone-600 hover:bg-stone-50"
+                >
+                  <ChevronRight className="size-4" />
+                </Link>
+              ) : (
+                <span className="size-9 grid place-items-center rounded-lg border border-stone-200 text-stone-300">
+                  <ChevronRight className="size-4" />
+                </span>
+              )}
+              <button
+                type="button"
+                onClick={close}
+                className="size-9 grid place-items-center rounded-lg text-stone-500 hover:text-stone-900 hover:bg-stone-100 ml-1"
+                aria-label="Close"
+              >
+                <X className="size-5" strokeWidth={2.25} />
+              </button>
+            </div>
           </div>
-          <span
-            lang="ml"
-            className="hidden sm:inline text-[11px] text-stone-500 bg-stone-100 rounded px-2 py-0.5 shrink-0"
+          <h2
+            id="result-modal-title"
+            className="font-[Fraunces,serif] text-2xl leading-tight tracking-tight mt-2 truncate"
           >
-            {level.name_ml}
-          </span>
-          <ProgramStatus status={status} />
-          <button
-            type="button"
-            onClick={close}
-            className="inline-flex items-center justify-center size-10 rounded-lg text-stone-500 hover:text-stone-800 hover:bg-stone-100 shrink-0"
-            aria-label="Close"
-          >
-            <X className="size-6" strokeWidth={2.25} />
-          </button>
+            {program.name_en ?? program.name_ml}
+          </h2>
+          <p lang="ml" className="text-sm text-stone-500 truncate">
+            {program.name_ml}
+          </p>
         </div>
 
-        {/* Single Form wraps body + footer so all inputs submit together */}
-        <Form
-          method="post"
-          key={program.code}
-          className="flex-1 min-h-0 flex flex-col"
-        >
+        <Form method="post" className="flex-1 min-h-0 flex flex-col">
           <input type="hidden" name="program_code" value={program.code} />
 
-          {/* Scrollable body */}
-          <div className="flex-1 overflow-auto px-4 py-3 space-y-2.5">
+          <div className="flex-1 overflow-auto px-5 py-4 space-y-4">
             {/* Result number */}
-            <div className="flex items-center gap-2.5">
+            <div className="space-y-1.5">
               <label
                 htmlFor="result_no"
-                className="text-xs font-medium text-stone-600 shrink-0"
+                className="flex items-baseline gap-2 text-[11px] font-semibold uppercase tracking-wider text-stone-500"
               >
-                Result #
+                Result number
+                {!result && (
+                  <span className="font-normal normal-case tracking-normal text-stone-400">
+                    auto · editable
+                  </span>
+                )}
               </label>
               <input
                 id="result_no"
                 name="result_no"
-                defaultValue={result?.result_no ?? ""}
-                placeholder="030"
+                value={resultNo}
+                onChange={(e) => setResultNo(e.target.value)}
+                placeholder="e.g. 30"
                 inputMode="numeric"
-                className="w-20 rounded-md border border-stone-300 bg-white px-2.5 py-1.5 text-sm tabular-nums focus:outline-none focus:border-stone-400"
+                className={`${inputCls} w-28 tabular-nums`}
               />
             </div>
 
-            {/* Column headers (laptop) */}
-            <div className="hidden md:grid grid-cols-[3.25rem_minmax(0,1fr)_13rem] gap-2 px-1 text-[10px] font-medium uppercase tracking-wider text-stone-400">
-              <span>Place</span>
-              <span>Name</span>
-              <span>Team</span>
+            {/* Winners */}
+            <div className="space-y-2.5">
+              <div className="hidden sm:grid grid-cols-[3rem_minmax(0,1fr)_12rem] gap-2 text-[10px] font-semibold uppercase tracking-wider text-stone-400">
+                <span>Place</span>
+                <span>Name</span>
+                <span>Team / unit</span>
+              </div>
+              {[1, 2, 3].map((pos) => {
+                const meta = POSITION_META[pos];
+                const v = values[pos as 1 | 2 | 3];
+                const set = setters[pos as 1 | 2 | 3];
+                const isFirst = pos === 1;
+                return (
+                  <div
+                    key={pos}
+                    className="grid grid-cols-1 sm:grid-cols-[3rem_minmax(0,1fr)_12rem] sm:items-center gap-2"
+                  >
+                    <span
+                      className={`inline-flex items-center justify-center rounded-full text-[11px] font-semibold w-12 h-6 ${meta.tone}`}
+                    >
+                      {meta.ordinal}
+                    </span>
+                    <input
+                      name={`winner_${pos}_name_en`}
+                      required={isFirst}
+                      autoFocus={isFirst && !byPos.get(1)}
+                      value={v.name}
+                      onChange={(e) =>
+                        set((s) => ({ ...s, name: e.target.value }))
+                      }
+                      placeholder={isFirst ? "Winner name" : "Name (optional)"}
+                      className={inputCls}
+                    />
+                    <input
+                      name={`winner_${pos}_unit_ml`}
+                      value={v.unit}
+                      onChange={(e) =>
+                        set((s) => ({ ...s, unit: e.target.value }))
+                      }
+                      list="known-units"
+                      placeholder="Team / unit"
+                      className={inputCls}
+                    />
+                  </div>
+                );
+              })}
+              <datalist id="known-units">
+                {knownUnits.map((u) => (
+                  <option key={u} value={u} />
+                ))}
+              </datalist>
             </div>
 
-            {[1, 2, 3].map((pos) => {
-              const w = winnersByPos.get(pos);
-              const meta = POSITION_META[pos];
-              const isFirst = pos === 1;
-              return (
-                <div
-                  key={pos}
-                  className={`grid items-center gap-2 grid-cols-1 md:grid-cols-[3.25rem_minmax(0,1fr)_13rem] rounded-lg border px-2.5 py-2 ${
-                    isFirst
-                      ? "border-amber-300 bg-amber-50/40"
-                      : "border-stone-200"
+            {/* Import from CSV — fills the winners above for review */}
+            <div className="rounded-lg border border-stone-200">
+              <button
+                type="button"
+                onClick={() => setCsvOpen((o) => !o)}
+                className="w-full flex items-center justify-between px-3 py-2 text-sm font-medium text-stone-700"
+              >
+                <span className="flex items-center gap-2">
+                  <Upload className="size-4 text-stone-400" />
+                  Import from CSV
+                </span>
+                <ChevronRight
+                  className={`size-4 text-stone-400 transition-transform ${
+                    csvOpen ? "rotate-90" : ""
                   }`}
-                >
-                  <span
-                    className={`inline-flex items-center justify-center rounded-full text-[11px] font-semibold w-12 h-6 ${meta.tone}`}
-                  >
-                    {meta.ordinal}
-                  </span>
-                  <input
-                    name={`winner_${pos}_name_en`}
-                    required={isFirst}
-                    autoFocus={isFirst && !winnersByPos.get(1)}
-                    defaultValue={w?.name_en ?? w?.name_ml ?? ""}
-                    placeholder={isFirst ? "Winner name" : "Name (optional)"}
-                    className="w-full rounded-md border border-stone-300 bg-white px-3 py-2.5 text-[15px] focus:outline-none focus:border-brand-600 focus:ring-2 focus:ring-brand-600/15"
+                />
+              </button>
+              {csvOpen && (
+                <div className="border-t border-stone-200 p-3 space-y-2">
+                  <p className="text-[11px] text-stone-500">
+                    Paste rows for this program — columns{" "}
+                    <code className="rounded bg-stone-100 px-1 font-mono">
+                      Competition,Category,Rank,Chest Number,Participant,Team,Points,Grade
+                    </code>
+                    . Ranks 1–3 fill the winners above.
+                  </p>
+                  <textarea
+                    value={csv}
+                    onChange={(e) => setCsv(e.target.value)}
+                    rows={4}
+                    spellCheck={false}
+                    placeholder={
+                      "Elocution,Senior,1,A-12,Ayisha,Anithara,18,A\nElocution,Senior,2,B-07,Hana,Cheerpingal,15,A"
+                    }
+                    className="w-full rounded-md border border-stone-300 bg-white px-3 py-2 font-mono text-xs focus:outline-none focus:border-brand-600 focus:ring-2 focus:ring-brand-600/25"
                   />
-                  <input
-                    name={`winner_${pos}_unit_ml`}
-                    defaultValue={w?.unit_ml ?? ""}
-                    list="known-units"
-                    placeholder="Team / unit"
-                    className="w-full rounded-md border border-stone-300 bg-white px-3 py-2.5 text-[15px] focus:outline-none focus:border-brand-600 focus:ring-2 focus:ring-brand-600/15"
-                  />
+                  <div className="flex items-center gap-3">
+                    <button
+                      type="button"
+                      onClick={fillFromCsv}
+                      className="rounded-md border border-stone-300 px-3 py-1.5 text-xs font-medium text-stone-700 hover:bg-stone-50"
+                    >
+                      Fill winners
+                    </button>
+                    {csvNote && (
+                      <span className="text-[11px] text-stone-500">
+                        {csvNote}
+                      </span>
+                    )}
+                  </div>
                 </div>
-              );
-            })}
-            <datalist id="known-units">
-              {knownUnits.map((u) => (
-                <option key={u} value={u} />
-              ))}
-            </datalist>
+              )}
+            </div>
 
             {actionData && "error" in actionData && (
               <p className="text-xs text-red-700 bg-red-50 border border-red-200 rounded-md px-3 py-2">
@@ -2071,7 +2205,9 @@ function ResultModal({
                 value="delete_result"
                 disabled={busy}
                 onClick={(e) => {
-                  if (!confirm("Delete this result? Winners will also be removed.")) {
+                  if (
+                    !confirm("Delete this result? Winners will also be removed.")
+                  ) {
                     e.preventDefault();
                   }
                 }}
@@ -2083,25 +2219,19 @@ function ResultModal({
           </div>
 
           {/* Footer */}
-          <div className="border-t border-stone-200 px-4 py-2.5 flex items-center gap-2 bg-stone-50/60">
-            {neighbors.prev ? (
-              <Link
-                to={`/admin?edit=${neighbors.prev.code}`}
-                preventScrollReset
-                className="text-xs text-stone-500 hover:text-stone-900"
-              >
-                ← {neighbors.prev.code}
-              </Link>
-            ) : (
-              <span />
-            )}
+          <div className="border-t border-stone-200 px-5 py-3 flex items-center gap-2 bg-stone-50/60">
+            <span className="text-[11px] text-stone-400">
+              {neighbors.next
+                ? "Save, then → for the next program"
+                : "Esc to close"}
+            </span>
             <div className="ml-auto flex gap-2">
               <button
                 type="submit"
                 name="intent"
                 value="save_draft"
                 disabled={busy}
-                className="rounded-md border border-stone-300 hover:bg-white text-stone-700 px-3.5 py-2 text-sm font-medium disabled:opacity-50"
+                className="rounded-lg border border-stone-300 hover:bg-white text-stone-700 px-4 py-2 text-sm font-medium disabled:opacity-50"
               >
                 Save draft
               </button>
@@ -2110,7 +2240,7 @@ function ResultModal({
                 name="intent"
                 value="save_publish"
                 disabled={busy}
-                className="rounded-md bg-brand-700 hover:bg-brand-800 text-white px-5 py-2 text-sm font-semibold disabled:opacity-50"
+                className="rounded-lg bg-brand-700 hover:bg-brand-800 text-white px-5 py-2 text-sm font-semibold disabled:opacity-50"
               >
                 {busy ? "…" : "Publish"}
               </button>
@@ -2175,6 +2305,9 @@ type EditData = {
   level: { code: string; name_ml: string };
   result: { id: string; status: string; result_no: string | null } | null;
   winners: EditWinner[];
+  /** Auto-suggested result number for a NEW result = highest existing
+   *  numeric result_no across the event + 1. */
+  nextResultNo: number;
   neighbors: {
     prev: { code: string; name_ml: string } | null;
     next: { code: string; name_ml: string } | null;
@@ -2219,6 +2352,15 @@ function buildEditData(
 
   const r = program.result;
 
+  // Highest numeric result number already used across the event → the
+  // next new result auto-fills with maxNo + 1.
+  let maxNo = 0;
+  for (const lv of levels)
+    for (const pr of lv.programs) {
+      const n = parseInt(String(pr.result?.result_no ?? "").trim(), 10);
+      if (Number.isFinite(n) && n > maxNo) maxNo = n;
+    }
+
   const siblings = level.programs
     .slice()
     .sort((a, b) => a.sort_order - b.sort_order || a.code.localeCompare(b.code));
@@ -2238,6 +2380,7 @@ function buildEditData(
       ? { id: r.id, status: r.status, result_no: r.result_no }
       : null,
     winners: r?.winners ?? [],
+    nextResultNo: maxNo + 1,
     neighbors: {
       prev: prev ? { code: prev.code, name_ml: prev.name_ml } : null,
       next: next ? { code: next.code, name_ml: next.name_ml } : null,
@@ -3171,7 +3314,7 @@ function ProgramStatus({ status }: { status: string }) {
     );
   }
   return (
-    <span className="text-[10px] font-semibold tracking-wider uppercase text-stone-500 bg-white border border-stone-300 rounded-full px-2 py-0.5 transition group-hover/row:border-stone-900 group-hover/row:text-stone-900">
+    <span className="font-sans text-[10px] font-semibold tracking-wider uppercase text-stone-500 bg-white border border-stone-300 rounded-full px-2 py-0.5 transition group-hover/row:border-stone-900 group-hover/row:text-stone-900">
       + Add result
     </span>
   );
