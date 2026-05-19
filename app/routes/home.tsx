@@ -15,6 +15,7 @@ import {
   prefetchPosterAssets,
   sharePoster,
   type PosterData,
+  type PosterLayoutMap,
 } from "~/components/poster-canvas";
 import { PosterZoomModal } from "~/components/poster-modal";
 import { StandingsSheet } from "~/components/standings-sheet";
@@ -305,6 +306,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
     poster_name?: string | null;
     poster_font_en?: string | null;
     poster_font_ml?: string | null;
+    poster_layout?: PosterLayoutMap | null;
     poster_date?: string | null;
     poster_time?: string | null;
     poster_place?: string | null;
@@ -315,6 +317,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
     lang: evRel.poster_lang === "ml" ? "ml" : "en",
     fontEn: evRel.poster_font_en ?? null,
     fontMl: evRel.poster_font_ml ?? null,
+    layout: evRel.poster_layout ?? null,
     orgName: evRel.poster_name?.trim() || orgRel?.name || "",
     posterDate: evRel.poster_date ?? null,
     posterTime: evRel.poster_time ?? null,
@@ -488,6 +491,7 @@ type PosterMeta = {
   lang: PosterLang;
   fontEn: string | null;
   fontMl: string | null;
+  layout: PosterLayoutMap | null;
   orgName: string;
   posterDate: string | null;
   posterTime: string | null;
@@ -1537,6 +1541,7 @@ function ResultBubble({
     eventName,
     siteUrl,
     fontFamily: posterFontStack(posterMeta.fontEn, posterMeta.fontMl),
+    overrides: posterMeta.layout?.[String(templateIndex)],
     orgName: posterMeta.orgName,
     posterDate: posterMeta.posterDate ?? undefined,
     posterTime: posterMeta.posterTime ?? undefined,

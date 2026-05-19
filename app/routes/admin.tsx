@@ -51,7 +51,11 @@ import {
   pickTemplateIndex,
   posterFontStack,
   sharePoster,
+  type ElOverride,
+  type LayoutEl,
   type PosterData,
+  type PosterLayoutMap,
+  type TemplateOverride,
 } from "~/components/poster-canvas";
 import {
   STANDINGS_TEMPLATE_NAMES,
@@ -448,6 +452,32 @@ export async function action({ request }: Route.ActionArgs) {
       return data({ error: error.message }, { headers: Object.fromEntries(headers) });
     return data(
       { ok: true, message: "Poster settings saved." },
+      { headers: Object.fromEntries(headers) },
+    );
+  }
+
+  if (intent === "save_poster_layout") {
+    let parsed: unknown = null;
+    try {
+      parsed = JSON.parse(String(fd.get("poster_layout") ?? "null"));
+    } catch {
+      return data(
+        { error: "Invalid layout payload." },
+        { headers: Object.fromEntries(headers) },
+      );
+    }
+    const layout =
+      parsed && typeof parsed === "object" && !Array.isArray(parsed)
+        ? parsed
+        : null;
+    const { error } = await supabase
+      .from("events")
+      .update({ poster_layout: layout })
+      .eq("id", event.id);
+    if (error)
+      return data({ error: error.message }, { headers: Object.fromEntries(headers) });
+    return data(
+      { ok: true, message: "Poster layout saved." },
       { headers: Object.fromEntries(headers) },
     );
   }
@@ -955,6 +985,7 @@ export default function Admin({ loaderData }: Route.ComponentProps) {
     poster_name?: string | null;
     poster_font_en?: string | null;
     poster_font_ml?: string | null;
+    poster_layout?: PosterLayoutMap | null;
     poster_date?: string | null;
     poster_time?: string | null;
     poster_place?: string | null;
@@ -966,6 +997,7 @@ export default function Admin({ loaderData }: Route.ComponentProps) {
     lang: evRel.poster_lang === "ml" ? "ml" : "en",
     fontEn: evRel.poster_font_en ?? null,
     fontMl: evRel.poster_font_ml ?? null,
+    layout: evRel.poster_layout ?? null,
     orgName: evRel.poster_name?.trim() || evRel.organizations?.name || "",
     posterDate: evRel.poster_date ?? null,
     posterTime: evRel.poster_time ?? null,
@@ -2203,6 +2235,7 @@ type PosterMeta = {
   lang: "ml" | "en";
   fontEn: string | null;
   fontMl: string | null;
+  layout: PosterLayoutMap | null;
   orgName: string;
   posterDate: string | null;
   posterTime: string | null;
@@ -2224,6 +2257,31 @@ function TemplateStudioView({
     (((posterMeta.defaultTemplate % allowed.length) + allowed.length) %
       allowed.length) || 0;
   const [pick, setPick] = useState(savedPos);
+  const tplKey = String(allowed[pick] ?? 0);
+  const [layoutMap, setLayoutMap] = useState<PosterLayoutMap>(
+    posterMeta.layout ?? {},
+  );
+  const ov: TemplateOverride = layoutMap[tplKey] ?? {};
+  const patchEl = (el: LayoutEl, patch: ElOverride): void =>
+    setLayoutMap((m) => {
+      const tpl: TemplateOverride = m[tplKey] ?? {};
+      const cur: ElOverride = tpl[el] ?? {};
+      return { ...m, [tplKey]: { ...tpl, [el]: { ...cur, ...patch } } };
+    });
+  const moveEl = (el: LayoutEl, x: number, y: number) =>
+    patchEl(el, { x, y });
+  const sizeEl = (el: LayoutEl, d: number) => {
+    const cur: ElOverride = layoutMap[tplKey]?.[el] ?? {};
+    patchEl(el, {
+      s: Math.min(1.8, Math.max(0.5, (cur.s ?? 1) + d)),
+    });
+  };
+  const resetTpl = () =>
+    setLayoutMap((m) => {
+      const next = { ...m };
+      delete next[tplKey];
+      return next;
+    });
   const [meta, setMeta] = useState({
     name: posterMeta.orgName ?? "",
     lang: posterMeta.lang,
@@ -2351,18 +2409,6 @@ function TemplateStudioView({
             />
           </label>
           <label className="space-y-1">
-            <span className={lbl}>Time</span>
-            <input
-              name="poster_time"
-              value={meta.time}
-              onChange={(e) =>
-                setMeta((m) => ({ ...m, time: e.target.value }))
-              }
-              className={field}
-              placeholder="9:00 AM onwards"
-            />
-          </label>
-          <label className="space-y-1">
             <span className={lbl}>Place / venue</span>
             <input
               name="poster_place"
@@ -2454,6 +2500,97 @@ function TemplateStudioView({
               </div>
             );
           })}
+        </div>
+      </section>
+
+      <section className="rounded-xl border border-stone-200 bg-white p-5">
+        <div className="flex items-baseline justify-between">
+          <h2 className="text-lg font-semibold tracking-tight">
+            Layout editor
+          </h2>
+          <span className="text-xs text-stone-400">
+            Template {pick + 1}
+          </span>
+        </div>
+        <p className="mt-1 text-xs text-stone-500">
+          Drag any block to reposition it; use −/＋ to resize. Saved
+          per&nbsp;template, so every generated poster is consistent.
+          Reset reverts this template to its built-in layout.
+        </p>
+        <div className="mt-4 grid gap-5 lg:grid-cols-[minmax(0,420px)_1fr]">
+          <div className="rounded-lg bg-stone-100 p-2">
+            <PosterCanvas
+              key={`edit-${tplKey}`}
+              data={{ ...sample(), overrides: ov }}
+              templateIndex={allowed[pick]}
+              editable
+              onMove={moveEl}
+            />
+          </div>
+          <div className="space-y-3">
+            <div className="space-y-2">
+              {(
+                [
+                  ["meta", "Name / date / place"],
+                  ["content", "Category + program"],
+                  ["winners", "Winners list"],
+                  ["resultNo", "Result number"],
+                ] as [LayoutEl, string][]
+              ).map(([el, label]) => (
+                <div
+                  key={el}
+                  className="flex items-center justify-between rounded-md border border-stone-200 px-3 py-2"
+                >
+                  <span className="text-sm text-stone-700">{label}</span>
+                  <div className="flex items-center gap-2">
+                    <span className="w-10 text-right text-[11px] tabular-nums text-stone-400">
+                      {Math.round((ov[el]?.s ?? 1) * 100)}%
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => sizeEl(el, -0.05)}
+                      className="size-6 rounded border border-stone-300 text-sm leading-none hover:bg-stone-50"
+                    >
+                      −
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => sizeEl(el, 0.05)}
+                      className="size-6 rounded border border-stone-300 text-sm leading-none hover:bg-stone-50"
+                    >
+                      ＋
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <Form method="post" className="flex items-center gap-3 pt-1">
+              <input
+                type="hidden"
+                name="intent"
+                value="save_poster_layout"
+              />
+              <input
+                type="hidden"
+                name="poster_layout"
+                value={JSON.stringify(layoutMap)}
+              />
+              <button
+                type="submit"
+                disabled={busy}
+                className="rounded-md bg-stone-900 px-4 py-2 text-sm font-medium text-white hover:bg-stone-800 disabled:opacity-50"
+              >
+                {busy ? "Saving…" : "Save layout"}
+              </button>
+              <button
+                type="button"
+                onClick={resetTpl}
+                className="rounded-md border border-stone-300 px-3 py-2 text-sm font-medium text-stone-700 hover:bg-stone-50"
+              >
+                Reset template
+              </button>
+            </Form>
+          </div>
         </div>
       </section>
     </div>
@@ -2610,18 +2747,25 @@ function SharePostersView({
 
       {/* Poster */}
       <div className="overflow-hidden rounded-xl ring-1 ring-stone-200 shadow-sm bg-white">
-        {item && (
-          <PosterCanvas
-            key={item.key}
-            data={item.data}
-            templateIndex={pickTemplateIndex(
+        {item &&
+          (() => {
+            const tplIdx = pickTemplateIndex(
               posterMeta.subdomain,
               posterMeta.defaultTemplate,
               tmplShift,
-            )}
-            stageRef={stageRef}
-          />
-        )}
+            );
+            return (
+              <PosterCanvas
+                key={item.key}
+                data={{
+                  ...item.data,
+                  overrides: posterMeta.layout?.[String(tplIdx)],
+                }}
+                templateIndex={tplIdx}
+                stageRef={stageRef}
+              />
+            );
+          })()}
       </div>
 
       {/* Controls */}

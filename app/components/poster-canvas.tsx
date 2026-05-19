@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import type Konva from "konva";
 import { Stage, Layer, Image as KImage, Text, Rect, Group } from "react-konva";
 import { SITE_URL_FALLBACK, TEMPLATE_SUBDOMAIN } from "~/lib/constants";
@@ -33,7 +33,17 @@ export type PosterData = {
   /** Full CSS font stack applied to ALL poster text. Build it with
    *  posterFontStack(); falls back to BODY_FONT when omitted. */
   fontFamily?: string;
+  /** Per-template element overrides (admin drag editor). Resolved by
+   *  the caller for the active template. x/y = absolute native coords,
+   *  s = size scale (1 = default). */
+  overrides?: TemplateOverride;
 };
+
+export type LayoutEl = "meta" | "content" | "winners" | "resultNo";
+export type ElOverride = { x?: number; y?: number; s?: number };
+export type TemplateOverride = Partial<Record<LayoutEl, ElOverride>>;
+/** Whole-event layout map: { [templateIndex]: { el: {x,y,s} } }. */
+export type PosterLayoutMap = Record<string, TemplateOverride>;
 
 // ─────────────────────────────────────────────────────────────────────
 // Stage geometry — templates are native 1080×1350 (4:5 portrait).
@@ -193,15 +203,17 @@ const TEMPLATES: TemplateLayout[] = [
   {
     src: "/poster/templates/general-01.png",
     scope: "general",
-    contentX: 560,
-    contentY: 560,
-    contentW: 470,
+    contentX: 580,
+    contentY: 470,
+    contentW: 450,
     subtitleColor: "#E9E1CF",
     titleColor: "#F3ECDC",
     nameColor: "#FFFFFF",
     unitColor: "#B7BECC",
-    resultNo: { x: 70, y: 250, boxW: 360, fontSize: 140, color: "#EFE6D2" },
-    meta: { x: 560, y: 395, w: 470, color: "#D9D2C0", align: "left" },
+    resultNo: { x: 70, y: 225, boxW: 340, fontSize: 132, color: "#EFE6D2" },
+    // Cluster under the baked "Sahityotsav" wordmark (mirrors the old
+    // Pantharangadi result-04 sector/date/place position).
+    meta: { x: 130, y: 320, w: 820, color: "#D9D2C0", align: "center" },
   },
   // general-02 — maroon, lantern bottom-right, "Result" top-right, cyan
   // "Sahityotsav" wordmark upper-left. Tenant-neutral. Content in the
@@ -210,14 +222,16 @@ const TEMPLATES: TemplateLayout[] = [
     src: "/poster/templates/general-02.png",
     scope: "general",
     contentX: 90,
-    contentY: 560,
+    contentY: 480,
     contentW: 470,
     subtitleColor: "#F0E4DA",
     titleColor: "#F4E8DC",
     nameColor: "#FFFFFF",
     unitColor: "#CDB8C6",
-    resultNo: { x: 640, y: 175, boxW: 360, fontSize: 140, color: "#F4A9C4" },
-    meta: { x: 90, y: 395, w: 480, color: "#E9D9DF", align: "left" },
+    resultNo: { x: 645, y: 150, boxW: 340, fontSize: 132, color: "#F4A9C4" },
+    // Cluster under the baked upper-left wordmark (mirrors the old
+    // Pantharangadi result-05 sector/date/place position).
+    meta: { x: 90, y: 300, w: 560, color: "#E9D9DF", align: "left" },
   },
 ];
 
@@ -365,6 +379,48 @@ function formatResultNo(s: string): string {
 // (no meta config) or when the admin hasn't supplied any values.
 // ─────────────────────────────────────────────────────────────────────
 
+// Draggable, scalable wrapper for a poster element. Position via x/y,
+// SIZE via Group scale (so all child text scales together). In editable
+// mode the group is draggable and reports its new native coords.
+function DraggableEl({
+  el,
+  baseX,
+  baseY,
+  ov,
+  editable,
+  onMove,
+  children,
+}: {
+  el: LayoutEl;
+  baseX: number;
+  baseY: number;
+  ov?: ElOverride;
+  editable?: boolean;
+  onMove?: (el: LayoutEl, x: number, y: number) => void;
+  children: ReactNode;
+}) {
+  const x = ov?.x ?? baseX;
+  const y = ov?.y ?? baseY;
+  const s = ov?.s ?? 1;
+  return (
+    <Group
+      x={x}
+      y={y}
+      scaleX={s}
+      scaleY={s}
+      draggable={!!editable}
+      listening={!!editable}
+      onDragEnd={(e) =>
+        onMove?.(el, Math.round(e.target.x()), Math.round(e.target.y()))
+      }
+    >
+      {children}
+    </Group>
+  );
+}
+
+// Tenant meta lines (org/sector name + date + place), rendered relative
+// to (0,0) — DraggableEl provides the position/scale.
 const TenantMeta = ({
   data,
   layout,
@@ -374,10 +430,7 @@ const TenantMeta = ({
 }) => {
   const m = layout.meta;
   if (!m) return null;
-  const dt = [data.posterDate, data.posterTime]
-    .map((s) => s?.trim())
-    .filter(Boolean)
-    .join("   ·   ");
+  const dt = data.posterDate?.trim() ?? "";
   const lines: { text: string; size: number; bold?: boolean }[] = [];
   if (data.orgName?.trim())
     lines.push({ text: data.orgName.trim(), size: 36, bold: true });
@@ -386,7 +439,7 @@ const TenantMeta = ({
     lines.push({ text: data.posterPlace.trim(), size: 24 });
   if (lines.length === 0) return null;
 
-  let acc = m.y;
+  let acc = 0;
   const placed = lines.map((ln) => {
     const y = acc;
     acc += ln.size * 1.32 + 7;
@@ -397,7 +450,7 @@ const TenantMeta = ({
       {placed.map((ln, i) => (
         <Text
           key={i}
-          x={m.x}
+          x={0}
           y={ln.y}
           width={m.w}
           align={m.align ?? "left"}
@@ -422,12 +475,17 @@ export const PosterCanvas = ({
   templateIndex = 0,
   stageRef,
   displayWidth,
+  editable = false,
+  onMove,
 }: {
   data: PosterData;
   templateIndex?: number;
   stageRef?: React.MutableRefObject<Konva.Stage | null>;
   /** When omitted, the canvas fills the parent container width. */
   displayWidth?: number;
+  /** Drag-to-position mode (admin layout editor). */
+  editable?: boolean;
+  onMove?: (el: LayoutEl, x: number, y: number) => void;
 }) => {
   const [mounted, setMounted] = useState(false);
   useEffect(() => {
@@ -472,10 +530,10 @@ export const PosterCanvas = ({
       style={{
         aspectRatio: "4 / 5",
         overflow: "hidden",
-        // Canvas must NOT swallow taps or vertical scrolls — the parent
-        // <button> handles the tap-to-zoom, and the page needs to scroll.
-        pointerEvents: "none",
-        touchAction: "pan-y",
+        // Read-only posters must NOT swallow taps/scrolls (parent handles
+        // tap-to-zoom). The editor needs pointer events for dragging.
+        pointerEvents: editable ? "auto" : "none",
+        touchAction: editable ? "none" : "pan-y",
       }}
     >
       {!ready && <PosterSkeleton slow={slow} />}
@@ -504,27 +562,65 @@ export const PosterCanvas = ({
           )}
 
           {/* Admin overlay (general templates): org name + date/place */}
-          <TenantMeta data={data} layout={layout} />
+          {layout.meta && (
+            <DraggableEl
+              el="meta"
+              baseX={layout.meta.x}
+              baseY={layout.meta.y}
+              ov={data.overrides?.meta}
+              editable={editable}
+              onMove={onMove}
+            >
+              <TenantMeta data={data} layout={layout} />
+            </DraggableEl>
+          )}
 
           {/* Level (subtitle) + Program (title) block */}
-          <SubtitleTitle data={data} layout={layout} />
+          <DraggableEl
+            el="content"
+            baseX={layout.contentX}
+            baseY={layout.contentY}
+            ov={data.overrides?.content}
+            editable={editable}
+            onMove={onMove}
+          >
+            <SubtitleTitle data={data} layout={layout} />
+          </DraggableEl>
 
-          {/* Winners list — directly below the title block */}
-          <WinnersList winners={data.winners} layout={layout} font={font} />
+          {/* Winners list */}
+          <DraggableEl
+            el="winners"
+            baseX={layout.contentX}
+            baseY={winnersStartY(layout)}
+            ov={data.overrides?.winners}
+            editable={editable}
+            onMove={onMove}
+          >
+            <WinnersList winners={data.winners} layout={layout} font={font} />
+          </DraggableEl>
 
           {/* Result number — large, centered under the "Result" script */}
           {data.resultNo && (
-            <Text
-              x={layout.resultNo.x}
-              y={layout.resultNo.y}
-              width={layout.resultNo.boxW}
-              align="center"
-              text={formatResultNo(data.resultNo)}
-              fontFamily={font}
-              fontSize={layout.resultNo.fontSize}
-              fontStyle="bold"
-              fill={layout.resultNo.color}
-            />
+            <DraggableEl
+              el="resultNo"
+              baseX={layout.resultNo.x}
+              baseY={layout.resultNo.y}
+              ov={data.overrides?.resultNo}
+              editable={editable}
+              onMove={onMove}
+            >
+              <Text
+                x={0}
+                y={0}
+                width={layout.resultNo.boxW}
+                align="center"
+                text={formatResultNo(data.resultNo)}
+                fontFamily={font}
+                fontSize={layout.resultNo.fontSize}
+                fontStyle="bold"
+                fill={layout.resultNo.color}
+              />
+            </DraggableEl>
           )}
         </Layer>
       </Stage>
@@ -596,7 +692,7 @@ function SubtitleTitle({
     TITLE_SIZE - (/girls/i.test(data.programName) ? 6 : 4);
   const font = data.fontFamily || BODY_FONT;
   return (
-    <Group x={layout.contentX} y={layout.contentY}>
+    <>
       <CategoryPill text={data.levelName} font={font} />
       <Text
         x={0}
@@ -610,7 +706,7 @@ function SubtitleTitle({
         lineHeight={TITLE_LH}
         wrap="word"
       />
-    </Group>
+    </>
   );
 }
 
@@ -646,7 +742,6 @@ function WinnersList({
   layout: TemplateLayout;
   font: string;
 }) {
-  const startY = winnersStartY(layout);
   // position < 1 ⇒ grade-only entries (counted for team points, never
   // shown on the poster). Only ranked places 1–4 render here.
   const sorted = [...winners]
@@ -655,7 +750,7 @@ function WinnersList({
     .slice(0, 4);
 
   return (
-    <Group x={layout.contentX} y={startY}>
+    <>
       {sorted.map((w, i) => (
         <WinnerRow
           key={`${w.position}-${i}`}
@@ -665,7 +760,7 @@ function WinnersList({
           font={font}
         />
       ))}
-    </Group>
+    </>
   );
 }
 
