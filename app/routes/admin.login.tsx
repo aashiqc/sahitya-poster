@@ -6,13 +6,22 @@ export function meta() {
   return [{ title: "Admin sign in · Sahityotsav" }];
 }
 
+// In local dev there is no tenant subdomain, so the tenant rides in a
+// ?tenant= query param. Carry it through the post-login redirect so a
+// non-default sector's admin doesn't land on the wrong tenant (→ 403).
+// Harmless in production (no such param; plain /admin).
+function adminDest(request: Request): string {
+  const t = new URL(request.url).searchParams.get("tenant");
+  return t ? `/admin?tenant=${encodeURIComponent(t)}` : "/admin";
+}
+
 export async function loader({ request }: Route.LoaderArgs) {
   const { supabase, headers } = createSupabaseServerClient(request);
   const {
     data: { user },
   } = await supabase.auth.getUser();
   if (user) {
-    return redirect("/admin", { headers: Object.fromEntries(headers) });
+    return redirect(adminDest(request), { headers: Object.fromEntries(headers) });
   }
   return data(null, { headers: Object.fromEntries(headers) });
 }
@@ -26,7 +35,7 @@ export async function action({ request }: Route.ActionArgs): Promise<Response | 
   const intent = String(formData.get("intent") ?? "signin");
 
   if (!email || !password) return { error: "Email and password are required." };
-  if (password.length < 8) return { error: "Password must be at least 8 characters." };
+  if (password.length < 6) return { error: "Password must be at least 6 characters." };
 
   const { supabase, headers } = createSupabaseServerClient(request);
 
@@ -42,7 +51,7 @@ export async function action({ request }: Route.ActionArgs): Promise<Response | 
 
   const { error } = await supabase.auth.signInWithPassword({ email, password });
   if (error) return { error: error.message };
-  return redirect("/admin", { headers: Object.fromEntries(headers) });
+  return redirect(adminDest(request), { headers: Object.fromEntries(headers) });
 }
 
 export default function AdminLogin() {
@@ -84,10 +93,10 @@ export default function AdminLogin() {
             name="password"
             type="password"
             autoComplete="current-password"
-            minLength={8}
+            minLength={6}
             required
             className="w-full rounded-xl border border-stone-300 bg-white px-3.5 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-600 focus:border-brand-600"
-            placeholder="At least 8 characters"
+            placeholder="At least 6 characters"
           />
         </label>
 

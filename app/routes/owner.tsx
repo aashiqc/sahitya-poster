@@ -1,4 +1,10 @@
-import { Form, data, useActionData, useNavigation } from "react-router";
+import {
+  Form,
+  data,
+  redirect,
+  useActionData,
+  useNavigation,
+} from "react-router";
 import type { Route } from "./+types/owner";
 import { createSupabaseServerClient } from "~/lib/supabase.server";
 import {
@@ -26,6 +32,18 @@ function slugify(s: string): string {
     .slice(0, 60);
 }
 
+// Production: https://<sub>.sahityotsav.live. Local dev / preview (no
+// wildcard DNS): point at the current origin with ?tenant=<sub> so the
+// links actually work while developing.
+function tenantUrl(request: Request, sub: string): string {
+  const u = new URL(request.url);
+  const underRoot =
+    u.hostname === ROOT_DOMAIN || u.hostname.endsWith(`.${ROOT_DOMAIN}`);
+  return underRoot
+    ? `https://${sub}.${ROOT_DOMAIN}`
+    : `${u.origin}/?tenant=${sub}`;
+}
+
 async function userEmail(request: Request): Promise<string | null> {
   const { supabase } = createSupabaseServerClient(request);
   const {
@@ -51,9 +69,11 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     const ev = (events ?? []).find(
       (e) => e.organization_id === o.id && e.is_current,
     );
+    const sub = o.subdomain as string | null;
     return {
       name: o.name,
-      subdomain: o.subdomain as string | null,
+      subdomain: sub,
+      url: sub ? tenantUrl(request, sub) : null,
       event: ev ? { name: ev.name, status: ev.status } : null,
     };
   });
@@ -66,11 +86,18 @@ type ActionResult = { error: string } | { ok: true; message: string };
 export async function action({
   request,
   context,
-}: Route.ActionArgs): Promise<ActionResult> {
+}: Route.ActionArgs): Promise<Response | ActionResult> {
   await requireOwner(request, context, () => userEmail(request));
-  const svc = createServiceRoleClient(context);
   const fd = await request.formData();
   const intent = String(fd.get("intent") ?? "");
+
+  if (intent === "logout") {
+    const { supabase, headers } = createSupabaseServerClient(request);
+    await supabase.auth.signOut();
+    return redirect("/admin/login", { headers: Object.fromEntries(headers) });
+  }
+
+  const svc = createServiceRoleClient(context);
 
   if (intent === "create_tenant") {
     const orgName = String(fd.get("org_name") ?? "").trim();
@@ -93,8 +120,8 @@ export async function action({
           "Subdomain must be lowercase letters/numbers/hyphens and not a reserved word.",
       };
     }
-    if (adminPassword.length < 8) {
-      return { error: "Admin password must be at least 8 characters." };
+    if (adminPassword.length < 6) {
+      return { error: "Admin password must be at least 6 characters." };
     }
 
     const { data: dupe } = await svc
@@ -239,7 +266,7 @@ export async function action({
 
     return {
       ok: true,
-      message: `Created ${orgName} → https://${subdomain}.${ROOT_DOMAIN} · admin ${adminEmail} · ${
+      message: `Created ${orgName} → ${tenantUrl(request, subdomain)} · admin ${adminEmail} · ${
         tplPrograms?.length ?? 0
       } programs seeded (event is draft — admin publishes it).`,
     };
@@ -354,13 +381,25 @@ export default function OwnerConsole({ loaderData }: Route.ComponentProps) {
   return (
     <div className="min-h-dvh bg-stone-50 px-4 py-10">
       <div className="mx-auto max-w-3xl space-y-8">
-        <header>
-          <p className="font-display text-[11px] font-bold tracking-[0.3em] uppercase text-brand-700">
-            Sahityotsav · Owner
-          </p>
-          <h1 className="text-2xl font-semibold tracking-tight mt-1">
-            Tenants
-          </h1>
+        <header className="flex items-start justify-between gap-4">
+          <div>
+            <p className="font-display text-[11px] font-bold tracking-[0.3em] uppercase text-brand-700">
+              Sahityotsav · Owner
+            </p>
+            <h1 className="text-2xl font-semibold tracking-tight mt-1">
+              Tenants
+            </h1>
+          </div>
+          <Form method="post">
+            <button
+              type="submit"
+              name="intent"
+              value="logout"
+              className="text-xs font-medium text-stone-500 hover:text-stone-900 underline underline-offset-4"
+            >
+              Sign out
+            </button>
+          </Form>
         </header>
 
         {actionData && "error" in actionData && (
@@ -388,12 +427,12 @@ export default function OwnerConsole({ loaderData }: Route.ComponentProps) {
                 <tr key={t.subdomain ?? t.name} className="border-t border-stone-100">
                   <td className="px-4 py-3 font-medium">{t.name}</td>
                   <td className="px-4 py-3">
-                    {t.subdomain ? (
+                    {t.url ? (
                       <a
-                        className="text-brand-700 hover:underline"
-                        href={`https://${t.subdomain}.${rootDomain}`}
+                        className="text-brand-700 hover:underline break-all"
+                        href={t.url}
                       >
-                        {t.subdomain}.{rootDomain}
+                        {t.url.replace(/^https?:\/\//, "")}
                       </a>
                     ) : (
                       <span className="text-stone-400">— not set —</span>
@@ -485,9 +524,9 @@ export default function OwnerConsole({ loaderData }: Route.ComponentProps) {
                 name="admin_password"
                 type="text"
                 required
-                minLength={8}
+                minLength={6}
                 className={field}
-                placeholder="≥ 8 chars"
+                placeholder="≥ 6 chars"
               />
             </label>
             <div className="sm:col-span-2">
