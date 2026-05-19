@@ -420,238 +420,399 @@ export async function action({
   return { error: `Unknown intent: ${intent}` };
 }
 
+function StatusPill({ status }: { status: string }) {
+  const tone =
+    status === "published"
+      ? "bg-emerald-50 text-emerald-700 ring-emerald-600/20"
+      : status === "draft"
+      ? "bg-amber-50 text-amber-700 ring-amber-600/25"
+      : "bg-stone-100 text-stone-500 ring-stone-400/20";
+  return (
+    <span
+      className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] ring-1 ring-inset ${tone}`}
+    >
+      <span className="size-1.5 rounded-full bg-current opacity-70" />
+      {status}
+    </span>
+  );
+}
+
+const GRAIN =
+  "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.82' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)'/%3E%3C/svg%3E\")";
+
 export default function OwnerConsole({ loaderData }: Route.ComponentProps) {
   const { tenants, rootDomain } = loaderData;
   const actionData = useActionData<typeof action>();
   const nav = useNavigation();
   const busy = nav.state !== "idle";
+
   const field =
-    "w-full rounded-md border border-stone-300 bg-white px-3 py-2 text-sm focus:outline-none focus:border-stone-500";
+    "w-full rounded-lg border border-stone-300/80 bg-white px-3.5 py-2.5 text-sm text-stone-900 placeholder:text-stone-400 transition focus:outline-none focus:border-brand-600 focus:ring-4 focus:ring-brand-600/10";
+  const lbl =
+    "block text-[11px] font-semibold uppercase tracking-[0.14em] text-stone-500";
+
+  const liveCount = tenants.filter(
+    (t) => t.event?.status === "published",
+  ).length;
 
   return (
-    <div className="min-h-dvh bg-stone-50 px-4 py-10">
-      <div className="mx-auto max-w-3xl space-y-8">
-        <header className="flex items-start justify-between gap-4">
-          <div>
-            <p className="font-display text-[11px] font-bold tracking-[0.3em] uppercase text-brand-700">
-              Sahityotsav · Owner
-            </p>
-            <h1 className="text-2xl font-semibold tracking-tight mt-1">
-              Tenants
-            </h1>
+    <div className="relative min-h-dvh bg-[#F7F4EC] text-stone-900">
+      <style>{`@keyframes ownerRise{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:none}}.o-rise{animation:ownerRise .7s cubic-bezier(.2,.7,.2,1) both}`}</style>
+      <div
+        aria-hidden
+        className="pointer-events-none fixed inset-0 z-0 opacity-[0.04] mix-blend-multiply"
+        style={{ backgroundImage: GRAIN }}
+      />
+      <div
+        aria-hidden
+        className="pointer-events-none fixed inset-0 z-0"
+        style={{
+          background:
+            "radial-gradient(880px 460px at 80% -10%, rgba(200,162,74,0.12), transparent 60%)",
+        }}
+      />
+
+      {/* ── Masthead ── */}
+      <header className="sticky top-0 z-30 bg-[#1B1714] text-[#EDE6D8]">
+        <div className="mx-auto flex max-w-[1240px] items-center justify-between gap-6 px-8 py-4">
+          <div className="flex items-center gap-4">
+            <div className="grid size-9 place-items-center rounded-md border border-[#C8A24A]/40 bg-[#C8A24A]/10 font-[Fraunces,serif] text-lg leading-none text-[#E8C879]">
+              സ
+            </div>
+            <div className="leading-tight">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.34em] text-[#C8A24A]">
+                Sahityotsav
+              </p>
+              <p className="font-[Fraunces,serif] text-[15px] tracking-tight text-[#F4EEE0]">
+                Owner console
+              </p>
+            </div>
           </div>
-          <Form method="post">
-            <button
-              type="submit"
-              name="intent"
-              value="logout"
-              className="text-xs font-medium text-stone-500 hover:text-stone-900 underline underline-offset-4"
-            >
-              Sign out
-            </button>
-          </Form>
-        </header>
-
-        {actionData && "error" in actionData && (
-          <p className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-4 py-3">
-            {actionData.error}
-          </p>
-        )}
-        {actionData && "ok" in actionData && (
-          <p className="text-sm text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg px-4 py-3">
-            {actionData.message}
-          </p>
-        )}
-
-        <section className="rounded-xl border border-stone-200 bg-white">
-          <table className="w-full text-sm">
-            <thead className="text-left text-xs uppercase tracking-wider text-stone-400">
-              <tr>
-                <th className="px-4 py-3">Sector</th>
-                <th className="px-4 py-3">Address</th>
-                <th className="px-4 py-3">Current event</th>
-                <th className="px-4 py-3">Admin</th>
-              </tr>
-            </thead>
-            <tbody>
-              {tenants.map((t) => (
-                <tr key={t.subdomain ?? t.name} className="border-t border-stone-100">
-                  <td className="px-4 py-3 font-medium">{t.name}</td>
-                  <td className="px-4 py-3">
-                    {t.url ? (
-                      <a
-                        className="text-brand-700 hover:underline break-all"
-                        href={t.url}
-                      >
-                        {t.url.replace(/^https?:\/\//, "")}
-                      </a>
-                    ) : (
-                      <span className="text-stone-400">— not set —</span>
-                    )}
-                  </td>
-                  <td className="px-4 py-3">
-                    {t.event ? (
-                      <span>
-                        {t.event.name}{" "}
-                        <span className="text-xs text-stone-400">
-                          ({t.event.status})
-                        </span>
-                      </span>
-                    ) : (
-                      <span className="text-stone-400">—</span>
-                    )}
-                  </td>
-                  <td className="px-4 py-3">
-                    {t.adminEmail ? (
-                      <div className="space-y-1">
-                        <div className="break-all">{t.adminEmail}</div>
-                        {t.adminUserId && (
-                          <Form method="post">
-                            <input
-                              type="hidden"
-                              name="intent"
-                              value="reset_admin_password"
-                            />
-                            <input
-                              type="hidden"
-                              name="user_id"
-                              value={t.adminUserId}
-                            />
-                            <input
-                              type="hidden"
-                              name="email"
-                              value={t.adminEmail}
-                            />
-                            <button
-                              type="submit"
-                              className="text-xs text-stone-500 hover:text-stone-900 underline underline-offset-4"
-                            >
-                              Reset password
-                            </button>
-                          </Form>
-                        )}
-                      </div>
-                    ) : (
-                      <span className="text-stone-400">—</span>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </section>
-
-        <section className="rounded-xl border border-stone-200 bg-white p-6">
-          <h2 className="text-lg font-semibold tracking-tight">
-            Create tenant
-          </h2>
-          <p className="text-xs text-stone-500 mt-1">
-            Provisions org + a draft current event, clones the canonical
-            levels &amp; programs from{" "}
-            <code className="rounded bg-stone-100 px-1.5 py-0.5">
-              {TEMPLATE_SUBDOMAIN}
-            </code>
-            , and creates the admin login. The admin signs in at{" "}
-            <code className="rounded bg-stone-100 px-1.5 py-0.5">
-              {"<subdomain>"}.{rootDomain}/admin
-            </code>{" "}
-            and publishes when ready.
-          </p>
-          <Form method="post" className="mt-4 grid gap-3 sm:grid-cols-2">
-            <input type="hidden" name="intent" value="create_tenant" />
-            <label className="space-y-1">
-              <span className="text-xs font-medium text-stone-600">
-                Sector / org name
-              </span>
-              <input name="org_name" required className={field} placeholder="SSF Valanchery Sector" />
-            </label>
-            <label className="space-y-1">
-              <span className="text-xs font-medium text-stone-600">
-                Subdomain
-              </span>
-              <input
-                name="subdomain"
-                required
-                className={field}
-                placeholder="valanchery"
-                pattern="[a-z0-9-]+"
-              />
-            </label>
-            <label className="space-y-1">
-              <span className="text-xs font-medium text-stone-600">
-                Event name
-              </span>
-              <input name="event_name" required className={field} placeholder="Saaheethyolsav 26" />
-            </label>
-            <label className="space-y-1">
-              <span className="text-xs font-medium text-stone-600">
-                Event name (Malayalam, optional)
-              </span>
-              <input name="event_name_ml" className={field} lang="ml" />
-            </label>
-            <label className="space-y-1">
-              <span className="text-xs font-medium text-stone-600">
-                Admin email
-              </span>
-              <input
-                name="admin_email"
-                type="email"
-                required
-                className={field}
-                placeholder="admin@example.com"
-              />
-            </label>
-            <label className="space-y-1">
-              <span className="text-xs font-medium text-stone-600">
-                Admin initial password
-              </span>
-              <input
-                name="admin_password"
-                type="text"
-                required
-                minLength={6}
-                className={field}
-                placeholder="≥ 6 chars"
-              />
-            </label>
-            <div className="sm:col-span-2">
+          <div className="flex items-center gap-5">
+            <span className="hidden text-xs text-[#9b9080] sm:inline">
+              {tenants.length} sector{tenants.length === 1 ? "" : "s"} ·{" "}
+              <span className="text-[#C8A24A]">{liveCount} live</span>
+            </span>
+            <Form method="post">
               <button
                 type="submit"
-                disabled={busy}
-                className="rounded-md bg-stone-900 px-4 py-2 text-sm font-medium text-white hover:bg-stone-800 disabled:opacity-50"
+                name="intent"
+                value="logout"
+                className="rounded-md border border-[#3a322b] px-3 py-1.5 text-xs font-medium text-[#cfc5b3] transition hover:border-[#C8A24A]/50 hover:text-[#F4EEE0]"
               >
-                {busy ? "Creating…" : "Create tenant"}
+                Sign out
               </button>
+            </Form>
+          </div>
+        </div>
+        <div className="h-px w-full bg-gradient-to-r from-transparent via-[#C8A24A]/55 to-transparent" />
+      </header>
+
+      <main className="relative z-10 mx-auto max-w-[1240px] px-8 pb-24 pt-12">
+        {/* ── Title ── */}
+        <div className="o-rise">
+          <p className="flex items-center gap-2.5 text-[11px] font-semibold uppercase tracking-[0.28em] text-brand-700">
+            <span className="h-px w-8 bg-brand-700/50" />
+            Tenancy
+          </p>
+          <h1 className="mt-3 font-[Fraunces,serif] text-[2.6rem] font-semibold leading-none tracking-tight text-stone-900">
+            Tenants
+          </h1>
+          <p className="mt-3 max-w-2xl text-sm leading-relaxed text-stone-500">
+            Every sector runs on its own subdomain from a single deployment.
+            Provision a sector, seed its canonical programs, and hand its
+            admin the keys — all from this desk.
+          </p>
+        </div>
+
+        {actionData && "error" in actionData && (
+          <div className="o-rise mt-7 rounded-xl border border-red-200 bg-red-50/80 px-5 py-3.5 text-sm text-red-800">
+            {actionData.error}
+          </div>
+        )}
+        {actionData && "ok" in actionData && (
+          <div className="o-rise mt-7 rounded-xl border border-emerald-200 bg-emerald-50/80 px-5 py-3.5 text-sm leading-relaxed text-emerald-800">
+            {actionData.message}
+          </div>
+        )}
+
+        {/* ── Tenants ledger ── */}
+        <section
+          className="o-rise mt-9 overflow-hidden rounded-2xl border border-stone-200/80 bg-white shadow-[0_18px_44px_-28px_rgba(28,23,20,0.28)]"
+          style={{ animationDelay: ".05s" }}
+        >
+          <div className="flex items-center justify-between border-b border-stone-100 px-6 py-4">
+            <h2 className="font-[Fraunces,serif] text-lg tracking-tight">
+              Active sectors
+            </h2>
+            <span className="rounded-full bg-stone-100 px-2.5 py-1 text-[11px] font-medium tabular-nums text-stone-500">
+              {tenants.length}
+            </span>
+          </div>
+          {tenants.length === 0 ? (
+            <p className="px-6 py-16 text-center text-sm text-stone-400">
+              No sectors yet — provision the first one below.
+            </p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[760px] text-sm">
+                <thead>
+                  <tr className="text-left text-[10px] uppercase tracking-[0.16em] text-stone-400">
+                    <th className="w-14 py-3 pl-6 pr-3 font-semibold">#</th>
+                    <th className="px-3 py-3 font-semibold">Sector</th>
+                    <th className="px-3 py-3 font-semibold">Address</th>
+                    <th className="px-3 py-3 font-semibold">Current event</th>
+                    <th className="px-3 py-3 pr-6 font-semibold">Admin</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {tenants.map((t, i) => (
+                    <tr
+                      key={t.subdomain ?? t.name}
+                      className="group border-t border-stone-100 align-top transition-colors hover:bg-[#FBF8F1]"
+                    >
+                      <td className="py-5 pl-6 pr-3 font-[Fraunces,serif] text-base tabular-nums text-stone-300">
+                        {String(i + 1).padStart(2, "0")}
+                      </td>
+                      <td className="px-3 py-5">
+                        <div className="font-medium text-stone-900">
+                          {t.name}
+                        </div>
+                        {t.subdomain && (
+                          <div className="mt-0.5 font-mono text-[11px] text-stone-400">
+                            {t.subdomain}
+                          </div>
+                        )}
+                      </td>
+                      <td className="px-3 py-5">
+                        {t.url ? (
+                          <a
+                            href={t.url}
+                            className="font-mono text-[12.5px] text-brand-700 underline-offset-2 hover:underline break-all"
+                          >
+                            {t.url.replace(/^https?:\/\//, "")}
+                          </a>
+                        ) : (
+                          <span className="text-stone-300">— not set —</span>
+                        )}
+                      </td>
+                      <td className="px-3 py-5">
+                        {t.event ? (
+                          <div className="flex flex-wrap items-center gap-2">
+                            <StatusPill status={t.event.status} />
+                            <span className="text-stone-700">
+                              {t.event.name}
+                            </span>
+                          </div>
+                        ) : (
+                          <span className="text-stone-300">—</span>
+                        )}
+                      </td>
+                      <td className="px-3 py-5 pr-6">
+                        {t.adminEmail ? (
+                          <div className="space-y-1.5">
+                            <div className="font-mono text-[12.5px] text-stone-700 break-all">
+                              {t.adminEmail}
+                            </div>
+                            {t.adminUserId && (
+                              <Form method="post">
+                                <input
+                                  type="hidden"
+                                  name="intent"
+                                  value="reset_admin_password"
+                                />
+                                <input
+                                  type="hidden"
+                                  name="user_id"
+                                  value={t.adminUserId}
+                                />
+                                <input
+                                  type="hidden"
+                                  name="email"
+                                  value={t.adminEmail}
+                                />
+                                <button
+                                  type="submit"
+                                  className="text-[11px] font-medium text-stone-400 underline decoration-dotted underline-offset-4 transition hover:text-brand-700"
+                                >
+                                  Reset password
+                                </button>
+                              </Form>
+                            )}
+                          </div>
+                        ) : (
+                          <span className="text-stone-300">—</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
-          </Form>
+          )}
         </section>
 
-        <section className="rounded-xl border border-stone-200 bg-white p-6">
-          <h2 className="text-lg font-semibold tracking-tight">
-            Re-sync canonical programs
-          </h2>
-          <p className="text-xs text-stone-500 mt-1">
-            Idempotently adds any canonical levels/programs missing from a
-            tenant's current event (existing rows untouched).
-          </p>
-          <Form method="post" className="mt-4 flex flex-wrap items-end gap-3">
-            <input type="hidden" name="intent" value="resync_programs" />
-            <label className="space-y-1">
-              <span className="text-xs font-medium text-stone-600">
-                Tenant subdomain
-              </span>
-              <input name="subdomain" required className={field} placeholder="valanchery" />
-            </label>
-            <button
-              type="submit"
-              disabled={busy}
-              className="rounded-md border border-stone-300 px-4 py-2 text-sm font-medium hover:bg-stone-50 disabled:opacity-50"
+        {/* ── Work area ── */}
+        <div className="mt-8 grid gap-6 lg:grid-cols-12">
+          <section
+            className="o-rise rounded-2xl border border-stone-200/80 bg-white p-7 shadow-[0_18px_44px_-30px_rgba(28,23,20,0.25)] lg:col-span-7"
+            style={{ animationDelay: ".1s" }}
+          >
+            <p className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.22em] text-brand-700">
+              <span className="size-1.5 rotate-45 bg-brand-700/60" />
+              Provision
+            </p>
+            <h2 className="mt-2.5 font-[Fraunces,serif] text-2xl tracking-tight">
+              Create a tenant
+            </h2>
+            <p className="mt-2 text-sm leading-relaxed text-stone-500">
+              Creates the org + a draft event, clones canonical levels &amp;
+              programs from{" "}
+              <code className="rounded bg-stone-100 px-1.5 py-0.5 font-mono text-[12px] text-stone-700">
+                {TEMPLATE_SUBDOMAIN}
+              </code>
+              , and mints the admin login.
+            </p>
+            <Form method="post" className="mt-6 grid gap-5 sm:grid-cols-2">
+              <input type="hidden" name="intent" value="create_tenant" />
+              <label className="space-y-1.5">
+                <span className={lbl}>Sector / org name</span>
+                <input
+                  name="org_name"
+                  required
+                  className={field}
+                  placeholder="SSF Valanchery Sector"
+                />
+              </label>
+              <label className="space-y-1.5">
+                <span className={lbl}>Subdomain</span>
+                <input
+                  name="subdomain"
+                  required
+                  className={`${field} font-mono`}
+                  placeholder="valanchery"
+                  pattern="[a-z0-9-]+"
+                />
+              </label>
+              <label className="space-y-1.5">
+                <span className={lbl}>Event name</span>
+                <input
+                  name="event_name"
+                  required
+                  className={field}
+                  placeholder="Saaheethyolsav 26"
+                />
+              </label>
+              <label className="space-y-1.5">
+                <span className={lbl}>Event name · Malayalam</span>
+                <input
+                  name="event_name_ml"
+                  className={field}
+                  lang="ml"
+                  placeholder="optional"
+                />
+              </label>
+              <label className="space-y-1.5">
+                <span className={lbl}>Admin email</span>
+                <input
+                  name="admin_email"
+                  type="email"
+                  required
+                  className={`${field} font-mono`}
+                  placeholder="admin@example.com"
+                />
+              </label>
+              <label className="space-y-1.5">
+                <span className={lbl}>Admin initial password</span>
+                <input
+                  name="admin_password"
+                  type="text"
+                  required
+                  minLength={6}
+                  className={`${field} font-mono`}
+                  placeholder="≥ 6 chars"
+                />
+              </label>
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-2 pt-1 sm:col-span-2">
+                <button
+                  type="submit"
+                  disabled={busy}
+                  className="rounded-lg bg-brand-700 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-brand-800 disabled:opacity-50"
+                >
+                  {busy ? "Creating…" : "Create tenant"}
+                </button>
+                <span className="text-xs text-stone-400">
+                  Admin signs in at{" "}
+                  <span className="font-mono text-stone-500">
+                    &lt;subdomain&gt;.{rootDomain}/admin
+                  </span>
+                </span>
+              </div>
+            </Form>
+          </section>
+
+          <div className="space-y-6 lg:col-span-5">
+            <section
+              className="o-rise rounded-2xl border border-stone-200/80 bg-white p-7 shadow-[0_18px_44px_-30px_rgba(28,23,20,0.25)]"
+              style={{ animationDelay: ".15s" }}
             >
-              {busy ? "Syncing…" : "Re-sync"}
-            </button>
-          </Form>
-        </section>
-      </div>
+              <p className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.22em] text-brand-700">
+                <span className="size-1.5 rotate-45 bg-brand-700/60" />
+                Maintain
+              </p>
+              <h2 className="mt-2.5 font-[Fraunces,serif] text-2xl tracking-tight">
+                Re-sync programs
+              </h2>
+              <p className="mt-2 text-sm leading-relaxed text-stone-500">
+                Idempotently adds any canonical levels / programs missing
+                from a tenant's current event. Existing rows are untouched.
+              </p>
+              <Form method="post" className="mt-6 space-y-4">
+                <input type="hidden" name="intent" value="resync_programs" />
+                <label className="space-y-1.5">
+                  <span className={lbl}>Tenant subdomain</span>
+                  <input
+                    name="subdomain"
+                    required
+                    className={`${field} font-mono`}
+                    placeholder="valanchery"
+                  />
+                </label>
+                <button
+                  type="submit"
+                  disabled={busy}
+                  className="w-full rounded-lg border border-stone-300 px-4 py-2.5 text-sm font-semibold text-stone-800 transition hover:border-stone-400 hover:bg-stone-50 disabled:opacity-50"
+                >
+                  {busy ? "Syncing…" : "Re-sync canonical programs"}
+                </button>
+              </Form>
+            </section>
+
+            <section
+              className="o-rise rounded-2xl border border-dashed border-stone-300 bg-[#FBF8F1] p-7"
+              style={{ animationDelay: ".2s" }}
+            >
+              <p className="font-[Fraunces,serif] text-base tracking-tight text-stone-800">
+                How provisioning flows
+              </p>
+              <ol className="mt-4 space-y-3 text-sm text-stone-600">
+                {[
+                  "Owner creates the sector here — org, draft event, seeded programs, admin login.",
+                  "Sector admin signs in, imports results, and hits Publish.",
+                  "The public reads it at the sector's own subdomain.",
+                ].map((step, i) => (
+                  <li key={i} className="flex gap-3">
+                    <span className="grid size-5 shrink-0 place-items-center rounded-full bg-brand-700/10 font-[Fraunces,serif] text-[11px] text-brand-700">
+                      {i + 1}
+                    </span>
+                    <span className="leading-relaxed">{step}</span>
+                  </li>
+                ))}
+              </ol>
+            </section>
+          </div>
+        </div>
+      </main>
     </div>
   );
 }
