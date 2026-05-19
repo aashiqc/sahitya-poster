@@ -5,7 +5,7 @@ import {
 } from "@supabase/ssr";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getSupabaseEnv } from "./env";
-import { EVENT_SLUG } from "./constants";
+import { DEV_DEFAULT_TENANT, RESERVED_SUBDOMAINS, ROOT_DOMAIN } from "./constants";
 
 export function createSupabaseServerClient(request: Request) {
   const { url, anonKey } = getSupabaseEnv();
@@ -28,14 +28,66 @@ export function createSupabaseServerClient(request: Request) {
   return { supabase, headers };
 }
 
-export async function loadEvent(supabase: SupabaseClient) {
+/**
+ * Resolve the tenant subdomain from the request host.
+ *
+ * Production: `<tenant>.sahityotsav.live` → `"<tenant>"`. The apex,
+ * `www`, and other reserved hosts have no tenant (→ "").
+ *
+ * Dev/preview (localhost, *.workers.dev, anything not under ROOT_DOMAIN):
+ * use the `?tenant=` query param, else VITE_DEV_DEFAULT_TENANT, else
+ * the built-in default.
+ */
+export function resolveTenant(request: Request): string {
+  const url = new URL(request.url);
+  const host = url.hostname; // no port
+
+  if (host === ROOT_DOMAIN || host.endsWith(`.${ROOT_DOMAIN}`)) {
+    if (host === ROOT_DOMAIN) return ""; // apex landing — not a tenant
+    const sub = host.slice(0, host.length - ROOT_DOMAIN.length - 1).split(".")[0];
+    if (!sub || RESERVED_SUBDOMAINS.has(sub)) return "";
+    return sub;
+  }
+
+  // localhost / *.workers.dev / preview deployments
+  return url.searchParams.get("tenant")?.trim() || DEV_DEFAULT_TENANT;
+}
+
+/** Per-request canonical origin (e.g. https://pantharangadi.sahityotsav.live).
+ *  Used for absolute canonical / Open Graph / share URLs so every tenant
+ *  gets its own correct links. */
+export function siteUrlFromRequest(request: Request): string {
+  return new URL(request.url).origin;
+}
+
+/**
+ * Load the tenant's current event, resolved from the request host.
+ * Replaces the old single-tenant loadEvent(). Throws a 404 (rendered by
+ * the branded boundary) when the subdomain is unknown or has no current
+ * event — never a 500.
+ */
+export async function loadTenantEvent(
+  request: Request,
+  supabase: SupabaseClient,
+) {
+  const sub = resolveTenant(request);
+  if (!sub) {
+    throw new Response("This address isn’t set up for a Sahityotsav yet.", {
+      status: 404,
+    });
+  }
   const { data, error } = await supabase
     .from("events")
-    .select("id, slug, name, name_ml, status, starts_on, ends_on, organization_id, standings_template, final_poster_url, organizations(name, slug)")
-    .eq("slug", EVENT_SLUG)
-    .single();
+    .select(
+      "id, slug, name, name_ml, status, starts_on, ends_on, organization_id, standings_template, final_poster_url, organizations!inner(name, slug, subdomain)",
+    )
+    .eq("organizations.subdomain", sub)
+    .eq("is_current", true)
+    .maybeSingle();
   if (error || !data) {
-    throw new Response("Event not configured", { status: 500 });
+    throw new Response(`No current Sahityotsav found for “${sub}”.`, {
+      status: 404,
+    });
   }
   return data;
 }

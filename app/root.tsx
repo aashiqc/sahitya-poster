@@ -50,25 +50,31 @@ export default function App() {
 export function ErrorBoundary({ error }: Route.ErrorBoundaryProps) {
   let title = "Something went wrong";
   let detail = "An unexpected error occurred.";
+  let is404 = false;
 
   if (isRouteErrorResponse(error)) {
-    title = error.status === 404 ? "Page not found" : `Error ${error.status}`;
+    is404 = error.status === 404;
+    title = is404 ? "Tenant not found" : `Error ${error.status}`;
     detail = error.statusText || (typeof error.data === "string" ? error.data : detail);
   } else if (import.meta.env.DEV && error instanceof Error) {
     detail = error.message;
   }
 
   return (
-    <main className="min-h-dvh flex items-center justify-center px-4">
+    <main className="min-h-dvh flex items-center justify-center px-4 bg-stone-50">
       <div className="max-w-md w-full text-center">
-        <h1 className="text-2xl font-semibold tracking-tight">{title}</h1>
+        <p className="font-display text-[11px] font-bold tracking-[0.3em] uppercase text-brand-700">
+          Sahityotsav
+        </p>
+        <h1 className="text-2xl font-semibold tracking-tight mt-2">{title}</h1>
         <p className="text-sm text-stone-600 mt-2">{detail}</p>
-        <a
-          href="/"
-          className="inline-block mt-6 text-sm text-brand-700 hover:text-brand-800 underline"
-        >
-          Back to home
-        </a>
+        {is404 && (
+          <p className="text-xs text-stone-400 mt-3">
+            Each sector has its own address, e.g.
+            {" "}
+            <span className="font-mono">your-sector.sahityotsav.live</span>.
+          </p>
+        )}
       </div>
     </main>
   );

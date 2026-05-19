@@ -31,12 +31,16 @@ import {
   Share2,
   Shuffle,
   Trophy,
+  Upload,
   X,
 } from "lucide-react";
 import type Konva from "konva";
 import type { Route } from "./+types/admin";
-import { loadEvent, requireAdmin } from "~/lib/supabase.server";
-import { TEAM_BY_SLUG, TEAMS } from "~/lib/teams";
+import {
+  loadTenantEvent,
+  requireAdmin,
+  siteUrlFromRequest,
+} from "~/lib/supabase.server";
 import {
   POSTER_TEMPLATE_COUNT,
   PosterCanvas,
@@ -107,12 +111,113 @@ export function parseStandingsCsv(
   return rows;
 }
 
+// ── Results CSV parsing ──────────────────────────────────────────────
+// Header: Competition,Category,Rank,Chest Number,Participant,Team,Points,Grade
+// One file may hold one program or many; rows are grouped downstream by
+// (Competition, Category). Column order is read from the header row
+// (case-insensitive); falls back to the documented order if absent.
+export type ResultsCsvRow = {
+  competition: string;
+  category: string;
+  rank: number;
+  participant: string;
+  team: string | null;
+  points: number | null;
+  grade: string | null;
+};
+
+const RESULTS_HEADER_KEYS = [
+  "competition",
+  "category",
+  "rank",
+  "chest number",
+  "participant",
+  "team",
+  "points",
+  "grade",
+] as const;
+
+export function parseResultsCsv(text: string): ResultsCsvRow[] {
+  const lines = text
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean);
+  if (lines.length === 0) return [];
+
+  let idx: Record<string, number> = {
+    competition: 0,
+    category: 1,
+    rank: 2,
+    "chest number": 3,
+    participant: 4,
+    team: 5,
+    points: 6,
+    grade: 7,
+  };
+  let start = 0;
+  const head = csvCells(lines[0]).map((c) => c.toLowerCase());
+  if (head.some((c) => c === "competition" || c === "rank" || c === "participant")) {
+    const m: Record<string, number> = {};
+    head.forEach((c, i) => {
+      if ((RESULTS_HEADER_KEYS as readonly string[]).includes(c)) m[c] = i;
+    });
+    if (m.competition !== undefined && m.rank !== undefined && m.participant !== undefined) {
+      idx = { ...idx, ...m };
+    }
+    start = 1;
+  }
+
+  const rows: ResultsCsvRow[] = [];
+  for (let i = start; i < lines.length; i++) {
+    const c = csvCells(lines[i]);
+    const competition = (c[idx.competition] ?? "").trim();
+    const category = (c[idx.category] ?? "").trim();
+    const participant = (c[idx.participant] ?? "").trim();
+    const rank = parseInt((c[idx.rank] ?? "").trim(), 10);
+    if (!competition || !participant || !Number.isFinite(rank)) continue;
+    const pointsCell = (c[idx.points] ?? "").trim();
+    const pointsNum = Number(pointsCell);
+    rows.push({
+      competition,
+      category,
+      rank,
+      participant,
+      team: (c[idx.team] ?? "").trim() || null,
+      points: pointsCell !== "" && Number.isFinite(pointsNum) ? pointsNum : null,
+      grade: (c[idx.grade] ?? "").trim().toUpperCase() || null,
+    });
+  }
+  return rows;
+}
+
+/** Match key: case/whitespace-insensitive; keeps the "(girls)" qualifier
+ *  so girls variants stay distinct (see project girls-category note). */
+function normMatch(s: string): string {
+  return s.toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+/** Category text → level.code slug, e.g. "Higher Secondary" →
+ *  "higher-secondary" (level codes are the English slugs). */
+function categorySlug(s: string): string {
+  return s.toLowerCase().trim().replace(/[\s_]+/g, "-");
+}
+
 // ============================================================================
 // Loader
 // ============================================================================
 export async function loader({ request }: Route.LoaderArgs) {
   const { supabase, headers, user, profile } = await requireAdmin(request);
-  const event = await loadEvent(supabase);
+  const event = await loadTenantEvent(request, supabase);
+  // Defense in depth: RLS already isolates orgs, but make the
+  // signed-in admin's org match the tenant resolved from the host so a
+  // pantharangadi admin can't drive another sector's subdomain.
+  if (profile.organization_id !== event.organization_id) {
+    throw new Response(
+      "Your admin account belongs to a different sector. Sign in on your own sector’s address.",
+      { status: 403, headers: Object.fromEntries(headers) },
+    );
+  }
+  const siteUrl = siteUrlFromRequest(request);
 
   const [levelsRes, programsRes, resultsRes, standingsRes] = await Promise.all([
     supabase
@@ -253,6 +358,7 @@ export async function loader({ request }: Route.LoaderArgs) {
       user: { email: user.email ?? "" },
       profile,
       event,
+      siteUrl,
       levels: enrichedLevels,
       stats: {
         totalPrograms: activePrograms.length,
@@ -274,8 +380,14 @@ export async function loader({ request }: Route.LoaderArgs) {
 // Action
 // ============================================================================
 export async function action({ request }: Route.ActionArgs) {
-  const { supabase, headers, user } = await requireAdmin(request);
-  const event = await loadEvent(supabase);
+  const { supabase, headers, user, profile } = await requireAdmin(request);
+  const event = await loadTenantEvent(request, supabase);
+  if (profile.organization_id !== event.organization_id) {
+    throw new Response(
+      "Your admin account belongs to a different sector.",
+      { status: 403, headers: Object.fromEntries(headers) },
+    );
+  }
   const fd = await request.formData();
   const intent = String(fd.get("intent") ?? "");
 
@@ -357,6 +469,171 @@ export async function action({ request }: Route.ActionArgs) {
         ok: true,
         message: `Saved ${parsed.length} teams · after ${afterN} · ${STANDINGS_TEMPLATE_NAMES[template]}`,
       },
+      { headers: Object.fromEntries(headers) },
+    );
+  }
+
+  if (intent === "upload_results") {
+    const publish = String(fd.get("publish") ?? "") === "on";
+    const rows = parseResultsCsv(String(fd.get("csv") ?? ""));
+    if (rows.length === 0) {
+      return data(
+        {
+          error:
+            "No valid rows. Expected: Competition,Category,Rank,Chest Number,Participant,Team,Points,Grade",
+        },
+        { headers: Object.fromEntries(headers) },
+      );
+    }
+
+    const [{ data: levelsData }, { data: programsData }] = await Promise.all([
+      supabase.from("levels").select("id, code, name_ml").eq("event_id", event.id),
+      supabase
+        .from("programs")
+        .select("id, code, name_en, name_ml, level_id")
+        .eq("event_id", event.id),
+    ]);
+
+    const levelByKey = new Map<string, string>();
+    for (const l of levelsData ?? []) {
+      levelByKey.set(categorySlug(l.code), l.id);
+      if (l.name_ml) levelByKey.set(normMatch(l.name_ml), l.id);
+    }
+    // (normalized name | level_id) → matching program(s)
+    const progByKey = new Map<
+      string,
+      { id: string; code: string; level_id: string }[]
+    >();
+    for (const p of programsData ?? []) {
+      if (!p.level_id) continue;
+      const rec = { id: p.id, code: p.code, level_id: p.level_id };
+      for (const nm of [p.name_en, p.name_ml]) {
+        if (!nm) continue;
+        const k = `${normMatch(nm)}|${p.level_id}`;
+        progByKey.set(k, [...(progByKey.get(k) ?? []), rec]);
+      }
+    }
+
+    type Group = { competition: string; category: string; rows: ResultsCsvRow[] };
+    const groups = new Map<string, Group>();
+    for (const r of rows) {
+      const key = `${normMatch(r.competition)}␟${normMatch(r.category)}`;
+      const g =
+        groups.get(key) ??
+        (groups
+          .set(key, { competition: r.competition, category: r.category, rows: [] })
+          .get(key) as Group);
+      g.rows.push(r);
+    }
+
+    const report: string[] = [];
+    let okCount = 0;
+    let winnerCount = 0;
+
+    for (const g of groups.values()) {
+      const tag = `${g.competition} · ${g.category}`;
+      const levelId =
+        levelByKey.get(categorySlug(g.category)) ??
+        levelByKey.get(normMatch(g.category));
+      if (!levelId) {
+        report.push(`✗ ${tag}: unknown category (no matching level)`);
+        continue;
+      }
+      const cands = progByKey.get(`${normMatch(g.competition)}|${levelId}`) ?? [];
+      if (cands.length === 0) {
+        report.push(`✗ ${tag}: no program “${g.competition}” in that category`);
+        continue;
+      }
+      if (cands.length > 1) {
+        report.push(`✗ ${tag}: ambiguous — ${cands.length} programs match`);
+        continue;
+      }
+      const program = cands[0];
+
+      // Rank 1-3 → podium position; rank ≥4 with points → position 0
+      // (extra team-points, never publicly shown). Rest skipped.
+      const winners = g.rows
+        .map((r) => {
+          let position: number | null = null;
+          if (r.rank >= 1 && r.rank <= 3) position = r.rank;
+          else if (r.rank >= 4 && (r.points ?? 0) > 0) position = 0;
+          if (position === null) return null;
+          const name = titleCaseName(r.participant);
+          return {
+            position,
+            name_ml: name,
+            name_en: name,
+            unit_ml: r.team,
+            marks: r.points,
+            grade: r.grade,
+            sort_order: r.rank,
+          };
+        })
+        .filter((w): w is NonNullable<typeof w> => w !== null);
+
+      if (winners.length === 0) {
+        report.push(`✗ ${tag}: no usable rows (need rank 1-3, or rank ≥4 with points)`);
+        continue;
+      }
+
+      const { data: existing } = await supabase
+        .from("results")
+        .select("id")
+        .eq("event_id", event.id)
+        .eq("program_id", program.id)
+        .maybeSingle();
+      const baseFields = {
+        event_id: event.id,
+        program_id: program.id,
+        level_id: program.level_id,
+        result_no: null as string | null,
+        is_tie: false,
+        status: publish ? "published" : "draft",
+        published_at: publish ? new Date().toISOString() : null,
+      };
+      let resultId: string;
+      if (existing) {
+        const { error: uErr } = await supabase
+          .from("results")
+          .update(baseFields)
+          .eq("id", existing.id);
+        if (uErr) {
+          report.push(`✗ ${tag}: ${uErr.message}`);
+          continue;
+        }
+        resultId = existing.id;
+        await supabase.from("result_winners").delete().eq("result_id", resultId);
+      } else {
+        const { data: created, error: iErr } = await supabase
+          .from("results")
+          .insert({ ...baseFields, created_by: user.id })
+          .select("id")
+          .single();
+        if (iErr || !created) {
+          report.push(`✗ ${tag}: ${iErr?.message ?? "insert failed"}`);
+          continue;
+        }
+        resultId = created.id;
+      }
+      const { error: wErr } = await supabase
+        .from("result_winners")
+        .insert(winners.map((w) => ({ result_id: resultId, ...w })));
+      if (wErr) {
+        report.push(`✗ ${tag}: ${wErr.message}`);
+        continue;
+      }
+
+      okCount++;
+      winnerCount += winners.length;
+      report.push(`✓ ${program.code} ${tag}: ${winners.length} winners`);
+    }
+
+    const skipped = report.filter((r) => r.startsWith("✗")).length;
+    const message = `Imported ${okCount} result${okCount === 1 ? "" : "s"} (${winnerCount} winners)${
+      skipped ? ` · ${skipped} skipped` : ""
+    } · ${publish ? "published" : "saved as draft"}`;
+    return data(
+      okCount === 0 ? { error: message, report } : { ok: true, message, report },
       { headers: Object.fromEntries(headers) },
     );
   }
@@ -612,6 +889,7 @@ export default function Admin({ loaderData }: Route.ComponentProps) {
     user,
     profile,
     event,
+    siteUrl,
     levels,
     stats,
     publishedWinners,
@@ -620,13 +898,27 @@ export default function Admin({ loaderData }: Route.ComponentProps) {
   } = loaderData;
   const orgName = (profile.organizations as { name?: string } | null)?.name ?? "";
   const eventName = event.name_ml ?? event.name;
+  // Units already seen this event — powers the result-modal datalist so
+  // admins reuse exact names instead of typo-splitting standings.
+  const knownUnits = useMemo(
+    () =>
+      [
+        ...new Set(
+          publishedWinners
+            .map((w) => w.unit_ml?.trim())
+            .filter((u): u is string => !!u),
+        ),
+      ].sort((a, b) => a.localeCompare(b)),
+    [publishedWinners],
+  );
   const isPublished = event.status === "published";
 
   const [searchParams] = useSearchParams();
   const view = (searchParams.get("view") ?? "dashboard") as
     | "dashboard"
     | "standings"
-    | "share";
+    | "share"
+    | "import";
 
   const editCode = searchParams.get("edit");
   const editData = useMemo(
@@ -695,6 +987,12 @@ export default function Admin({ loaderData }: Route.ComponentProps) {
             label="Share posters"
             icon={<Share2 className="size-4" />}
             to="/admin?view=share"
+          />
+          <NavItem
+            active={view === "import"}
+            label="Import results"
+            icon={<Upload className="size-4" />}
+            to="/admin?view=import"
           />
           <NavItem
             label="Public site"
@@ -769,6 +1067,8 @@ export default function Admin({ loaderData }: Route.ComponentProps) {
                 ? "Team standings"
                 : view === "share"
                 ? "Share posters"
+                : view === "import"
+                ? "Import results"
                 : "Dashboard"}
             </h1>
 
@@ -795,8 +1095,10 @@ export default function Admin({ loaderData }: Route.ComponentProps) {
             <SharePostersView
               levels={levels as LevelRow[]}
               eventName={event.name ?? event.name_ml ?? "Sahityotsav"}
+              siteUrl={siteUrl}
             />
           )}
+          {view === "import" && <ImportResultsView />}
           {view === "dashboard" && (
             <DashboardView
               levels={levels}
@@ -815,7 +1117,7 @@ export default function Admin({ loaderData }: Route.ComponentProps) {
         </main>
       </div>
 
-      {editData && <ResultModal editData={editData} />}
+      {editData && <ResultModal editData={editData} knownUnits={knownUnits} />}
     </div>
   );
 }
@@ -1008,6 +1310,114 @@ function StandingsShareCard({
           {busy === "share" ? "…" : "Share"}
         </button>
       </div>
+    </div>
+  );
+}
+
+function ImportResultsView() {
+  const actionData = useActionData<typeof action>();
+  const navigation = useNavigation();
+  const busy = navigation.state !== "idle";
+  const [csv, setCsv] = useState("");
+
+  const onPickFile = (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => setCsv(String(reader.result ?? ""));
+    reader.readAsText(file);
+  };
+
+  const report =
+    actionData && "report" in actionData
+      ? (actionData.report as string[])
+      : null;
+
+  return (
+    <div className="space-y-6 max-w-3xl">
+      <section className="rounded-xl border border-stone-200 bg-white p-5">
+        <h2 className="text-lg font-semibold tracking-tight">
+          Import results from CSV
+        </h2>
+        <p className="text-xs text-stone-500 mt-1">
+          Paste or upload the official export. Header:
+          <code className="mx-1 rounded bg-stone-100 px-1.5 py-0.5">
+            Competition,Category,Rank,Chest Number,Participant,Team,Points,Grade
+          </code>
+          One file may hold one program or many — rows are grouped by
+          Competition + Category. Competition is matched to a program by
+          its English name within the matching category; ranks 1-3 become
+          the podium, rank&nbsp;≥4 with points are stored as hidden
+          team-points. Re-importing a competition replaces its result.
+          Unmatched rows are reported, never silently dropped.
+        </p>
+
+        <Form method="post" className="mt-4 space-y-3">
+          <input type="hidden" name="intent" value="upload_results" />
+          <div className="flex flex-wrap items-center gap-3">
+            <label className="inline-flex items-center gap-2 rounded-md border border-stone-300 bg-white px-3 py-1.5 text-xs font-medium text-stone-700 hover:bg-stone-50 cursor-pointer">
+              <input
+                type="file"
+                accept=".csv,text/csv,text/plain"
+                onChange={onPickFile}
+                className="sr-only"
+              />
+              Choose .csv file
+            </label>
+            <label className="inline-flex items-center gap-2 text-sm text-stone-700">
+              <input
+                type="checkbox"
+                name="publish"
+                className="size-4 rounded border-stone-300"
+              />
+              Publish immediately (otherwise saved as draft)
+            </label>
+          </div>
+          <textarea
+            name="csv"
+            required
+            rows={10}
+            spellCheck={false}
+            value={csv}
+            onChange={(e) => setCsv(e.target.value)}
+            placeholder={
+              "Competition,Category,Rank,Chest Number,Participant,Team,Points,Grade\nElocution,Senior,1,A-12,Ayisha,Anithara,18,A\nElocution,Senior,2,B-07,Hana,Cheerpingal,15,A"
+            }
+            className="w-full rounded-md border border-stone-300 bg-white px-3 py-2 font-mono text-xs leading-relaxed focus:outline-none focus:border-stone-400"
+          />
+          {actionData && "error" in actionData && (
+            <p className="text-xs text-red-700 bg-red-50 border border-red-200 rounded-md px-3 py-2">
+              {actionData.error}
+            </p>
+          )}
+          {actionData && "ok" in actionData && "message" in actionData && (
+            <p className="text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-md px-3 py-2">
+              {actionData.message as string}
+            </p>
+          )}
+          {report && report.length > 0 && (
+            <ul className="mt-1 max-h-72 overflow-y-auto rounded-md border border-stone-200 bg-stone-50 p-3 space-y-1 font-mono text-[11px] leading-relaxed">
+              {report.map((line, i) => (
+                <li
+                  key={i}
+                  className={
+                    line.startsWith("✗") ? "text-red-700" : "text-emerald-700"
+                  }
+                >
+                  {line}
+                </li>
+              ))}
+            </ul>
+          )}
+          <button
+            type="submit"
+            disabled={busy}
+            className="rounded-md bg-stone-900 px-4 py-2 text-sm font-medium text-white hover:bg-stone-800 disabled:opacity-50"
+          >
+            {busy ? "Importing…" : "Import results"}
+          </button>
+        </Form>
+      </section>
     </div>
   );
 }
@@ -1317,8 +1727,10 @@ function StandingsView({
 // ============================================================================
 function ResultModal({
   editData,
+  knownUnits = [],
 }: {
   editData: EditData;
+  knownUnits?: string[];
 }) {
   const navigate = useNavigate();
   const navigation = useNavigation();
@@ -1459,21 +1871,21 @@ function ResultModal({
                     placeholder={isFirst ? "Winner name" : "Name (optional)"}
                     className="w-full rounded-md border border-stone-300 bg-white px-2.5 py-1.5 text-sm focus:outline-none focus:border-stone-400"
                   />
-                  <select
+                  <input
                     name={`winner_${pos}_unit_ml`}
-                    defaultValue={(w?.unit_ml ?? "").toLowerCase()}
-                    className="rounded-md border border-stone-300 bg-white px-2 py-1.5 text-sm focus:outline-none focus:border-stone-400"
-                  >
-                    <option value="">Team —</option>
-                    {TEAMS.map((t) => (
-                      <option key={t.slug} value={t.slug}>
-                        {t.name}
-                      </option>
-                    ))}
-                  </select>
+                    defaultValue={w?.unit_ml ?? ""}
+                    list="known-units"
+                    placeholder="Team / unit"
+                    className="w-full rounded-md border border-stone-300 bg-white px-2.5 py-1.5 text-sm focus:outline-none focus:border-stone-400"
+                  />
                 </div>
               );
             })}
+            <datalist id="known-units">
+              {knownUnits.map((u) => (
+                <option key={u} value={u} />
+              ))}
+            </datalist>
 
             {actionData && "error" in actionData && (
               <p className="text-xs text-red-700 bg-red-50 border border-red-200 rounded-md px-3 py-2">
@@ -1702,9 +2114,11 @@ type ShareItem = {
 function SharePostersView({
   levels,
   eventName,
+  siteUrl,
 }: {
   levels: LevelRow[];
   eventName: string;
+  siteUrl: string;
 }) {
   const items = useMemo<ShareItem[]>(() => {
     const pubs: { level: LevelRow; program: ProgramRow }[] = [];
@@ -1729,11 +2143,11 @@ function SharePostersView({
       const winners = [...r.winners]
         .filter((w) => w.position >= 1)
         .sort((a, b) => a.position - b.position)
-        .map((w) => {
-          const slug = w.unit_ml?.toLowerCase() ?? null;
-          const unit = slug ? TEAM_BY_SLUG[slug]?.name ?? w.unit_ml : w.unit_ml;
-          return { position: w.position, name: w.name_en ?? w.name_ml, unit };
-        });
+        .map((w) => ({
+          position: w.position,
+          name: w.name_en ?? w.name_ml,
+          unit: w.unit_ml,
+        }));
       // Skip the poster for <2-winner results — still published, they
       // count via the uploaded standings, just no poster.
       if (winners.length < 2) return;
@@ -1744,6 +2158,7 @@ function SharePostersView({
         programName,
         data: {
           eventName,
+          siteUrl,
           levelName: levelLabelFromCode(level.code, level.name_ml),
           programName,
           programCode: program.code,
@@ -1753,7 +2168,7 @@ function SharePostersView({
       });
     });
     return out;
-  }, [levels, eventName]);
+  }, [levels, eventName, siteUrl]);
 
   const [idx, setIdx] = useState(0);
   const [tmplShift, setTmplShift] = useState(0);

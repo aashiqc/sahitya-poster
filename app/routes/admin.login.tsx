@@ -31,12 +31,13 @@ export async function action({ request }: Route.ActionArgs): Promise<Response | 
   const { supabase, headers } = createSupabaseServerClient(request);
 
   if (intent === "signup") {
-    const { data: signUpData, error } = await supabase.auth.signUp({ email, password });
-    if (error) return { error: error.message };
-    if (signUpData.session) {
-      return redirect("/admin", { headers: Object.fromEntries(headers) });
-    }
-    return { message: "Account created. Check your email to confirm before signing in." };
+    // Public self-signup is disabled. Admin accounts are provisioned by
+    // the owner console (which creates the auth user + an org-bound
+    // profile via the service role). Reject the intent server-side so
+    // removing the button isn't the only gate.
+    return {
+      error: "Sign-up is closed. Ask your sector owner to create your account.",
+    };
   }
 
   const { error } = await supabase.auth.signInWithPassword({ email, password });
@@ -61,7 +62,7 @@ export default function AdminLogin() {
           </p>
           <h1 className="text-2xl font-semibold tracking-tight mt-1">Sign in</h1>
           <p className="text-sm text-stone-500 mt-1">
-            Only invited emails get access.
+            Accounts are created by your sector owner.
           </p>
         </div>
 
@@ -110,15 +111,6 @@ export default function AdminLogin() {
             className="flex-1 rounded-xl bg-brand-700 hover:bg-brand-800 text-white py-2.5 text-sm font-medium disabled:opacity-50 transition"
           >
             {busy ? "Signing in…" : "Sign in"}
-          </button>
-          <button
-            type="submit"
-            name="intent"
-            value="signup"
-            disabled={busy}
-            className="flex-1 rounded-xl border border-stone-300 hover:bg-stone-50 text-stone-700 py-2.5 text-sm font-medium disabled:opacity-50 transition"
-          >
-            Create account
           </button>
         </div>
       </Form>

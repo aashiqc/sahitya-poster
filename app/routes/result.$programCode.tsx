@@ -1,7 +1,10 @@
 import { Link, data } from "react-router";
 import type { Route } from "./+types/result.$programCode";
-import { createSupabaseServerClient, loadEvent } from "~/lib/supabase.server";
-import { SITE_URL } from "~/lib/constants";
+import {
+  createSupabaseServerClient,
+  loadTenantEvent,
+  siteUrlFromRequest,
+} from "~/lib/supabase.server";
 import {
   CornerLeaf,
   Diamond,
@@ -16,13 +19,17 @@ export function meta({ data, params }: Route.MetaArgs) {
     (data.event as { name?: string } | null)?.name ?? "Sahityotsav";
   const programName = (data.program as { name_ml?: string } | null)?.name_ml ?? "";
   const levelName = (data.level as { name_ml?: string } | null)?.name_ml ?? "";
+  const siteName =
+    (data.event as { organizations?: { name?: string } | null } | null)
+      ?.organizations?.name ?? eventName;
   const title = `${programName} · ${levelName}`;
   const top = (data.winners as { position: number; name_ml: string }[] | undefined)?.find(
     (w) => w.position === 1,
   )?.name_ml;
   const description = top ? `1st: ${top}` : `${title} · ${eventName}`;
-  const url = `${SITE_URL}/result/${params.programCode ?? ""}`;
-  const image = `${SITE_URL}/sahityotsav-logo.png`;
+  const base = (data.siteUrl as string | undefined) ?? "";
+  const url = `${base}/result/${params.programCode ?? ""}`;
+  const image = `${base}/sahityotsav-logo.png`;
   return [
     { title: `${title} · ${eventName}` },
     { name: "description", content: description },
@@ -31,7 +38,7 @@ export function meta({ data, params }: Route.MetaArgs) {
     { property: "og:description", content: description },
     { property: "og:type", content: "article" },
     { property: "og:url", content: url },
-    { property: "og:site_name", content: "Pantharangadi Sector Sahityotsav" },
+    { property: "og:site_name", content: siteName },
     { property: "og:locale", content: "en_IN" },
     { property: "og:image", content: image },
     { name: "twitter:card", content: "summary_large_image" },
@@ -43,7 +50,8 @@ export function meta({ data, params }: Route.MetaArgs) {
 
 export async function loader({ request, params }: Route.LoaderArgs) {
   const { supabase, headers } = createSupabaseServerClient(request);
-  const event = await loadEvent(supabase);
+  const event = await loadTenantEvent(request, supabase);
+  const siteUrl = siteUrlFromRequest(request);
   if (event.status !== "published") throw new Response("Not found", { status: 404 });
 
   const { data: program } = await supabase
@@ -81,6 +89,7 @@ export async function loader({ request, params }: Route.LoaderArgs) {
       level,
       result,
       winners: winners ?? [],
+      siteUrl,
     },
     {
       headers: {

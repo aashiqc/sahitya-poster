@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Link, data, useRevalidator } from "react-router";
 import type { Route } from "./+types/home";
-import { createSupabaseServerClient, loadEvent } from "~/lib/supabase.server";
-import { SITE_URL } from "~/lib/constants";
-import { TEAM_BY_SLUG } from "~/lib/teams";
+import {
+  createSupabaseServerClient,
+  loadTenantEvent,
+  siteUrlFromRequest,
+} from "~/lib/supabase.server";
 import type Konva from "konva";
 import {
   POSTER_TEMPLATE_COUNT,
@@ -25,19 +27,22 @@ import {
   Trophy,
 } from "lucide-react";
 
-export function meta(_: Route.MetaArgs) {
-  const brand = "Pantharangadi Sector Sahityotsav";
+export function meta({ data }: Route.MetaArgs) {
+  const ev = (data as { event?: { name?: string; name_ml?: string; organizations?: { name?: string } | null } } | undefined)?.event;
+  const brand =
+    ev?.organizations?.name ?? ev?.name ?? ev?.name_ml ?? "Sahityotsav";
+  const base = (data as { siteUrl?: string } | undefined)?.siteUrl ?? "";
   const title = `${brand} · Results`;
   const description = `Live results from ${brand} — browse winners by category as they're announced.`;
-  const image = `${SITE_URL}/sahityotsav-logo.png`;
+  const image = `${base}/sahityotsav-logo.png`;
   return [
     { title },
     { name: "description", content: description },
-    { tagName: "link", rel: "canonical", href: SITE_URL },
+    { tagName: "link", rel: "canonical", href: base },
     { property: "og:title", content: title },
     { property: "og:description", content: description },
     { property: "og:type", content: "website" },
-    { property: "og:url", content: SITE_URL },
+    { property: "og:url", content: base },
     { property: "og:site_name", content: brand },
     { property: "og:locale", content: "en_IN" },
     { property: "og:image", content: image },
@@ -51,10 +56,11 @@ export function meta(_: Route.MetaArgs) {
 
 export async function loader({ request }: Route.LoaderArgs) {
   const { supabase, headers } = createSupabaseServerClient(request);
-  const event = await loadEvent(supabase);
+  const event = await loadTenantEvent(request, supabase);
+  const siteUrl = siteUrlFromRequest(request);
   if (event.status !== "published") {
     return data(
-      { event, published: false as const },
+      { event, published: false as const, siteUrl },
       { headers: { ...Object.fromEntries(headers), "Cache-Control": "no-store" } },
     );
   }
@@ -170,6 +176,7 @@ export async function loader({ request }: Route.LoaderArgs) {
     {
       event,
       published: true as const,
+      siteUrl,
       levels: enrichedLevels,
       totalPublished: results.length,
       totalPrograms: programs.length,
@@ -260,7 +267,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
   if (!loaderData.published) {
     return <NotYetLive event={loaderData.event} />;
   }
-  const { event, levels, standings, standingsHistory } = loaderData;
+  const { event, levels, standings, standingsHistory, siteUrl } = loaderData;
   const org = (event.organizations as { name?: string } | null)?.name;
   const eventName = event.name ?? event.name_ml;
   const finalPosterUrl =
@@ -347,6 +354,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
         <ChatFlow
           levels={levels as Level[]}
           eventName={eventName ?? "Sahityotsav"}
+          siteUrl={siteUrl}
           sector={sector}
           standings={standings}
           finalPosterUrl={finalPosterUrl}
@@ -430,6 +438,7 @@ type Bubble = {
 function ChatFlow({
   levels,
   eventName,
+  siteUrl,
   sector,
   standings,
   finalPosterUrl,
@@ -437,6 +446,7 @@ function ChatFlow({
 }: {
   levels: Level[];
   eventName: string;
+  siteUrl: string;
   sector: string;
   standings: Standings | null;
   finalPosterUrl: string | null;
@@ -585,6 +595,7 @@ function ChatFlow({
           node: (
             <ResultBubble
               eventName={eventName}
+              siteUrl={siteUrl}
               level={level}
               program={program}
               winners={program.result.winners}
@@ -1396,10 +1407,7 @@ function ResultTextBubble({
       ) : (
         <ul className="mt-2 space-y-1.5">
           {ranked.map((w, i) => {
-            const slug = w.unit_ml?.toLowerCase() ?? null;
-            const unit = slug
-              ? TEAM_BY_SLUG[slug]?.name ?? w.unit_ml
-              : w.unit_ml;
+            const unit = w.unit_ml;
             return (
               <li key={i} className="flex items-baseline gap-2 text-sm">
                 <span className="shrink-0 inline-flex w-9 justify-center rounded-full bg-red/10 py-0.5 text-[10px] font-bold text-red">
@@ -1433,6 +1441,7 @@ function ResultTextBubble({
 
 function ResultBubble({
   eventName,
+  siteUrl,
   level,
   program,
   winners,
@@ -1440,6 +1449,7 @@ function ResultBubble({
   onDifferentLevel,
 }: {
   eventName: string;
+  siteUrl: string;
   level: Level;
   program: Program;
   winners: Winner[];
@@ -1457,13 +1467,13 @@ function ResultBubble({
 
   const posterData: PosterData = {
     eventName,
+    siteUrl,
     levelName: levelLabel(level),
     programName: program.name_en ?? program.code,
     programCode: program.code,
     resultNo,
     winners: sorted.map((w) => {
-      const slug = w.unit_ml?.toLowerCase() ?? null;
-      const unitEn = slug ? TEAM_BY_SLUG[slug]?.name ?? w.unit_ml : w.unit_ml;
+      const unitEn = w.unit_ml;
       return {
         position: w.position,
         name: w.name_en ?? w.name_ml,

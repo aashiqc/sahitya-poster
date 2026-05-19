@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type Konva from "konva";
 import { Stage, Layer, Image as KImage, Text, Rect, Group } from "react-konva";
-import { SITE_URL } from "~/lib/constants";
+import { SITE_URL_FALLBACK } from "~/lib/constants";
 
 // ─────────────────────────────────────────────────────────────────────
 // Public types
@@ -15,6 +15,9 @@ export type PosterWinner = {
 
 export type PosterData = {
   eventName: string;
+  /** Per-tenant canonical origin for the "Full result →" share link.
+   *  Falls back to SITE_URL_FALLBACK when not supplied. */
+  siteUrl?: string;
   levelName: string;
   programName: string;
   programCode: string;
@@ -624,7 +627,7 @@ function buildShareCaption(data: PosterData): { title: string; text: string } {
   const sub = data.resultNo
     ? `${data.eventName} · Result No. ${data.resultNo}`
     : data.eventName;
-  const link = `${SITE_URL}/result/${data.programCode}`;
+  const link = `${data.siteUrl ?? SITE_URL_FALLBACK}/result/${data.programCode}`;
 
   const text = [heading, sub, "", ...podium, "", `Full result → ${link}`]
     .join("\n")
