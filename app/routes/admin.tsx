@@ -1068,44 +1068,79 @@ export default function Admin({ loaderData }: Route.ComponentProps) {
           navOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"
         }`}
       >
-        <div className="px-5 py-4 border-b border-white/10">
-          <p className="text-[10px] font-bold tracking-[0.25em] uppercase text-yellow leading-none">
+        {/* Identity + the highest-stakes control: event status */}
+        <div className="px-5 pt-5 pb-4 border-b border-white/10">
+          <p className="text-[10px] font-bold tracking-[0.3em] uppercase text-yellow leading-none">
             Sahityotsav
           </p>
-          <p className="text-sm font-medium mt-1.5 truncate">{orgName}</p>
+          <p className="font-[Fraunces,serif] text-lg leading-tight mt-2 truncate">
+            {orgName}
+          </p>
+          <p lang="ml" className="text-xs text-white/55 mt-0.5 truncate">
+            {eventName}
+          </p>
+          <Form method="post" className="mt-3">
+            <button
+              type="submit"
+              name="intent"
+              value="toggle_publish"
+              className={`w-full flex items-center justify-center gap-2 rounded-lg text-xs font-semibold px-3 py-2 transition ${
+                isPublished
+                  ? "bg-white/10 text-white hover:bg-white/15"
+                  : "bg-yellow text-black hover:bg-yellow/90"
+              }`}
+            >
+              <span
+                className={`size-1.5 rounded-full ${
+                  isPublished ? "bg-yellow" : "bg-black"
+                }`}
+              />
+              {isPublished ? "Live — tap to unpublish" : "Publish event"}
+            </button>
+          </Form>
         </div>
 
-        <nav className="flex-1 overflow-y-auto p-3 space-y-1">
-          <NavItem
-            active={view === "dashboard"}
-            label="Dashboard"
-            icon={<LayoutGrid className="size-4" />}
-            to="/admin"
-          />
-          <NavItem
-            active={view === "standings"}
-            label="Team standings"
-            icon={<Trophy className="size-4" />}
-            to="/admin?view=standings"
-          />
-          <NavItem
-            active={view === "share"}
-            label="Share posters"
-            icon={<Share2 className="size-4" />}
-            to="/admin?view=share"
-          />
-          <NavItem
-            active={view === "import"}
-            label="Import results"
-            icon={<Upload className="size-4" />}
-            to="/admin?view=import"
-          />
-          <NavItem
-            active={view === "templates"}
-            label="Poster templates"
-            icon={<Images className="size-4" />}
-            to="/admin?view=templates"
-          />
+        <nav className="flex-1 overflow-y-auto px-3 py-4 space-y-5">
+          <div className="space-y-1">
+            <p className="px-3 pb-1 text-[10px] font-semibold tracking-[0.18em] uppercase text-white/35">
+              Manage
+            </p>
+            <NavItem
+              active={view === "dashboard"}
+              label="Dashboard"
+              icon={<LayoutGrid className="size-4" />}
+              to="/admin"
+            />
+            <NavItem
+              active={view === "standings"}
+              label="Team standings"
+              icon={<Trophy className="size-4" />}
+              to="/admin?view=standings"
+            />
+            <NavItem
+              active={view === "import"}
+              label="Import results"
+              icon={<Upload className="size-4" />}
+              to="/admin?view=import"
+            />
+          </div>
+          <div className="space-y-1">
+            <p className="px-3 pb-1 text-[10px] font-semibold tracking-[0.18em] uppercase text-white/35">
+              Posters
+            </p>
+            <NavItem
+              active={view === "templates"}
+              label="Poster templates"
+              icon={<Images className="size-4" />}
+              to="/admin?view=templates"
+            />
+            <NavItem
+              active={view === "share"}
+              label="Share posters"
+              icon={<Share2 className="size-4" />}
+              to="/admin?view=share"
+            />
+          </div>
           <NavItem
             label="Public site"
             icon={<ExternalLink className="size-4" />}
@@ -1114,35 +1149,13 @@ export default function Admin({ loaderData }: Route.ComponentProps) {
           />
         </nav>
 
-        <div className="p-3 border-t border-white/10 space-y-2">
-          <div className="px-3 py-2 rounded-lg bg-white/5">
-            <p className="text-[10px] uppercase tracking-widest text-yellow/80">
-              Event
-            </p>
-            <p lang="ml" className="text-sm font-semibold mt-0.5 truncate">
-              {eventName}
-            </p>
-            <Form method="post" className="mt-2">
-              <button
-                type="submit"
-                name="intent"
-                value="toggle_publish"
-                className={`w-full rounded-md text-[11px] font-semibold px-2.5 py-1.5 ${
-                  isPublished
-                    ? "bg-white/10 hover:bg-white/15 text-white"
-                    : "bg-yellow text-black hover:bg-yellow/90"
-                }`}
-              >
-                {isPublished ? "● Live — unpublish" : "Publish event"}
-              </button>
-            </Form>
-          </div>
+        <div className="p-3 border-t border-white/10">
           <Form method="post">
             <button
               type="submit"
               name="intent"
               value="logout"
-              className="w-full text-left px-3 py-2 rounded-lg text-xs text-white/60 hover:bg-white/10 hover:text-white"
+              className="w-full text-left px-3 py-2 rounded-lg text-xs text-white/55 hover:bg-white/10 hover:text-white truncate"
               title={user.email}
             >
               Sign out · {user.email}
@@ -1174,24 +1187,45 @@ export default function Admin({ loaderData }: Route.ComponentProps) {
             >
               <Menu className="size-4" />
             </button>
-            <h1 className="text-base font-semibold tracking-tight">
-              {view === "standings"
-                ? "Team standings"
-                : view === "share"
-                ? "Share posters"
-                : view === "import"
-                ? "Import results"
-                : view === "templates"
-                ? "Poster templates"
-                : "Dashboard"}
-            </h1>
+            <div className="min-w-0">
+              <h1 className="font-[Fraunces,serif] text-xl leading-none tracking-tight truncate">
+                {view === "standings"
+                  ? "Team standings"
+                  : view === "share"
+                  ? "Share posters"
+                  : view === "import"
+                  ? "Import results"
+                  : view === "templates"
+                  ? "Poster templates"
+                  : "Dashboard"}
+              </h1>
+              <p className="text-[11px] text-stone-500 mt-1 truncate">
+                <span lang="ml">{eventName}</span>{" "}
+                ·{" "}
+                {isPublished ? (
+                  <span className="font-medium text-emerald-700">Live</span>
+                ) : (
+                  <span className="font-medium text-amber-700">Draft</span>
+                )}{" "}
+                · {stats.totalPrograms} programs
+                {view === "dashboard" && query
+                  ? ` · ${matchCount} match${matchCount === 1 ? "" : "es"}`
+                  : ""}
+              </p>
+            </div>
 
             {view === "dashboard" && (
-              <div className="flex-1 max-w-md ml-auto">
+              <div className="flex-1 max-w-sm ml-auto">
                 <SearchInput value={query} onChange={setQuery} />
               </div>
             )}
           </div>
+          {!isPublished && (
+            <div className="px-4 lg:px-8 py-1.5 bg-amber-50 border-t border-amber-100 text-[11px] text-amber-800">
+              Draft mode — public results stay hidden until you publish the
+              event.
+            </div>
+          )}
         </header>
 
         <main className="flex-1 px-4 lg:px-8 py-6 space-y-6">
@@ -1246,7 +1280,6 @@ export default function Admin({ loaderData }: Route.ComponentProps) {
               showInactive={showInactive}
               setShowInactive={setShowInactive}
               stats={stats}
-              isPublished={isPublished}
             />
           )}
         </main>
@@ -1268,7 +1301,6 @@ function DashboardView({
   showInactive,
   setShowInactive,
   stats,
-  isPublished,
 }: {
   levels: LevelRow[];
   filteredLevels: LevelRow[];
@@ -1286,56 +1318,61 @@ function DashboardView({
     totalPending: number;
     totalInactive: number;
   };
-  isPublished: boolean;
 }) {
   return (
     <>
-      {/* Stats row */}
+      {/* Metric strip — also the primary filter */}
       <section className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <StatCard label="Programs" value={stats.totalPrograms} tone="black" icon={<LayoutGrid className="size-4" />} />
-        <StatCard label="Published" value={stats.totalPublished} tone="yellow" icon={<Check className="size-4" />} />
-        <StatCard label="Pending" value={stats.totalPending} tone="muted" icon={<Clock className="size-4" />} />
-        <StatCard label="Inactive" value={stats.totalInactive} tone="red" icon={<Ban className="size-4" />} />
-      </section>
-
-      {/* Filters bar */}
-      <section className="flex flex-wrap items-center gap-2 -mx-1">
-        <FilterChip active={statusFilter === "all"} onClick={() => setStatusFilter("all")}>All</FilterChip>
-        <FilterChip active={statusFilter === "published"} onClick={() => setStatusFilter("published")}>
-          Published · {stats.totalPublished}
-        </FilterChip>
-        <FilterChip active={statusFilter === "pending"} onClick={() => setStatusFilter("pending")}>
-          Pending · {stats.totalPending}
-        </FilterChip>
-        <FilterChip active={statusFilter === "draft"} onClick={() => setStatusFilter("draft")}>
-          Drafts · {stats.totalDrafts}
-        </FilterChip>
-        <FilterChip
+        <StatCard
+          label="Programs"
+          value={stats.totalPrograms}
+          accent="ink"
+          active={statusFilter === "all"}
+          onClick={() => setStatusFilter("all")}
+        />
+        <StatCard
+          label="Published"
+          value={stats.totalPublished}
+          accent="live"
+          active={statusFilter === "published"}
+          onClick={() => setStatusFilter("published")}
+        />
+        <StatCard
+          label="Pending"
+          value={stats.totalPending}
+          accent="muted"
+          active={statusFilter === "pending"}
+          onClick={() => setStatusFilter("pending")}
+        />
+        <StatCard
+          label="Inactive"
+          value={stats.totalInactive}
+          accent="alert"
           active={statusFilter === "inactive"}
           onClick={() => {
             setStatusFilter("inactive");
             setShowInactive(true);
           }}
-        >
-          Inactive · {stats.totalInactive}
-        </FilterChip>
+        />
+      </section>
 
-        <div className="ml-auto flex items-center gap-1.5 text-xs">
-          <label className="inline-flex items-center gap-1.5 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={showInactive}
-              onChange={(e) => setShowInactive(e.target.checked)}
-              className="accent-yellow cursor-pointer"
-            />
-            <span className="text-stone-700">Show inactive</span>
-          </label>
-          {query && (
-            <span className="text-stone-500">
-              {matchCount} match{matchCount === 1 ? "" : "es"}
-            </span>
-          )}
-        </div>
+      {/* Secondary filters — drafts + inactive visibility */}
+      <section className="flex flex-wrap items-center gap-2">
+        <FilterChip
+          active={statusFilter === "draft"}
+          onClick={() => setStatusFilter("draft")}
+        >
+          Drafts · {stats.totalDrafts}
+        </FilterChip>
+        <label className="ml-auto inline-flex items-center gap-1.5 text-xs text-stone-600 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={showInactive}
+            onChange={(e) => setShowInactive(e.target.checked)}
+            className="accent-yellow cursor-pointer"
+          />
+          Show inactive
+        </label>
       </section>
 
       {/* Categories grid */}
@@ -1359,12 +1396,6 @@ function DashboardView({
           </div>
         )}
       </section>
-
-      {!isPublished && (
-        <p className="text-xs text-stone-500">
-          The event is in draft — public results are hidden until you publish.
-        </p>
-      )}
     </>
   );
 }
@@ -1923,7 +1954,7 @@ function ResultModal({
           <div className="min-w-0 flex-1">
             <h2
               id="result-modal-title"
-              className="text-base font-semibold tracking-tight truncate"
+              className="font-[Fraunces,serif] text-lg leading-tight tracking-tight truncate"
             >
               {program.name_en ?? program.name_ml}
             </h2>
@@ -2004,14 +2035,14 @@ function ResultModal({
                     autoFocus={isFirst && !winnersByPos.get(1)}
                     defaultValue={w?.name_en ?? w?.name_ml ?? ""}
                     placeholder={isFirst ? "Winner name" : "Name (optional)"}
-                    className="w-full rounded-md border border-stone-300 bg-white px-2.5 py-1.5 text-sm focus:outline-none focus:border-stone-400"
+                    className="w-full rounded-md border border-stone-300 bg-white px-3 py-2.5 text-[15px] focus:outline-none focus:border-brand-600 focus:ring-2 focus:ring-brand-600/15"
                   />
                   <input
                     name={`winner_${pos}_unit_ml`}
                     defaultValue={w?.unit_ml ?? ""}
                     list="known-units"
                     placeholder="Team / unit"
-                    className="w-full rounded-md border border-stone-300 bg-white px-2.5 py-1.5 text-sm focus:outline-none focus:border-stone-400"
+                    className="w-full rounded-md border border-stone-300 bg-white px-3 py-2.5 text-[15px] focus:outline-none focus:border-brand-600 focus:ring-2 focus:ring-brand-600/15"
                   />
                 </div>
               );
@@ -2070,7 +2101,7 @@ function ResultModal({
                 name="intent"
                 value="save_draft"
                 disabled={busy}
-                className="rounded-md border border-stone-300 hover:bg-white text-stone-700 px-3 py-1.5 text-sm font-medium disabled:opacity-50"
+                className="rounded-md border border-stone-300 hover:bg-white text-stone-700 px-3.5 py-2 text-sm font-medium disabled:opacity-50"
               >
                 Save draft
               </button>
@@ -2079,7 +2110,7 @@ function ResultModal({
                 name="intent"
                 value="save_publish"
                 disabled={busy}
-                className="rounded-md bg-brand-700 hover:bg-brand-800 text-white px-4 py-1.5 text-sm font-medium disabled:opacity-50"
+                className="rounded-md bg-brand-700 hover:bg-brand-800 text-white px-5 py-2 text-sm font-semibold disabled:opacity-50"
               >
                 {busy ? "…" : "Publish"}
               </button>
@@ -2863,10 +2894,10 @@ function NavItem({
   to?: string;
   external?: boolean;
 }) {
-  const cls = `flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition cursor-pointer ${
+  const cls = `relative flex items-center gap-3 pl-4 pr-3 py-2 rounded-lg text-sm font-medium transition cursor-pointer ${
     active
-      ? "bg-yellow text-black"
-      : "text-white/80 hover:bg-white/10 hover:text-white"
+      ? "bg-white/10 text-white before:content-[''] before:absolute before:left-0 before:top-1.5 before:bottom-1.5 before:w-1 before:rounded-full before:bg-yellow"
+      : "text-white/60 hover:bg-white/5 hover:text-white"
   }`;
   if (to) {
     return (
@@ -2917,47 +2948,51 @@ function SearchInput({
   );
 }
 
+// Unified metric card that doubles as the dashboard filter. Same
+// palette — the accent is a small dot (black / yellow=live / red),
+// kept calm so the Fraunces numeral leads.
 function StatCard({
   label,
   value,
-  tone,
-  icon,
+  accent,
+  active = false,
+  onClick,
 }: {
   label: string;
   value: number;
-  tone: "black" | "yellow" | "muted" | "red";
-  icon: ReactNode;
+  accent: "ink" | "live" | "muted" | "alert";
+  active?: boolean;
+  onClick?: () => void;
 }) {
-  const toneCls =
-    tone === "black"
-      ? "border-black bg-black text-white"
-      : tone === "yellow"
-      ? "border-yellow bg-yellow text-black"
-      : tone === "red"
-      ? "border-red-200 bg-red-50 text-red-900"
-      : "border-stone-200 bg-white text-black";
-  const iconWrap =
-    tone === "black"
-      ? "bg-white/15 text-white"
-      : tone === "yellow"
-      ? "bg-black/10 text-black"
-      : tone === "red"
-      ? "bg-red-100 text-red-700"
-      : "bg-stone-100 text-stone-600";
+  const dot =
+    accent === "live"
+      ? "bg-yellow"
+      : accent === "alert"
+      ? "bg-red-500"
+      : accent === "ink"
+      ? "bg-black"
+      : "bg-stone-400";
   return (
-    <div className={`rounded-xl border px-4 py-3 ${toneCls}`}>
-      <div className="flex items-start justify-between gap-2">
-        <p className="text-[11px] font-semibold tracking-wider uppercase opacity-80">
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      className={`text-left rounded-xl border bg-white px-4 py-3 transition ${
+        active
+          ? "border-black ring-1 ring-black"
+          : "border-stone-200 hover:border-stone-400"
+      }`}
+    >
+      <span className="flex items-center gap-1.5">
+        <span className={`size-1.5 rounded-full ${dot}`} />
+        <span className="text-[11px] font-semibold tracking-wider uppercase text-stone-500">
           {label}
-        </p>
-        <span className={`size-7 grid place-items-center rounded-md ${iconWrap}`}>
-          <span className="size-4">{icon}</span>
         </span>
-      </div>
-      <p className="text-3xl font-semibold tabular-nums mt-1.5 leading-none">
+      </span>
+      <span className="block font-[Fraunces,serif] text-[2rem] tabular-nums mt-1.5 leading-none text-stone-900">
         {value}
-      </p>
-    </div>
+      </span>
+    </button>
   );
 }
 
@@ -2990,12 +3025,13 @@ function CategoryCard({ level }: { level: LevelRow }) {
   return (
     <article className="rounded-xl border border-stone-200 bg-white overflow-hidden flex flex-col">
       <header className="px-4 py-3 border-b border-stone-100 bg-stone-50">
-        <div className="flex items-center justify-between gap-2">
+        <div className="flex items-baseline justify-between gap-2">
           <p lang="ml" className="font-semibold text-sm truncate">
             {level.name_ml}
           </p>
-          <span className="text-[10px] tabular-nums text-stone-500 shrink-0">
-            {level.published}/{level.total}
+          <span className="shrink-0 font-[Fraunces,serif] text-sm tabular-nums text-stone-500">
+            {level.published}
+            <span className="text-stone-300">/{level.total}</span>
           </span>
         </div>
         <div className="mt-2 h-1.5 rounded-full bg-stone-200 overflow-hidden">
