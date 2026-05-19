@@ -634,6 +634,45 @@ export async function action({ request }: Route.ActionArgs) {
     const report: string[] = skipped.map((l) => `✗ unparseable row: ${l}`);
     let okCount = 0;
     let winnerCount = 0;
+    let skippedCount = 0;
+
+    // What to do when a result is ALREADY published: skip (default) or
+    // replace. Drafts are always replaced on re-import.
+    const replacePublished =
+      String(fd.get("published_mode") ?? "skip") === "replace";
+
+    // Prefetch existing results so we can (a) keep a result's number
+    // stable, (b) auto-assign sequential numbers to new ones without
+    // ever duplicating one already in use (incl. skipped published).
+    const { data: existingResults } = await supabase
+      .from("results")
+      .select("id, program_id, result_no, status")
+      .eq("event_id", event.id);
+    const byProgram = new Map<
+      string,
+      { id: string; result_no: string | null; status: string }
+    >();
+    const usedNos = new Set<number>();
+    let maxNo = 0;
+    for (const r of existingResults ?? []) {
+      byProgram.set(r.program_id, {
+        id: r.id,
+        result_no: r.result_no,
+        status: r.status,
+      });
+      const n = parseInt(String(r.result_no ?? "").trim(), 10);
+      if (Number.isFinite(n)) {
+        usedNos.add(n);
+        if (n > maxNo) maxNo = n;
+      }
+    }
+    const nextNo = (): string => {
+      do {
+        maxNo += 1;
+      } while (usedNos.has(maxNo));
+      usedNos.add(maxNo);
+      return String(maxNo);
+    };
 
     for (const g of groups.values()) {
       const tag = `${g.competition} · ${g.category}`;
@@ -687,32 +726,36 @@ export async function action({ request }: Route.ActionArgs) {
         continue;
       }
 
-      const { data: existing } = await supabase
-        .from("results")
-        .select("id")
-        .eq("event_id", event.id)
-        .eq("program_id", program.id)
-        .maybeSingle();
+      const ex = byProgram.get(program.id);
+      if (ex && ex.status === "published" && !replacePublished) {
+        skippedCount++;
+        report.push(`↷ ${tag}: already published — skipped`);
+        continue;
+      }
+      // Keep an existing result's number stable; assign a fresh
+      // non-duplicate one only when it doesn't have a numeric one yet.
+      const exNo = parseInt(String(ex?.result_no ?? "").trim(), 10);
+      const result_no = Number.isFinite(exNo) ? String(exNo) : nextNo();
       const baseFields = {
         event_id: event.id,
         program_id: program.id,
         level_id: program.level_id,
-        result_no: null as string | null,
+        result_no,
         is_tie: false,
         status: publish ? "published" : "draft",
         published_at: publish ? new Date().toISOString() : null,
       };
       let resultId: string;
-      if (existing) {
+      if (ex) {
         const { error: uErr } = await supabase
           .from("results")
           .update(baseFields)
-          .eq("id", existing.id);
+          .eq("id", ex.id);
         if (uErr) {
           report.push(`✗ ${tag}: ${uErr.message}`);
           continue;
         }
-        resultId = existing.id;
+        resultId = ex.id;
         await supabase.from("result_winners").delete().eq("result_id", resultId);
       } else {
         const { data: created, error: iErr } = await supabase
@@ -736,15 +779,62 @@ export async function action({ request }: Route.ActionArgs) {
 
       okCount++;
       winnerCount += winners.length;
-      report.push(`✓ ${program.code} ${tag}: ${winners.length} winners`);
+      report.push(
+        `✓ #${result_no} ${program.code} ${tag}: ${winners.length} winners`,
+      );
     }
 
     const issues = report.filter((r) => r.startsWith("✗")).length;
-    const message = `Imported ${okCount} result${okCount === 1 ? "" : "s"} (${winnerCount} winners)${
-      issues ? ` · ${issues} issue${issues === 1 ? "" : "s"} (see below)` : ""
-    } · ${publish ? "published" : "saved as draft"}`;
+    const message =
+      `Imported ${okCount} result${okCount === 1 ? "" : "s"} (${winnerCount} winners)` +
+      (skippedCount
+        ? ` · ${skippedCount} already-published skipped`
+        : "") +
+      (issues ? ` · ${issues} issue${issues === 1 ? "" : "s"} (see below)` : "") +
+      ` · ${publish ? "published" : "saved as draft"}`;
     return data(
-      okCount === 0 ? { error: message, report } : { ok: true, message, report },
+      okCount === 0 && skippedCount === 0
+        ? { error: message, report }
+        : { ok: true, message, report },
+      { headers: Object.fromEntries(headers) },
+    );
+  }
+
+  if (intent === "publish_all_drafts") {
+    const { data: rows, error } = await supabase
+      .from("results")
+      .update({ status: "published", published_at: new Date().toISOString() })
+      .eq("event_id", event.id)
+      .eq("status", "draft")
+      .select("id");
+    if (error)
+      return data({ error: error.message }, { headers: Object.fromEntries(headers) });
+    const n = rows?.length ?? 0;
+    return data(
+      {
+        ok: true,
+        message: `Published ${n} draft result${n === 1 ? "" : "s"} to live.`,
+      },
+      { headers: Object.fromEntries(headers) },
+    );
+  }
+
+  if (intent === "delete_all_published") {
+    // result_winners cascades on results delete (FK ON DELETE CASCADE).
+    const { data: rows, error } = await supabase
+      .from("results")
+      .delete()
+      .eq("event_id", event.id)
+      .eq("status", "published")
+      .select("id");
+    if (error)
+      return data({ error: error.message }, { headers: Object.fromEntries(headers) });
+    const n = rows?.length ?? 0;
+    return data(
+      {
+        ok: true,
+        message: `Deleted ${n} published result${n === 1 ? "" : "s"}.`,
+      },
       { headers: Object.fromEntries(headers) },
     );
   }
@@ -1387,7 +1477,12 @@ export default function Admin({ loaderData }: Route.ComponentProps) {
               posterMeta={posterMeta}
             />
           )}
-          {view === "import" && <ImportResultsView />}
+          {view === "import" && (
+            <ImportResultsView
+              draftCount={stats.totalDrafts}
+              publishedCount={stats.totalPublished}
+            />
+          )}
           {view === "templates" && (
             <TemplateStudioView
               // Remount (re-seed all editor state + previews) only when the
@@ -1627,7 +1722,13 @@ function StandingsShareCard({
   );
 }
 
-function ImportResultsView() {
+function ImportResultsView({
+  draftCount,
+  publishedCount,
+}: {
+  draftCount: number;
+  publishedCount: number;
+}) {
   const actionData = useActionData<typeof action>();
   const navigation = useNavigation();
   const busy = navigation.state !== "idle";
@@ -1661,8 +1762,9 @@ function ImportResultsView() {
           Competition + Category. Competition is matched to a program by
           its English name within the matching category; ranks 1-3 become
           the podium, rank&nbsp;≥4 with points are stored as hidden
-          team-points. Re-importing a competition replaces its result.
-          Unmatched rows are reported, never silently dropped.
+          team-points. Result numbers are auto-assigned (continuing from
+          the highest in use, never duplicated). Unmatched rows are
+          reported, never silently dropped.
         </p>
 
         <Form method="post" className="mt-4 space-y-3">
@@ -1686,6 +1788,36 @@ function ImportResultsView() {
               Publish immediately (otherwise saved as draft)
             </label>
           </div>
+          <fieldset className="rounded-md border border-stone-200 px-3 py-2">
+            <legend className="px-1 text-[11px] font-semibold uppercase tracking-wider text-stone-500">
+              If a result is already published
+            </legend>
+            <div className="flex flex-wrap gap-x-5 gap-y-1.5">
+              <label className="inline-flex items-center gap-2 text-sm text-stone-700">
+                <input
+                  type="radio"
+                  name="published_mode"
+                  value="skip"
+                  defaultChecked
+                  className="size-4 border-stone-300"
+                />
+                Skip it (keep the published one)
+              </label>
+              <label className="inline-flex items-center gap-2 text-sm text-stone-700">
+                <input
+                  type="radio"
+                  name="published_mode"
+                  value="replace"
+                  className="size-4 border-stone-300"
+                />
+                Replace it with the imported one
+              </label>
+            </div>
+            <p className="mt-1 text-[11px] text-stone-400">
+              Drafts are always replaced on re-import. A replaced result
+              keeps its existing number.
+            </p>
+          </fieldset>
           <textarea
             name="csv"
             required
@@ -1730,6 +1862,69 @@ function ImportResultsView() {
             {busy ? "Importing…" : "Import results"}
           </button>
         </Form>
+      </section>
+
+      <section className="rounded-xl border border-stone-200 bg-white p-5">
+        <h2 className="text-lg font-semibold tracking-tight">Bulk actions</h2>
+        <p className="text-xs text-stone-500 mt-1">
+          Operate on every result in this event at once — useful right
+          after a draft import.
+        </p>
+        <div className="mt-4 flex flex-wrap gap-3">
+          <Form method="post">
+            <input
+              type="hidden"
+              name="intent"
+              value="publish_all_drafts"
+            />
+            <button
+              type="submit"
+              disabled={busy || draftCount === 0}
+              onClick={(e) => {
+                if (
+                  !confirm(
+                    `Publish all ${draftCount} draft result${draftCount === 1 ? "" : "s"} to live?`,
+                  )
+                )
+                  e.preventDefault();
+              }}
+              className="inline-flex items-center gap-2 rounded-md bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
+            >
+              {busy
+                ? "Working…"
+                : `Publish all drafts${draftCount ? ` (${draftCount})` : ""}`}
+            </button>
+          </Form>
+          <Form method="post">
+            <input
+              type="hidden"
+              name="intent"
+              value="delete_all_published"
+            />
+            <button
+              type="submit"
+              disabled={busy || publishedCount === 0}
+              onClick={(e) => {
+                if (
+                  !confirm(
+                    `Delete ALL ${publishedCount} live (published) result${publishedCount === 1 ? "" : "s"}? This cannot be undone.`,
+                  )
+                )
+                  e.preventDefault();
+              }}
+              className="inline-flex items-center gap-2 rounded-md border border-red-300 px-4 py-2 text-sm font-semibold text-red-700 hover:bg-red-50 disabled:opacity-50"
+            >
+              {busy
+                ? "Working…"
+                : `Delete all live results${publishedCount ? ` (${publishedCount})` : ""}`}
+            </button>
+          </Form>
+        </div>
+        <p className="mt-3 text-[11px] text-stone-400">
+          Drafts are not shown publicly until published. Deleting live
+          results removes them (and their winners) from the public site
+          immediately.
+        </p>
       </section>
     </div>
   );
