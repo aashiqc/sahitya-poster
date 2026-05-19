@@ -39,10 +39,18 @@ export type PosterData = {
   overrides?: TemplateOverride;
 };
 
-export type LayoutEl = "meta" | "level" | "program" | "winners" | "resultNo";
-/** Tolerates the pre-split "content" key still present in layouts saved
- *  before level/program became independent blocks. */
-type StoredLayoutEl = LayoutEl | "content";
+export type LayoutEl =
+  | "orgName"
+  | "date"
+  | "place"
+  | "level"
+  | "program"
+  | "winners"
+  | "resultNo";
+/** Tolerates pre-split keys still present in layouts saved before the
+ *  blocks became independent: "content" (level+program) and "meta"
+ *  (org name + date + place). */
+type StoredLayoutEl = LayoutEl | "content" | "meta";
 export type ElOverride = {
   x?: number;
   y?: number;
@@ -72,6 +80,15 @@ function ovFontStyle(ov: ElOverride | undefined, defBold: boolean): string {
     [bold ? "bold" : "", italic ? "italic" : ""].filter(Boolean).join(" ") ||
     "normal"
   );
+}
+/** Shift a (migrated) override down by `dy` so a split-out sub-block
+ *  keeps its original on-poster position. Preserves size/colour/weight. */
+function shiftY(
+  o: ElOverride | undefined,
+  dy: number,
+): ElOverride | undefined {
+  if (!o) return undefined;
+  return { ...o, y: o.y != null ? o.y + dy : undefined };
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -529,52 +546,49 @@ function DraggableEl({
   );
 }
 
-// Tenant meta lines (org/sector name + date + place), rendered relative
-// to (0,0) — DraggableEl provides the position/scale.
-const TenantMeta = ({
-  data,
+// Tenant meta — org/sector name, date and place. Each is its own
+// independently draggable/styled block now; these are the text sizes
+// and the default stacked offsets (relative to the template's meta
+// anchor) so an un-positioned poster looks like the old cluster.
+const META_NAME_SIZE = 36;
+const META_LINE_SIZE = 24;
+const META_NAME_DY = 0;
+const META_DATE_DY = Math.round(META_NAME_SIZE * 1.32 + 7); // 55
+const META_PLACE_DY =
+  META_DATE_DY + Math.round(META_LINE_SIZE * 1.32 + 7); // 55 + 39
+
+// One tenant-meta line, rendered relative to (0,0) — DraggableEl
+// provides the position/scale; ov supplies colour/weight overrides.
+const MetaLine = ({
+  text,
+  size,
+  defBold,
   layout,
+  data,
   ov,
 }: {
-  data: PosterData;
+  text: string;
+  size: number;
+  defBold: boolean;
   layout: TemplateLayout;
+  data: PosterData;
   ov?: ElOverride;
 }) => {
   const m = layout.meta;
   if (!m) return null;
-  const dt = data.posterDate?.trim() ?? "";
-  const lines: { text: string; size: number; bold?: boolean }[] = [];
-  if (data.orgName?.trim())
-    lines.push({ text: data.orgName.trim(), size: 36, bold: true });
-  if (dt) lines.push({ text: dt, size: 24 });
-  if (data.posterPlace?.trim())
-    lines.push({ text: data.posterPlace.trim(), size: 24 });
-  if (lines.length === 0) return null;
-
-  let acc = 0;
-  const placed = lines.map((ln) => {
-    const y = acc;
-    acc += ln.size * 1.32 + 7;
-    return { ...ln, y };
-  });
   return (
-    <>
-      {placed.map((ln, i) => (
-        <Text
-          key={i}
-          x={0}
-          y={ln.y}
-          width={m.w}
-          align={m.align ?? "left"}
-          text={ln.text}
-          fontFamily={data.fontFamily || BODY_FONT}
-          fontSize={ln.size}
-          fontStyle={ovFontStyle(ov, !!ln.bold)}
-          fill={ovColor(ov, m.color)}
-          lineHeight={1.2}
-        />
-      ))}
-    </>
+    <Text
+      x={0}
+      y={0}
+      width={m.w}
+      align={m.align ?? "left"}
+      text={text}
+      fontFamily={data.fontFamily || BODY_FONT}
+      fontSize={size}
+      fontStyle={ovFontStyle(ov, defBold)}
+      fill={ovColor(ov, m.color)}
+      lineHeight={1.2}
+    />
   );
 };
 
@@ -642,24 +656,23 @@ export const PosterCanvas = ({
   const displayHeight = STAGE_H * scale;
   const ready = mounted && w > 0 && imgDone;
 
-  // Level + program were one "content" block before they became
-  // independently movable. Fall back to a saved `content` override so
+  // Some blocks used to be merged and have since been split so each is
+  // movable on its own. Fall back to the old combined override so
   // already-positioned layouts keep their look; new edits write the
-  // split keys. The program inherits content's offset + its old gap.
+  // split keys. Sub-blocks inherit the parent's offset + their old gap.
+  //   content → level + program
+  //   meta    → orgName + date + place
   const co = data.overrides?.content;
   const levelOv: ElOverride | undefined = data.overrides?.level ?? co;
   const programOv: ElOverride | undefined =
-    data.overrides?.program ??
-    (co
-      ? {
-          x: co.x,
-          y: co.y != null ? co.y + PROGRAM_DY : undefined,
-          s: co.s,
-          color: co.color,
-          bold: co.bold,
-          italic: co.italic,
-        }
-      : undefined);
+    data.overrides?.program ?? shiftY(co, PROGRAM_DY);
+
+  const mo = data.overrides?.meta;
+  const orgNameOv: ElOverride | undefined = data.overrides?.orgName ?? mo;
+  const dateOv: ElOverride | undefined =
+    data.overrides?.date ?? shiftY(mo, META_DATE_DY);
+  const placeOv: ElOverride | undefined =
+    data.overrides?.place ?? shiftY(mo, META_PLACE_DY);
 
   return (
     <div
@@ -699,17 +712,63 @@ export const PosterCanvas = ({
             />
           )}
 
-          {/* Admin overlay (general templates): org name + date/place */}
-          {layout.meta && (
+          {/* Admin overlay (general/custom templates): org name, date
+              and place — each its own independently movable block */}
+          {layout.meta && data.orgName?.trim() && (
             <DraggableEl
-              el="meta"
+              el="orgName"
               baseX={layout.meta.x}
-              baseY={layout.meta.y}
-              ov={data.overrides?.meta}
+              baseY={layout.meta.y + META_NAME_DY}
+              ov={orgNameOv}
               editable={editable}
               onMove={onMove}
             >
-              <TenantMeta data={data} layout={layout} ov={data.overrides?.meta} />
+              <MetaLine
+                text={data.orgName.trim()}
+                size={META_NAME_SIZE}
+                defBold
+                layout={layout}
+                data={data}
+                ov={orgNameOv}
+              />
+            </DraggableEl>
+          )}
+          {layout.meta && data.posterDate?.trim() && (
+            <DraggableEl
+              el="date"
+              baseX={layout.meta.x}
+              baseY={layout.meta.y + META_DATE_DY}
+              ov={dateOv}
+              editable={editable}
+              onMove={onMove}
+            >
+              <MetaLine
+                text={data.posterDate.trim()}
+                size={META_LINE_SIZE}
+                defBold={false}
+                layout={layout}
+                data={data}
+                ov={dateOv}
+              />
+            </DraggableEl>
+          )}
+          {layout.meta && data.posterPlace?.trim() && (
+            <DraggableEl
+              el="place"
+              baseX={layout.meta.x}
+              baseY={layout.meta.y + META_PLACE_DY}
+              ov={placeOv}
+              editable={editable}
+              onMove={onMove}
+            >
+              <MetaLine
+                text={data.posterPlace.trim()}
+                size={META_LINE_SIZE}
+                defBold={false}
+                layout={layout}
+                data={data}
+                ov={placeOv}
+              />
             </DraggableEl>
           )}
 

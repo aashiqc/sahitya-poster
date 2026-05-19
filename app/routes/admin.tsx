@@ -3034,11 +3034,12 @@ function TemplateStudioView({
               </span>
             </div>
             <p className="mt-1 text-xs text-stone-500">
-              Drag any block on the preview to move it; the category and
-              program move independently. Resize with −/＋ and recolour or
-              set bold / italic per block. Everything is saved
-              per&nbsp;template so every generated poster stays consistent.
-              Reset reverts to the built-in layout.
+              Drag any block on the preview to move it — name, date,
+              place, category and program each move independently. Resize
+              with −/＋ and recolour or set bold / italic per block.
+              Everything is saved per&nbsp;template so every generated
+              poster stays consistent. Reset reverts to the built-in
+              layout.
             </p>
           </div>
         </div>
@@ -3065,7 +3066,9 @@ function TemplateStudioView({
               <span className={lbl}>Blocks · position, size &amp; style</span>
               {(
                 [
-                  ["meta", "Name · date · place", "Org / date / venue", false],
+                  ["orgName", "Display / event name", "The org name line", true],
+                  ["date", "Date", "Event date line", false],
+                  ["place", "Place / venue", "Venue line", false],
                   ["level", "Category / level", "e.g. Senior, Junior", true],
                   ["program", "Program name", "The program heading", true],
                   ["winners", "Winners list", "Ranked names & units", true],
