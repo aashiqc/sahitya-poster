@@ -44,6 +44,18 @@ function tenantUrl(request: Request, sub: string): string {
     : `${u.origin}/?tenant=${sub}`;
 }
 
+// Strong random password for the admin-reset action. Shown to the owner
+// once (the only time any plaintext exists); only the bcrypt hash is
+// stored. Uses Web Crypto (available in workerd + Node).
+function genPassword(len = 14): string {
+  const a = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789";
+  const buf = new Uint8Array(len);
+  crypto.getRandomValues(buf);
+  let s = "";
+  for (const b of buf) s += a[b % a.length];
+  return s;
+}
+
 async function userEmail(request: Request): Promise<string | null> {
   const { supabase } = createSupabaseServerClient(request);
   const {
@@ -65,16 +77,39 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     .from("events")
     .select("organization_id, name, slug, status, is_current");
 
+  const { data: profs } = await svc
+    .from("profiles")
+    .select("organization_id, user_id, role");
+
+  // auth.users isn't exposed via PostgREST, so map id→email via the
+  // admin API. Passwords are bcrypt-hashed and unrecoverable — only the
+  // email is shown; "Reset password" issues (and reveals once) a new one.
+  const { data: usersList } = await svc.auth.admin.listUsers({
+    perPage: 1000,
+  });
+  const emailById = new Map<string, string | null>(
+    (usersList?.users ?? []).map((u) => [u.id, u.email ?? null]),
+  );
+
   const tenants = (orgs ?? []).map((o) => {
     const ev = (events ?? []).find(
       (e) => e.organization_id === o.id && e.is_current,
     );
     const sub = o.subdomain as string | null;
+    const adminProf =
+      (profs ?? []).find(
+        (p) => p.organization_id === o.id && p.role === "admin",
+      ) ?? (profs ?? []).find((p) => p.organization_id === o.id);
+    const adminUserId = adminProf?.user_id ?? null;
     return {
       name: o.name,
       subdomain: sub,
       url: sub ? tenantUrl(request, sub) : null,
       event: ev ? { name: ev.name, status: ev.status } : null,
+      adminEmail: adminUserId
+        ? emailById.get(adminUserId) ?? null
+        : null,
+      adminUserId,
     };
   });
 
@@ -98,6 +133,21 @@ export async function action({
   }
 
   const svc = createServiceRoleClient(context);
+
+  if (intent === "reset_admin_password") {
+    const userId = String(fd.get("user_id") ?? "").trim();
+    const email = String(fd.get("email") ?? "").trim();
+    if (!userId) return { error: "No admin account on that tenant." };
+    const pwd = genPassword();
+    const { error } = await svc.auth.admin.updateUserById(userId, {
+      password: pwd,
+    });
+    if (error) return { error: `Reset failed: ${error.message}` };
+    return {
+      ok: true,
+      message: `New password for ${email || "admin"}: ${pwd}  — copy it now, it is shown only once.`,
+    };
+  }
 
   if (intent === "create_tenant") {
     const orgName = String(fd.get("org_name") ?? "").trim();
@@ -266,9 +316,9 @@ export async function action({
 
     return {
       ok: true,
-      message: `Created ${orgName} → ${tenantUrl(request, subdomain)} · admin ${adminEmail} · ${
+      message: `Created ${orgName} → ${tenantUrl(request, subdomain)} · login ${adminEmail} / ${adminPassword} · ${
         tplPrograms?.length ?? 0
-      } programs seeded (event is draft — admin publishes it).`,
+      } programs seeded (event is draft — the admin signs in and publishes).`,
     };
   }
 
@@ -420,6 +470,7 @@ export default function OwnerConsole({ loaderData }: Route.ComponentProps) {
                 <th className="px-4 py-3">Sector</th>
                 <th className="px-4 py-3">Address</th>
                 <th className="px-4 py-3">Current event</th>
+                <th className="px-4 py-3">Admin</th>
               </tr>
             </thead>
             <tbody>
@@ -446,6 +497,40 @@ export default function OwnerConsole({ loaderData }: Route.ComponentProps) {
                           ({t.event.status})
                         </span>
                       </span>
+                    ) : (
+                      <span className="text-stone-400">—</span>
+                    )}
+                  </td>
+                  <td className="px-4 py-3">
+                    {t.adminEmail ? (
+                      <div className="space-y-1">
+                        <div className="break-all">{t.adminEmail}</div>
+                        {t.adminUserId && (
+                          <Form method="post">
+                            <input
+                              type="hidden"
+                              name="intent"
+                              value="reset_admin_password"
+                            />
+                            <input
+                              type="hidden"
+                              name="user_id"
+                              value={t.adminUserId}
+                            />
+                            <input
+                              type="hidden"
+                              name="email"
+                              value={t.adminEmail}
+                            />
+                            <button
+                              type="submit"
+                              className="text-xs text-stone-500 hover:text-stone-900 underline underline-offset-4"
+                            >
+                              Reset password
+                            </button>
+                          </Form>
+                        )}
+                      </div>
                     ) : (
                       <span className="text-stone-400">—</span>
                     )}

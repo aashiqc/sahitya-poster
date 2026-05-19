@@ -51,11 +51,21 @@ export function ErrorBoundary({ error }: Route.ErrorBoundaryProps) {
   let title = "Something went wrong";
   let detail = "An unexpected error occurred.";
   let is404 = false;
+  let notLive = false;
 
   if (isRouteErrorResponse(error)) {
     is404 = error.status === 404;
-    title = is404 ? "Tenant not found" : `Error ${error.status}`;
-    detail = error.statusText || (typeof error.data === "string" ? error.data : detail);
+    const body = typeof error.data === "string" ? error.data.trim() : "";
+    // Prefer the message we actually threw (error.data) over React
+    // Router's generic statusText ("Not Found"), so a tenant 404
+    // explains itself (e.g. "…results aren't published yet").
+    detail = body || error.statusText || detail;
+    notLive = /publish|check back/i.test(body);
+    title = !is404
+      ? `Error ${error.status}`
+      : notLive
+      ? "Results not live yet"
+      : "Sector not found";
   } else if (import.meta.env.DEV && error instanceof Error) {
     detail = error.message;
   }
@@ -68,7 +78,7 @@ export function ErrorBoundary({ error }: Route.ErrorBoundaryProps) {
         </p>
         <h1 className="text-2xl font-semibold tracking-tight mt-2">{title}</h1>
         <p className="text-sm text-stone-600 mt-2">{detail}</p>
-        {is404 && (
+        {is404 && !notLive && (
           <p className="text-xs text-stone-400 mt-3">
             Each sector has its own address, e.g.
             {" "}
