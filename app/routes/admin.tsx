@@ -2340,21 +2340,21 @@ function TemplateStudioView({
           default; it's used on the public site and shares (viewers can
           still shuffle). Save to apply.
         </p>
-        <div className="mt-4 space-y-6">
+        <div className="mt-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
           {allowed.map((tplIdx, pos) => {
             const selected = pos === pick;
             return (
               <div
                 key={tplIdx}
-                className={`overflow-hidden rounded-xl border-2 ${
+                className={`overflow-hidden rounded-lg border-2 ${
                   selected ? "border-brand-600" : "border-stone-200"
                 }`}
               >
-                <div className="flex items-center justify-between border-b border-stone-100 px-4 py-2.5">
-                  <span className="text-sm font-medium text-stone-800">
+                <div className="flex items-center justify-between border-b border-stone-100 px-3 py-2">
+                  <span className="text-xs font-medium text-stone-800">
                     Template {pos + 1}
                     {selected && (
-                      <span className="ml-2 text-[11px] font-semibold text-brand-700">
+                      <span className="ml-1.5 text-[10px] font-semibold text-brand-700">
                         ● Default
                       </span>
                     )}
@@ -2363,19 +2363,17 @@ function TemplateStudioView({
                     type="button"
                     onClick={() => setPick(pos)}
                     disabled={selected}
-                    className={`rounded-md px-3 py-1.5 text-xs font-medium transition ${
+                    className={`rounded px-2 py-1 text-[11px] font-medium transition ${
                       selected
                         ? "bg-brand-50 text-brand-700"
                         : "border border-stone-300 text-stone-700 hover:bg-stone-50"
                     }`}
                   >
-                    {selected ? "Default" : "Set as default"}
+                    {selected ? "Default" : "Set default"}
                   </button>
                 </div>
-                <div className="bg-stone-100 p-3">
-                  <div className="mx-auto max-w-lg">
-                    <PosterCanvas data={sample()} templateIndex={tplIdx} />
-                  </div>
+                <div className="bg-stone-100 p-2">
+                  <PosterCanvas data={sample()} templateIndex={tplIdx} />
                 </div>
               </div>
             );
