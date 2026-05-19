@@ -1967,6 +1967,332 @@ function ImportResultsView({
   );
 }
 
+// Wrap the first case-insensitive occurrence of `q` in <mark> so the
+// searched team is easy to spot in a long leaderboard.
+function highlightMatch(text: string, q: string): ReactNode {
+  const i = text.toLowerCase().indexOf(q);
+  if (i < 0 || !q) return text;
+  return (
+    <>
+      {text.slice(0, i)}
+      <mark className="rounded bg-yellow/40 px-0.5 not-italic text-stone-900">
+        {text.slice(i, i + q.length)}
+      </mark>
+      {text.slice(i + q.length)}
+    </>
+  );
+}
+
+// Podium tones — reuse the result poster's medal palette so the admin
+// leaderboard reads as the same product as the public poster.
+const PODIUM_TIER = [
+  { bg: "#C89412", soft: "bg-amber-50" },
+  { bg: "#6F6F6F", soft: "bg-stone-100" },
+  { bg: "#A05A1D", soft: "bg-orange-50" },
+] as const;
+
+// One interactive, scannable leaderboard driven by a checkpoint
+// selector. Replaces the old "one giant section (with a live Konva
+// poster) per snapshot" stack — only the selected checkpoint renders,
+// and the poster is mounted on demand.
+function StandingsLeaderboard({
+  snapshots,
+}: {
+  snapshots: StandingsSnapshot[];
+}) {
+  const navigation = useNavigation();
+  const busy = navigation.state !== "idle";
+
+  const sorted = useMemo(
+    () => [...snapshots].sort((a, b) => b.afterN - a.afterN),
+    [snapshots],
+  );
+  const [selIdx, setSelIdx] = useState(0);
+  const [query, setQuery] = useState("");
+  const [posterOpen, setPosterOpen] = useState(false);
+
+  if (sorted.length === 0) {
+    return (
+      <section className="rounded-xl border border-dashed border-stone-300 bg-white p-8 text-center">
+        <Trophy
+          className="mx-auto size-6 text-stone-300"
+          strokeWidth={2}
+          aria-hidden
+        />
+        <p className="mt-2 text-sm text-stone-500">
+          No standings uploaded yet. The public standings poster appears
+          once you upload at least one snapshot.
+        </p>
+      </section>
+    );
+  }
+
+  const idx = Math.min(selIdx, sorted.length - 1);
+  const sel = sorted[idx];
+  const rows = [...sel.rows].sort((a, b) => a.rank - b.rank);
+  const maxPoints = rows.reduce((m, r) => Math.max(m, r.points), 0) || 1;
+  const q = query.trim().toLowerCase();
+  const visible = q
+    ? rows.filter((r) => r.team_name.toLowerCase().includes(q))
+    : rows;
+
+  const pick = (i: number) => {
+    setSelIdx(i);
+    setQuery("");
+    setPosterOpen(false);
+  };
+
+  return (
+    <section className="overflow-hidden rounded-xl border border-stone-200 bg-white">
+      {/* Header */}
+      <div className="flex items-center gap-2.5 border-b border-stone-200 px-5 py-3.5">
+        <span className="grid size-8 place-items-center rounded-lg bg-stone-900 text-white">
+          <Trophy className="size-4" strokeWidth={2.5} aria-hidden />
+        </span>
+        <div>
+          <h2 className="text-sm font-semibold tracking-tight text-stone-900">
+            Team standings
+          </h2>
+          <p className="text-[11px] text-stone-400">
+            {sorted.length} checkpoint{sorted.length === 1 ? "" : "s"}{" "}
+            uploaded
+          </p>
+        </div>
+      </div>
+
+      {/* Checkpoint selector */}
+      <div
+        role="tablist"
+        aria-label="Standings checkpoint"
+        className="flex gap-1.5 overflow-x-auto border-b border-stone-100 bg-stone-50/60 px-4 py-2.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+      >
+        {sorted.map((s, i) => {
+          const active = i === idx;
+          return (
+            <button
+              key={s.afterN}
+              type="button"
+              role="tab"
+              aria-selected={active}
+              onClick={() => pick(i)}
+              className={`shrink-0 rounded-full px-3.5 py-1.5 text-xs font-semibold whitespace-nowrap transition ${
+                active
+                  ? "bg-stone-900 text-white shadow-sm"
+                  : "border border-stone-200 bg-white text-stone-600 hover:bg-stone-100"
+              }`}
+            >
+              {i === 0 ? "Latest" : `After ${s.afterN}`}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Toolbar: context + search */}
+      <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-3">
+        <p className="text-xs text-stone-500">
+          After{" "}
+          <span className="font-semibold tabular-nums text-stone-800">
+            {sel.afterN}
+          </span>{" "}
+          result{sel.afterN === 1 ? "" : "s"} ·{" "}
+          <span className="tabular-nums">{rows.length}</span> teams
+        </p>
+        <div className="relative">
+          <Search
+            className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-stone-400"
+            aria-hidden
+          />
+          <input
+            type="text"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Find a team…"
+            aria-label="Find a team"
+            className="w-52 rounded-full border border-stone-300 bg-white py-1.5 pl-8 pr-7 text-xs text-stone-900 placeholder:text-stone-400 transition focus:border-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-600/25"
+          />
+          {query && (
+            <button
+              type="button"
+              onClick={() => setQuery("")}
+              aria-label="Clear search"
+              className="absolute right-2 top-1/2 grid size-4 -translate-y-1/2 place-items-center rounded-full text-stone-400 transition hover:bg-stone-100 hover:text-stone-600"
+            >
+              <X className="size-3" />
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Leaderboard */}
+      <div className="border-t border-stone-100">
+        <div className="flex items-center gap-3 px-5 py-2 text-[10px] font-semibold uppercase tracking-wider text-stone-400">
+          <span className="w-9">Rank</span>
+          <span className="flex-1">Team</span>
+          <span className="w-20 text-right">Points</span>
+        </div>
+        {visible.length === 0 ? (
+          <p className="px-5 py-10 text-center text-sm text-stone-500">
+            No team matches “{query.trim()}”.
+          </p>
+        ) : (
+          <ol className="divide-y divide-stone-100">
+            {visible.map((r) => {
+              const tier = r.rank <= 3 ? PODIUM_TIER[r.rank - 1] : null;
+              const pct = Math.max(
+                4,
+                Math.round((r.points / maxPoints) * 100),
+              );
+              return (
+                <li
+                  key={`${r.rank}-${r.team_name}`}
+                  className={`flex items-center gap-3 px-5 py-2.5 transition ${
+                    tier ? tier.soft : "hover:bg-stone-50"
+                  }`}
+                >
+                  <span className="w-9">
+                    {tier ? (
+                      <span
+                        className="grid size-7 place-items-center rounded-full text-[11px] font-bold text-white"
+                        style={{ backgroundColor: tier.bg }}
+                      >
+                        {r.rank}
+                      </span>
+                    ) : (
+                      <span className="grid size-7 place-items-center text-sm font-semibold tabular-nums text-stone-400">
+                        {r.rank}
+                      </span>
+                    )}
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <p
+                      className={`truncate text-sm ${
+                        tier
+                          ? "font-semibold text-stone-900"
+                          : "font-medium text-stone-700"
+                      }`}
+                    >
+                      {highlightMatch(r.team_name, q)}
+                    </p>
+                    <div className="mt-1.5 h-1 w-full overflow-hidden rounded-full bg-stone-200/70">
+                      <div
+                        className="h-full rounded-full"
+                        style={{
+                          width: `${pct}%`,
+                          backgroundColor: tier ? tier.bg : "#A8A29E",
+                        }}
+                      />
+                    </div>
+                  </div>
+                  <span className="w-20 shrink-0 text-right">
+                    <span
+                      className={`tabular-nums ${
+                        tier
+                          ? "text-base font-bold text-stone-900"
+                          : "text-sm font-semibold text-stone-700"
+                      }`}
+                    >
+                      {r.points}
+                    </span>
+                    <span className="ml-1 text-[10px] font-semibold uppercase tracking-wide text-stone-400">
+                      pts
+                    </span>
+                  </span>
+                </li>
+              );
+            })}
+          </ol>
+        )}
+      </div>
+
+      {/* Footer: per-checkpoint template, poster and delete */}
+      <div className="border-t border-stone-200 bg-stone-50/60 px-5 py-3">
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-3">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="mr-1 text-[11px] font-semibold uppercase tracking-wider text-stone-500">
+              Template
+            </span>
+            {STANDINGS_TEMPLATE_NAMES.map((nm, i) => (
+              <Form method="post" key={nm}>
+                <input
+                  type="hidden"
+                  name="intent"
+                  value="set_snapshot_template"
+                />
+                <input type="hidden" name="after_n" value={sel.afterN} />
+                <input type="hidden" name="template" value={i} />
+                <button
+                  type="submit"
+                  disabled={busy}
+                  className={`rounded-md border px-2.5 py-1 text-xs font-medium transition disabled:opacity-50 ${
+                    i === sel.template
+                      ? "border-stone-900 bg-stone-900 text-white"
+                      : "border-stone-300 bg-white text-stone-700 hover:bg-stone-100"
+                  }`}
+                >
+                  {i === sel.template ? "✓ " : ""}
+                  {nm}
+                </button>
+              </Form>
+            ))}
+          </div>
+
+          <div className="ml-auto flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setPosterOpen((v) => !v)}
+              aria-expanded={posterOpen}
+              className="inline-flex items-center gap-1.5 rounded-md border border-stone-300 bg-white px-3 py-1.5 text-xs font-medium text-stone-700 transition hover:bg-stone-100"
+            >
+              <Images className="size-3.5" aria-hidden />
+              {posterOpen ? "Hide poster" : "Poster & share"}
+              <ChevronRight
+                className={`size-3.5 text-stone-400 transition-transform ${
+                  posterOpen ? "rotate-90" : ""
+                }`}
+                aria-hidden
+              />
+            </button>
+            <Form method="post">
+              <input
+                type="hidden"
+                name="intent"
+                value="delete_standings"
+              />
+              <input type="hidden" name="after_n" value={sel.afterN} />
+              <button
+                type="submit"
+                disabled={busy}
+                onClick={(e) => {
+                  if (
+                    !confirm(
+                      `Delete the “after ${sel.afterN}” snapshot? This removes it from the public site.`,
+                    )
+                  )
+                    e.preventDefault();
+                }}
+                className="inline-flex items-center gap-1.5 rounded-md border border-red-200 bg-white px-3 py-1.5 text-xs font-medium text-red-600 transition hover:bg-red-50 disabled:opacity-50"
+              >
+                <X className="size-3.5" aria-hidden />
+                Delete
+              </button>
+            </Form>
+          </div>
+        </div>
+
+        {posterOpen && (
+          <div className="mt-1 overflow-hidden rounded-lg border border-stone-200 bg-white">
+            <StandingsShareCard
+              key={`poster-${sel.afterN}-${sel.template}`}
+              snapshot={sel}
+              templateIndex={sel.template}
+            />
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
+
 function StandingsView({
   snapshots,
   defaultTemplate,
@@ -2163,106 +2489,9 @@ function StandingsView({
         </Form>
       </section>
 
-      {/* Existing snapshots */}
-      {snapshots.length === 0 ? (
-        <section className="rounded-xl border border-dashed border-stone-300 bg-white p-8 text-center text-sm text-stone-500">
-          No standings uploaded yet. The public standings poster appears once
-          you upload at least one snapshot.
-        </section>
-      ) : (
-        snapshots
-          .slice()
-          .sort((a, b) => b.afterN - a.afterN)
-          .map((s) => (
-            <section
-              key={s.afterN}
-              className="rounded-xl border border-stone-200 bg-white overflow-hidden"
-            >
-              <header className="px-5 py-3 border-b border-stone-200 bg-stone-50 flex items-center gap-3">
-                <Trophy className="size-4 text-yellow" strokeWidth={2.5} />
-                <h3 className="text-sm font-semibold">After {s.afterN} results</h3>
-                <span className="text-[11px] text-stone-500">
-                  {s.rows.length} teams
-                </span>
-                <Form method="post" className="ml-auto">
-                  <input type="hidden" name="intent" value="delete_standings" />
-                  <input type="hidden" name="after_n" value={s.afterN} />
-                  <button
-                    type="submit"
-                    disabled={busy}
-                    onClick={(e) => {
-                      if (!confirm(`Delete the "after ${s.afterN}" snapshot?`))
-                        e.preventDefault();
-                    }}
-                    className="text-xs text-red-600 hover:text-red-700 hover:underline disabled:opacity-50"
-                  >
-                    Delete
-                  </button>
-                </Form>
-              </header>
-              <table className="w-full text-sm">
-                <thead className="text-[11px] uppercase tracking-wider text-stone-500">
-                  <tr className="border-b border-stone-200">
-                    <th className="text-left px-5 py-2 font-medium w-16">Rank</th>
-                    <th className="text-left px-5 py-2 font-medium">Team</th>
-                    <th className="text-right px-5 py-2 font-medium w-24">
-                      Points
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {s.rows.map((r) => (
-                    <tr
-                      key={`${r.rank}-${r.team_name}`}
-                      className="border-b border-stone-100 last:border-0"
-                    >
-                      <td className="px-5 py-2.5 tabular-nums text-stone-600">
-                        {r.rank}
-                      </td>
-                      <td className="px-5 py-2.5 font-medium">{r.team_name}</td>
-                      <td className="px-5 py-2.5 text-right font-semibold tabular-nums">
-                        {r.points}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-              <div className="flex flex-wrap items-center gap-2 border-t border-stone-200 px-5 py-3">
-                <span className="text-xs font-medium text-stone-600 mr-1">
-                  Template
-                </span>
-                {STANDINGS_TEMPLATE_NAMES.map((nm, i) => (
-                  <Form method="post" key={nm}>
-                    <input
-                      type="hidden"
-                      name="intent"
-                      value="set_snapshot_template"
-                    />
-                    <input type="hidden" name="after_n" value={s.afterN} />
-                    <input type="hidden" name="template" value={i} />
-                    <button
-                      type="submit"
-                      disabled={busy}
-                      className={`rounded-md border px-2.5 py-1 text-xs font-medium disabled:opacity-50 ${
-                        i === s.template
-                          ? "border-stone-900 bg-stone-900 text-white"
-                          : "border-stone-300 bg-white text-stone-700 hover:bg-stone-50"
-                      }`}
-                    >
-                      {i === s.template ? "✓ " : ""}
-                      {nm}
-                    </button>
-                  </Form>
-                ))}
-              </div>
-              <StandingsShareCard
-                key={`poster-${s.afterN}-${s.template}`}
-                snapshot={s}
-                templateIndex={s.template}
-              />
-            </section>
-          ))
-      )}
+      {/* Interactive leaderboard — checkpoint switcher, search, podium,
+          and an on-demand poster, in one panel. */}
+      <StandingsLeaderboard snapshots={snapshots} />
     </div>
   );
 }
@@ -2296,12 +2525,23 @@ function ResultModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Lock body scroll while modal open
+  // Lock page scroll while the modal is open. The admin shell scrolls on
+  // the document element (root is `min-h-dvh`, no overflow wrapper), so
+  // locking <body> alone leaves the dashboard scrollable behind the
+  // overlay. Lock the document element and pad for the now-absent
+  // scrollbar so the page doesn't shift.
   useEffect(() => {
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
+    const doc = document.documentElement;
+    const sbw = window.innerWidth - doc.clientWidth;
+    const prev = {
+      overflow: doc.style.overflow,
+      paddingRight: doc.style.paddingRight,
+    };
+    doc.style.overflow = "hidden";
+    if (sbw > 0) doc.style.paddingRight = `${sbw}px`;
     return () => {
-      document.body.style.overflow = prev;
+      doc.style.overflow = prev.overflow;
+      doc.style.paddingRight = prev.paddingRight;
     };
   }, []);
 
@@ -2453,7 +2693,7 @@ function ResultModal({
         <Form method="post" className="flex-1 min-h-0 flex flex-col">
           <input type="hidden" name="program_code" value={program.code} />
 
-          <div className="flex-1 overflow-auto px-5 py-4 space-y-3">
+          <div className="flex-1 overflow-auto overscroll-contain px-5 py-4 space-y-3">
             {/* Winners — primary section. Result # is a compact inline
                 field in the header, not a wasted standalone row. */}
             <section className="rounded-xl border border-stone-200">
