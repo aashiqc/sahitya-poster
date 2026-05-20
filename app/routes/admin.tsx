@@ -258,7 +258,7 @@ export async function loader({ request }: Route.LoaderArgs) {
     )?.subdomain;
     if (!orgSub) {
       throw new Response(
-        "Your account isn’t linked to a sector. Ask the owner to invite you.",
+        "Your account isn’t linked to an organisation. Ask the owner to invite you.",
         { status: 403, headers: Object.fromEntries(headers) },
       );
     }
@@ -273,7 +273,7 @@ export async function loader({ request }: Route.LoaderArgs) {
   // pantharangadi admin can't drive another sector's subdomain.
   if (profile.organization_id !== event.organization_id) {
     throw new Response(
-      "Your admin account belongs to a different sector. Sign in on your own sector’s address.",
+      "Your admin account belongs to a different organisation. Sign in on your own address.",
       { status: 403, headers: Object.fromEntries(headers) },
     );
   }
@@ -450,7 +450,7 @@ export async function action({ request }: Route.ActionArgs) {
   const event = await loadTenantEvent(request, supabase);
   if (profile.organization_id !== event.organization_id) {
     throw new Response(
-      "Your admin account belongs to a different sector.",
+      "Your admin account belongs to a different organisation.",
       { status: 403, headers: Object.fromEntries(headers) },
     );
   }

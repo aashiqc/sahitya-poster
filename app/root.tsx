@@ -65,7 +65,7 @@ export function ErrorBoundary({ error }: Route.ErrorBoundaryProps) {
       ? `Error ${error.status}`
       : notLive
       ? "Results not live yet"
-      : "Sector not found";
+      : "Address not set up";
   } else if (import.meta.env.DEV && error instanceof Error) {
     detail = error.message;
   }
@@ -80,9 +80,9 @@ export function ErrorBoundary({ error }: Route.ErrorBoundaryProps) {
         <p className="text-sm text-stone-600 mt-2">{detail}</p>
         {is404 && !notLive && (
           <p className="text-xs text-stone-400 mt-3">
-            Each sector has its own address, e.g.
+            Each team has its own address, e.g.
             {" "}
-            <span className="font-mono">your-sector.sahityotsav.live</span>.
+            <span className="font-mono">your-name.sahityotsav.live</span>.
           </p>
         )}
       </div>

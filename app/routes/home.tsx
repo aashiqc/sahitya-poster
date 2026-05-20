@@ -49,9 +49,9 @@ export function meta({ data }: Route.MetaArgs) {
     | undefined;
   const base = d?.siteUrl ?? "";
   if (d?.mode === "apex") {
-    const title = "Sahityotsav · Live results from every sector";
+    const title = "Sahityotsav · Live results";
     const description =
-      "Browse live Sahityotsav results sector by sector. Each SSF sector publishes its own winners as they're announced.";
+      "Live Sahityotsav results. Every SSF unit, sector, division and district that runs Sahityotsav has its own live address — winners stream in as they're announced.";
     const image = `${base}/sahityotsav-logo.png`;
     return [
       { title },
@@ -100,41 +100,21 @@ export async function loader({ request }: Route.LoaderArgs) {
   const siteUrl = siteUrlFromRequest(request);
 
   // Apex / reserved host (`sahityotsav.live`, `www`, `app`, `api`) →
-  // a friendly landing with a directory of live sectors + a CTA to
-  // register a new organisation, instead of the 404 unknown-sector
-  // page (which is correct for genuine unknown subdomains only).
+  // a friendly landing with a "register your organisation" CTA, instead
+  // of the 404 unknown-org page (which is correct only for genuine
+  // unknown subdomains).
   if (!resolveTenant(request)) {
-    const { data: orgs } = await supabase
-      .from("organizations")
-      .select(
-        "name, subdomain, org_level, events!inner(status, is_current)",
-      )
-      .eq("events.is_current", true)
-      .eq("events.status", "published")
-      .not("subdomain", "is", null)
-      .order("name", { ascending: true });
-    type Sector = {
-      name: string;
-      subdomain: string;
-      org_level: string | null;
-    };
-    const sectors: Sector[] = (orgs ?? []).map((o) => ({
-      name: (o as { name: string }).name,
-      subdomain: (o as { subdomain: string }).subdomain,
-      org_level: (o as { org_level?: string | null }).org_level ?? null,
-    }));
     return data(
       {
         mode: "apex" as const,
         siteUrl,
         rootDomain: ROOT_DOMAIN,
-        sectors,
         contactEmail: "owner@sahityotsav.live",
       },
       {
         headers: {
           ...Object.fromEntries(headers),
-          "Cache-Control": "public, max-age=60, s-maxage=300",
+          "Cache-Control": "public, max-age=300, s-maxage=600",
         },
       },
     );
@@ -562,117 +542,65 @@ function Ssf({ className = "" }: { className?: string }) {
 // by a 404. Designed lean and static-feeling; no chat/poster runtime.
 // ─────────────────────────────────────────────────────────────────────
 function ApexLanding({
-  sectors,
   rootDomain,
   contactEmail,
 }: {
-  sectors: { name: string; subdomain: string; org_level: string | null }[];
   rootDomain: string;
   contactEmail: string;
 }) {
   const mailto =
-    `mailto:${contactEmail}?subject=${encodeURIComponent("Sahityotsav · sector registration")}` +
+    `mailto:${contactEmail}?subject=${encodeURIComponent("Sahityotsav · new address request")}` +
     `&body=${encodeURIComponent(
-      "Hi,\n\nI'd like to set up Sahityotsav results for our organisation.\n\nName of organisation:\nLevel (unit / sector / division / district):\nContact person + number:\n\nThanks.",
+      "Hi,\n\nI'd like to set up Sahityotsav results for our team.\n\nName of organisation:\nLevel (unit / sector / division / district):\nContact person + number:\n\nThanks.",
     )}`;
   return (
     <main className="relative min-h-dvh bg-paper text-ink-900">
       <WaveBackground />
-      <div className="relative mx-auto max-w-5xl px-5 pb-24 pt-12 sm:pt-20">
+      <div className="relative mx-auto flex min-h-dvh max-w-3xl flex-col justify-center px-5 py-20">
         {/* Hero */}
         <header className="text-center">
           <p className="text-[11px] font-bold uppercase tracking-[0.3em] text-brand-700">
             <Ssf /> · Sahityotsav
           </p>
           <h1 className="mt-3 font-display text-4xl leading-[1.05] tracking-tight sm:text-5xl">
-            Live results from every sector.
+            Live Sahityotsav results.
           </h1>
           <p className="mx-auto mt-4 max-w-xl text-sm leading-relaxed text-ink-700 sm:text-base">
-            Each SSF sector that runs Sahityotsav has its own live address.
-            Pick yours below — winners stream in as the results are
-            announced.
+            Each team that runs Sahityotsav — unit, sector, division or
+            district — has its own live address. Winners stream in as
+            results are announced.
           </p>
           <div className="mt-6 flex flex-wrap items-center justify-center gap-3">
             <a
               href={mailto}
               className="inline-flex items-center gap-2 rounded-full bg-brand-700 px-5 py-2.5 text-sm font-semibold text-paper shadow-sm hover:bg-brand-800"
             >
-              Register your sector →
+              Request a new address →
             </a>
             <Link
               to="/admin"
               className="inline-flex items-center gap-2 rounded-full border border-ink-200 px-5 py-2.5 text-sm font-medium text-ink-800 hover:bg-paper-2"
             >
-              Sector admin sign in
+              Admin sign in
             </Link>
           </div>
         </header>
 
-        {/* Live sectors */}
-        <section className="mt-14">
-          <div className="flex items-baseline justify-between gap-3">
-            <h2 className="font-display text-xl tracking-tight sm:text-2xl">
-              Live sectors
-            </h2>
-            <span className="text-[11px] uppercase tracking-wider text-ink-500">
-              {sectors.length} live
-            </span>
-          </div>
-          {sectors.length === 0 ? (
-            <p className="mt-4 rounded-xl border border-dashed border-ink-200 bg-paper-2/60 px-5 py-8 text-center text-sm text-ink-600">
-              No sectors are live right now — check back during festival
-              season, or{" "}
-              <a
-                href={mailto}
-                className="font-medium text-brand-700 underline-offset-2 hover:underline"
-              >
-                register your sector
-              </a>
-              .
-            </p>
-          ) : (
-            <ul className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              {sectors.map((s) => (
-                <li key={s.subdomain}>
-                  <a
-                    href={`https://${s.subdomain}.${rootDomain}`}
-                    className="group block rounded-xl border border-ink-200 bg-paper px-4 py-3.5 shadow-sm transition hover:border-brand-300 hover:bg-paper-2"
-                  >
-                    <div className="flex items-baseline justify-between gap-3">
-                      <span className="truncate text-sm font-semibold text-ink-900">
-                        {s.name}
-                      </span>
-                      {s.org_level && (
-                        <span className="shrink-0 rounded-full bg-yellow/40 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-ink-800">
-                          {s.org_level}
-                        </span>
-                      )}
-                    </div>
-                    <span className="mt-1 block truncate font-mono text-[11px] text-ink-500 group-hover:text-brand-700">
-                      {s.subdomain}.{rootDomain}
-                    </span>
-                  </a>
-                </li>
-              ))}
-            </ul>
-          )}
-        </section>
-
-        {/* Register CTA */}
-        <section className="mt-14 rounded-2xl border border-ink-200 bg-paper-2/60 p-6 sm:p-8">
+        {/* Request CTA */}
+        <section className="mt-12 rounded-2xl border border-ink-200 bg-paper-2/60 p-6 sm:p-8">
           <div className="flex flex-col items-start gap-4 sm:flex-row sm:items-center sm:justify-between">
             <div className="max-w-xl">
               <h2 className="font-display text-xl tracking-tight sm:text-2xl">
-                Run Sahityotsav at your sector?
+                Want a live results page for your team?
               </h2>
               <p className="mt-2 text-sm leading-relaxed text-ink-700">
-                Contact the admin to get your own live results address —
+                Contact the admin to get your own address —
                 <span className="font-mono text-ink-900">
                   {" "}
-                  your-sector.{rootDomain}
+                  your-name.{rootDomain}
                 </span>{" "}
-                — with an admin account, your program list and ready-made
-                result posters.
+                — with an admin account, your program list and
+                ready-made result posters.
               </p>
             </div>
             <a
@@ -683,10 +611,6 @@ function ApexLanding({
             </a>
           </div>
         </section>
-
-        <footer className="mt-16 text-center text-[11px] text-ink-500">
-          © Sahityotsav · Samastha Kerala Islamic Sahithya Sangam
-        </footer>
       </div>
     </main>
   );

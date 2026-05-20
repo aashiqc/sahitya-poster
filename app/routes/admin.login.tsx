@@ -79,7 +79,7 @@ export async function action({ request }: Route.ActionArgs): Promise<Response | 
     // profile via the service role). Reject the intent server-side so
     // removing the button isn't the only gate.
     return {
-      error: "Sign-up is closed. Ask your sector owner to create your account.",
+      error: "Sign-up is closed. Ask the owner to create your account.",
     };
   }
 
@@ -89,7 +89,7 @@ export async function action({ request }: Route.ActionArgs): Promise<Response | 
   if (dest === NO_SECTOR) {
     return {
       error:
-        "Your account isn’t linked to a sector yet. Ask the owner to invite you.",
+        "Your account isn’t linked to an organisation yet. Ask the owner to invite you.",
     };
   }
   return redirect(dest, { headers: Object.fromEntries(headers) });
@@ -112,7 +112,8 @@ export default function AdminLogin() {
           </p>
           <h1 className="text-2xl font-semibold tracking-tight mt-1">Sign in</h1>
           <p className="text-sm text-stone-500 mt-1">
-            Accounts are created by your sector owner.
+            Accounts are created by the owner. You'll be taken to your
+            own dashboard after signing in.
           </p>
         </div>
 

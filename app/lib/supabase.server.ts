@@ -110,7 +110,7 @@ export async function loadTenantEvent(
     throw new Response(
       org
         ? `${org.name}’s results aren’t published yet — please check back soon.`
-        : `No Sahityotsav sector at “${sub}”.`,
+        : `No Sahityotsav at “${sub}”.`,
       { status: 404 },
     );
   }
@@ -135,7 +135,7 @@ export async function requireAdmin(request: Request) {
     .maybeSingle();
   if (!profile) {
     throw new Response(
-      "Your account is not invited as an admin. Contact your sector lead.",
+      "Your account is not invited as an admin. Contact the owner to be invited.",
       { status: 403, headers: Object.fromEntries(headers) },
     );
   }
