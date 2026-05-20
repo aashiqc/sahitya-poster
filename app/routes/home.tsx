@@ -487,7 +487,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
           everything collapses back to a single row with the cluster
           inline on the right. */}
       <header className="sticky top-0 z-20">
-        <div className="relative bg-ink-900/95 text-paper backdrop-blur-md supports-[backdrop-filter]:bg-ink-900/90">
+        <div className="relative bg-ink-900 text-paper">
           <div className="mx-auto flex max-w-2xl md:max-w-3xl lg:max-w-4xl flex-wrap items-center gap-x-3 gap-y-2 px-4 sm:px-5 py-2.5 sm:py-3">
             {/* Brand + sector — never truncated or shrunken. min-w-0
                 lets the title participate in flex shrinking only so
