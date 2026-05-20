@@ -71,8 +71,12 @@ import {
 import {
   STANDINGS_TEMPLATE_NAMES,
   StandingsPosterCanvas,
+  eventStandingsTemplateList,
   exportStandingsPng,
+  pickStandingsTemplate,
   shareStandings,
+  usableStandingsTemplates,
+  type StandingsTemplateChoice,
 } from "~/components/standings-poster";
 
 export function meta() {
@@ -309,7 +313,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
       .eq("event_id", event.id),
     supabase
       .from("team_standings")
-      .select("after_n, rank, team_name, points, template")
+      .select("after_n, rank, team_name, points, template, template_id")
       .eq("event_id", event.id)
       .order("after_n", { ascending: true })
       .order("rank", { ascending: true }),
@@ -397,17 +401,24 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     team_name: string;
     points: number;
     template: number | null;
+    template_id: string | null;
   };
   const standingsMap = new Map<
     number,
-    { template: number; rows: { rank: number; team_name: string; points: number }[] }
+    {
+      template: number;
+      templateId: string | null;
+      rows: { rank: number; team_name: string; points: number }[];
+    }
   >();
   for (const r of (standingsRes.data ?? []) as SRow[]) {
     const g = standingsMap.get(r.after_n) ?? {
       template: r.template ?? 0,
+      templateId: r.template_id ?? null,
       rows: [],
     };
     g.template = r.template ?? 0;
+    g.templateId = r.template_id ?? null;
     g.rows.push({
       rank: r.rank,
       team_name: r.team_name,
@@ -419,6 +430,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     .map(([afterN, g]) => ({
       afterN,
       template: g.template,
+      templateId: g.templateId,
       rows: g.rows.sort((a, b) => a.rank - b.rank),
     }))
     .sort((a, b) => a.afterN - b.afterN);
@@ -441,6 +453,15 @@ export async function loader({ request, context }: Route.LoaderArgs) {
       standings,
       standingsTemplate:
         (event as { standings_template?: number }).standings_template ?? 0,
+      standingsTemplateId:
+        (event as { standings_template_id?: string | null })
+          .standings_template_id ?? null,
+      customStandingsTemplates:
+        ((event as { custom_standings_templates?: CustomTpl[] | null })
+          .custom_standings_templates ?? []) as CustomTpl[],
+      disabledStandingsTemplates:
+        ((event as { disabled_standings_templates?: string[] | null })
+          .disabled_standings_templates ?? []) as string[],
     },
     { headers: Object.fromEntries(headers) },
   );
@@ -615,9 +636,8 @@ export async function action({ request }: Route.ActionArgs) {
     }
     const tRaw = parseInt(String(fd.get("template") ?? "0"), 10);
     const template =
-      Number.isFinite(tRaw) && tRaw >= 0 && tRaw < STANDINGS_TEMPLATE_NAMES.length
-        ? tRaw
-        : 0;
+      Number.isFinite(tRaw) && tRaw >= 0 ? tRaw : 0;
+    const templateId = String(fd.get("template_id") ?? "").trim() || null;
     const csv = String(fd.get("csv") ?? "");
     const parsed = parseStandingsCsv(csv);
     if (parsed.length === 0) {
@@ -643,18 +663,25 @@ export async function action({ request }: Route.ActionArgs) {
         team_name: r.team_name,
         points: r.points,
         template,
+        template_id: templateId,
       })),
     );
     if (insErr) return data({ error: insErr.message }, { headers: Object.fromEntries(headers) });
     // Remember this as the default template for the next upload.
     await supabase
       .from("events")
-      .update({ standings_template: template })
+      .update({
+        standings_template: template,
+        standings_template_id: templateId,
+      })
       .eq("id", event.id);
+    const tLabel = templateId
+      ? "custom"
+      : STANDINGS_TEMPLATE_NAMES[template] ?? `Template ${template + 1}`;
     return data(
       {
         ok: true,
-        message: `Saved ${parsed.length} teams · after ${afterN} · ${STANDINGS_TEMPLATE_NAMES[template]}`,
+        message: `Saved ${parsed.length} teams · after ${afterN} · ${tLabel}`,
       },
       { headers: Object.fromEntries(headers) },
     );
@@ -925,24 +952,197 @@ export async function action({ request }: Route.ActionArgs) {
 
   if (intent === "set_snapshot_template") {
     const afterN = parseInt(String(fd.get("after_n") ?? ""), 10);
-    const t = parseInt(String(fd.get("template") ?? ""), 10);
+    const tRaw = parseInt(String(fd.get("template") ?? ""), 10);
+    const tid = String(fd.get("template_id") ?? "").trim();
     if (!Number.isFinite(afterN)) {
       return data({ error: "Invalid snapshot." }, { headers: Object.fromEntries(headers) });
     }
-    if (!Number.isFinite(t) || t < 0 || t >= STANDINGS_TEMPLATE_NAMES.length) {
-      return data({ error: "Invalid template." }, { headers: Object.fromEntries(headers) });
-    }
+    // The picker (eventStandingsTemplateList) clamps/normalises at
+    // render time, so trust any non-negative integer here. The
+    // optional template_id selects a tenant-uploaded custom.
+    const t = Number.isFinite(tRaw) && tRaw >= 0 ? tRaw : 0;
     const { error } = await supabase
       .from("team_standings")
-      .update({ template: t })
+      .update({ template: t, template_id: tid.length ? tid : null })
       .eq("event_id", event.id)
       .eq("after_n", afterN);
     if (error) return data({ error: error.message }, { headers: Object.fromEntries(headers) });
+    const label =
+      tid.length ? "custom" : STANDINGS_TEMPLATE_NAMES[t] ?? `Template ${t + 1}`;
+    return data(
+      { ok: true, message: `after ${afterN}: ${label} template` },
+      { headers: Object.fromEntries(headers) },
+    );
+  }
+
+  if (intent === "set_default_standings_template") {
+    const tplRaw = parseInt(String(fd.get("standings_template") ?? "0"), 10);
+    const standings_template =
+      Number.isFinite(tplRaw) && tplRaw >= 0 ? tplRaw : 0;
+    const rid = String(fd.get("standings_template_id") ?? "").trim();
+    const { error } = await supabase
+      .from("events")
+      .update({
+        standings_template,
+        standings_template_id: rid.length ? rid : null,
+      })
+      .eq("id", event.id);
+    if (error)
+      return data({ error: error.message }, { headers: Object.fromEntries(headers) });
+    return data(
+      { ok: true, message: "Default standings template updated." },
+      { headers: Object.fromEntries(headers) },
+    );
+  }
+
+  if (intent === "toggle_standings_template_disabled") {
+    const id = String(fd.get("template_id") ?? "").trim();
+    if (!id)
+      return data({ error: "Missing template." }, { headers: Object.fromEntries(headers) });
+    const ev = event as { disabled_standings_templates?: string[] | null };
+    const cur = Array.isArray(ev.disabled_standings_templates)
+      ? ev.disabled_standings_templates
+      : [];
+    const wasDisabled = cur.includes(id);
+    const next = wasDisabled ? cur.filter((k) => k !== id) : [...cur, id];
+    const { error } = await supabase
+      .from("events")
+      .update({ disabled_standings_templates: next })
+      .eq("id", event.id);
+    if (error)
+      return data({ error: error.message }, { headers: Object.fromEntries(headers) });
     return data(
       {
         ok: true,
-        message: `after ${afterN}: ${STANDINGS_TEMPLATE_NAMES[t]} template`,
+        message: wasDisabled
+          ? "Standings template enabled."
+          : "Standings template hidden.",
       },
+      { headers: Object.fromEntries(headers) },
+    );
+  }
+
+  if (intent === "save_standings_layout") {
+    let parsed: unknown = null;
+    try {
+      parsed = JSON.parse(String(fd.get("standings_layout") ?? "null"));
+    } catch {
+      return data(
+        { error: "Invalid layout payload." },
+        { headers: Object.fromEntries(headers) },
+      );
+    }
+    const layout =
+      parsed && typeof parsed === "object" && !Array.isArray(parsed)
+        ? parsed
+        : null;
+    const { error } = await supabase
+      .from("events")
+      .update({ standings_layout: layout })
+      .eq("id", event.id);
+    if (error)
+      return data({ error: error.message }, { headers: Object.fromEntries(headers) });
+    return data(
+      { ok: true, message: "Standings layout saved." },
+      { headers: Object.fromEntries(headers) },
+    );
+  }
+
+  if (intent === "upload_standings_template") {
+    const file = fd.get("template_file");
+    const name = String(fd.get("template_name") ?? "").trim() || "Custom";
+    if (!(file instanceof File) || file.size === 0)
+      return data(
+        { error: "Choose an image file to upload." },
+        { headers: Object.fromEntries(headers) },
+      );
+    if (!file.type.startsWith("image/"))
+      return data(
+        { error: "That's not an image — upload a PNG, JPG or WebP." },
+        { headers: Object.fromEntries(headers) },
+      );
+    if (file.size > 4 * 1024 * 1024)
+      return data(
+        {
+          error: `Image is ${(file.size / 1024 / 1024).toFixed(1)} MB — keep under 4 MB.`,
+        },
+        { headers: Object.fromEntries(headers) },
+      );
+    const ext =
+      file.type === "image/png"
+        ? "png"
+        : file.type === "image/jpeg"
+          ? "jpg"
+          : file.type === "image/webp"
+            ? "webp"
+            : (file.name.split(".").pop() || "png").toLowerCase();
+    const id = crypto.randomUUID();
+    const path = `templates/standings/${event.id}/${id}.${ext}`;
+    const up = await supabase.storage
+      .from("posters")
+      .upload(path, file, { upsert: true, contentType: file.type });
+    if (up.error)
+      return data(
+        { error: `Upload failed: ${up.error.message}` },
+        { headers: Object.fromEntries(headers) },
+      );
+    const {
+      data: { publicUrl },
+    } = supabase.storage.from("posters").getPublicUrl(path);
+    const src = `${publicUrl}?v=${Date.now()}`;
+    const ev = event as { custom_standings_templates?: CustomTpl[] | null };
+    const existing = Array.isArray(ev.custom_standings_templates)
+      ? ev.custom_standings_templates
+      : [];
+    const { error: updErr } = await supabase
+      .from("events")
+      .update({
+        custom_standings_templates: [...existing, { id, name, src }],
+      })
+      .eq("id", event.id);
+    if (updErr)
+      return data({ error: updErr.message }, { headers: Object.fromEntries(headers) });
+    return data(
+      { ok: true, message: `Standings template "${name}" uploaded.` },
+      { headers: Object.fromEntries(headers) },
+    );
+  }
+
+  if (intent === "delete_standings_template") {
+    const id = String(fd.get("template_id") ?? "");
+    const ev = event as {
+      custom_standings_templates?: CustomTpl[] | null;
+      standings_template_id?: string | null;
+    };
+    const existing = Array.isArray(ev.custom_standings_templates)
+      ? ev.custom_standings_templates
+      : [];
+    const target = existing.find((t) => t.id === id);
+    if (target?.src) {
+      try {
+        const p = new URL(target.src).pathname;
+        const m = "/object/public/posters/";
+        const i = p.indexOf(m);
+        if (i >= 0)
+          await supabase.storage
+            .from("posters")
+            .remove([decodeURIComponent(p.slice(i + m.length))]);
+      } catch {
+        /* best-effort; metadata removal below is what matters */
+      }
+    }
+    const patch: Record<string, unknown> = {
+      custom_standings_templates: existing.filter((t) => t.id !== id),
+    };
+    if (ev.standings_template_id === id) patch.standings_template_id = null;
+    const { error } = await supabase
+      .from("events")
+      .update(patch)
+      .eq("id", event.id);
+    if (error)
+      return data({ error: error.message }, { headers: Object.fromEntries(headers) });
+    return data(
+      { ok: true, message: "Standings template deleted." },
       { headers: Object.fromEntries(headers) },
     );
   }
@@ -1284,6 +1484,9 @@ export default function Admin({ loaderData }: Route.ComponentProps) {
     publishedWinners,
     standings,
     standingsTemplate,
+    standingsTemplateId,
+    customStandingsTemplates,
+    disabledStandingsTemplates,
   } = loaderData;
   const orgName = (profile.organizations as { name?: string } | null)?.name ?? "";
   const eventName = event.name_ml ?? event.name;
@@ -1551,6 +1754,15 @@ export default function Admin({ loaderData }: Route.ComponentProps) {
             <StandingsView
               snapshots={standings}
               defaultTemplate={standingsTemplate}
+              defaultTemplateId={standingsTemplateId}
+              customStandingsTemplates={customStandingsTemplates}
+              disabledStandingsTemplates={disabledStandingsTemplates}
+              subdomain={posterMeta.subdomain}
+              orgName={posterMeta.orgName}
+              posterDate={posterMeta.posterDate}
+              posterPlace={posterMeta.posterPlace}
+              fontEn={posterMeta.fontEn}
+              fontMl={posterMeta.fontMl}
               finalPosterUrl={
                 (event as { final_poster_url?: string | null })
                   .final_poster_url ?? null
@@ -1736,6 +1948,7 @@ function DashboardView({
 type StandingsSnapshot = {
   afterN: number;
   template: number;
+  templateId: string | null;
   rows: { rank: number; team_name: string; points: number }[];
 };
 
@@ -1744,9 +1957,15 @@ type StandingsSnapshot = {
 function StandingsShareCard({
   snapshot,
   templateIndex,
+  customSrc,
+  meta,
+  fontFamily,
 }: {
   snapshot: StandingsSnapshot;
   templateIndex: number;
+  customSrc?: string;
+  meta?: { orgName?: string; posterDate?: string; posterPlace?: string };
+  fontFamily?: string;
 }) {
   const stageRef = useRef<Konva.Stage | null>(null);
   const [busy, setBusy] = useState<null | "download" | "share">(null);
@@ -1783,6 +2002,9 @@ function StandingsShareCard({
             })),
           }}
           templateIndex={templateIndex}
+          customSrc={customSrc}
+          meta={meta}
+          fontFamily={fontFamily}
           stageRef={stageRef}
         />
       </div>
@@ -2020,6 +2242,260 @@ function ImportResultsView({
 
 // Wrap the first case-insensitive occurrence of `q` in <mark> so the
 // searched team is easy to spot in a long leaderboard.
+// Standings poster template manager — gallery + upload + default +
+// disable + delete. Mirrors the result-poster template strip pattern
+// but lives inside the Team-standings tab so it's discoverable next
+// to the leaderboard. (Live drag-edit of overlay positions is a
+// follow-up — defaults are already tuned to the legacy Pantharangadi
+// positions.)
+function StandingsTemplatesManager({
+  subdomain,
+  customStandingsTemplates,
+  disabledStandingsTemplates,
+  defaultTemplate,
+  defaultTemplateId,
+}: {
+  subdomain: string;
+  customStandingsTemplates: CustomTpl[];
+  disabledStandingsTemplates: string[];
+  defaultTemplate: number;
+  defaultTemplateId: string | null;
+}) {
+  const navigation = useNavigation();
+  const busy = navigation.state !== "idle";
+  const choices = useMemo(
+    () => eventStandingsTemplateList(subdomain, customStandingsTemplates),
+    [subdomain, customStandingsTemplates],
+  );
+  const disabledSet = new Set(disabledStandingsTemplates);
+  const defChoice = pickStandingsTemplate(
+    choices,
+    defaultTemplate,
+    defaultTemplateId,
+    0,
+  );
+  const defaultKey = defChoice?.key ?? choices[0]?.key ?? "0";
+  const builtinPosOf = (key: string) =>
+    Math.max(
+      0,
+      choices
+        .filter((c) => c.builtinIndex !== null)
+        .findIndex((c) => c.key === key),
+    );
+  const [tplFileName, setTplFileName] = useState("");
+
+  // Template artwork preview path — for built-ins we know the static
+  // path; for customs it's the uploaded URL.
+  const previewSrc = (c: StandingsTemplateChoice): string =>
+    c.builtinIndex !== null
+      ? STANDINGS_TEMPLATES_SRCS[c.builtinIndex] ?? ""
+      : (c.src ?? "");
+
+  return (
+    <section className="overflow-hidden rounded-xl border border-stone-200 bg-white">
+      <div className="flex items-baseline justify-between border-b border-stone-200 px-5 py-3">
+        <div>
+          <h2 className="text-sm font-semibold tracking-tight text-stone-900">
+            Standings poster templates
+          </h2>
+          <p className="mt-0.5 text-[11px] text-stone-500">
+            Pick one as the default; hide any you don't want; upload your
+            own — each snapshot can still override below.
+          </p>
+        </div>
+        <span className="text-[11px] text-stone-400">
+          {choices.length} available
+        </span>
+      </div>
+      <div className="-mx-1 flex gap-3 overflow-x-auto px-4 py-3">
+        {choices.map((c) => {
+          const isDefault = c.key === defaultKey;
+          const isDisabled = disabledSet.has(c.key);
+          const isCustom = c.builtinIndex === null;
+          return (
+            <div
+              key={c.key}
+              className={`w-44 shrink-0 overflow-hidden rounded-lg border bg-white transition ${
+                isDefault
+                  ? "border-brand-600 ring-2 ring-brand-600/25"
+                  : "border-stone-200 hover:border-stone-300"
+              } ${isDisabled ? "opacity-40 grayscale" : ""}`}
+            >
+              <div className="relative aspect-[4/5] bg-stone-100">
+                {previewSrc(c) ? (
+                  // Static-image thumbnail (no Konva) keeps this strip
+                  // cheap even with many templates.
+                  // eslint-disable-next-line jsx-a11y/img-redundant-alt
+                  <img
+                    src={previewSrc(c)}
+                    alt={c.name}
+                    className="size-full object-cover"
+                  />
+                ) : (
+                  <div className="grid h-full place-items-center text-[10px] text-stone-400">
+                    No preview
+                  </div>
+                )}
+                {isDisabled && (
+                  <span className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded bg-stone-900/80 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-white">
+                    Hidden
+                  </span>
+                )}
+              </div>
+              <div className="flex items-center gap-1 px-2 py-1.5">
+                <span className="min-w-0 flex-1 truncate text-[11px] font-medium text-stone-700">
+                  {c.name}
+                </span>
+                <Form method="post" className="contents">
+                  <input
+                    type="hidden"
+                    name="intent"
+                    value="toggle_standings_template_disabled"
+                  />
+                  <input type="hidden" name="template_id" value={c.key} />
+                  <button
+                    type="submit"
+                    disabled={busy}
+                    title={isDisabled ? "Enable" : "Hide"}
+                    aria-label={isDisabled ? "Enable" : "Hide"}
+                    className="grid size-6 shrink-0 place-items-center rounded text-stone-400 transition hover:bg-stone-100 hover:text-stone-700 disabled:opacity-50"
+                  >
+                    {isDisabled ? (
+                      <EyeOff className="size-3.5" />
+                    ) : (
+                      <Eye className="size-3.5" />
+                    )}
+                  </button>
+                </Form>
+                {isDefault ? (
+                  <span
+                    title="Public default"
+                    className="inline-flex shrink-0 items-center gap-1 text-[10px] font-semibold text-brand-700"
+                  >
+                    <Star className="size-3 fill-brand-600 text-brand-600" />
+                    Default
+                  </span>
+                ) : (
+                  <Form method="post" className="contents">
+                    <input
+                      type="hidden"
+                      name="intent"
+                      value="set_default_standings_template"
+                    />
+                    <input
+                      type="hidden"
+                      name="standings_template"
+                      value={builtinPosOf(c.key)}
+                    />
+                    <input
+                      type="hidden"
+                      name="standings_template_id"
+                      value={c.builtinIndex === null ? c.key : ""}
+                    />
+                    <button
+                      type="submit"
+                      disabled={busy}
+                      title="Set as default"
+                      className="grid size-6 shrink-0 place-items-center rounded text-stone-400 transition hover:bg-stone-100 hover:text-brand-700 disabled:opacity-50"
+                    >
+                      <Star className="size-3.5" />
+                    </button>
+                  </Form>
+                )}
+                {isCustom && (
+                  <Form method="post" className="contents">
+                    <input
+                      type="hidden"
+                      name="intent"
+                      value="delete_standings_template"
+                    />
+                    <input
+                      type="hidden"
+                      name="template_id"
+                      value={c.key}
+                    />
+                    <button
+                      type="submit"
+                      title="Delete template"
+                      aria-label="Delete template"
+                      onClick={(e) => {
+                        if (!confirm(`Delete "${c.name}"?`))
+                          e.preventDefault();
+                      }}
+                      className="grid size-6 shrink-0 place-items-center rounded text-stone-400 transition hover:bg-red-50 hover:text-red-700"
+                    >
+                      <X className="size-3.5" />
+                    </button>
+                  </Form>
+                )}
+              </div>
+            </div>
+          );
+        })}
+
+        {/* Upload tile */}
+        <Form
+          method="post"
+          encType="multipart/form-data"
+          className="flex w-44 shrink-0 flex-col gap-1.5 rounded-lg border border-dashed border-stone-300 bg-stone-50/60 p-2"
+        >
+          <input
+            type="hidden"
+            name="intent"
+            value="upload_standings_template"
+          />
+          <div className="flex items-center gap-1.5 text-[11px] font-semibold text-stone-600">
+            <Upload className="size-3.5 text-stone-400" />
+            Add template
+          </div>
+          <input
+            name="template_name"
+            required
+            placeholder="Name"
+            className="w-full rounded-md border border-stone-300 bg-white px-2 py-1 text-xs text-stone-900 placeholder:text-stone-400 transition focus:outline-none focus:border-brand-600 focus:ring-2 focus:ring-brand-600/25"
+          />
+          <label className="flex cursor-pointer items-center gap-1.5 rounded-md border border-stone-300 bg-white px-2 py-1 text-xs font-medium text-stone-700 transition hover:bg-stone-50">
+            <span className="min-w-0 truncate">
+              {tplFileName || "Choose image…"}
+            </span>
+            <input
+              type="file"
+              name="template_file"
+              accept="image/png,image/jpeg,image/webp"
+              required
+              className="sr-only"
+              onChange={(e) =>
+                setTplFileName(e.target.files?.[0]?.name ?? "")
+              }
+            />
+          </label>
+          <button
+            type="submit"
+            disabled={busy}
+            className="rounded-md bg-stone-900 px-2 py-1 text-xs font-medium text-white hover:bg-stone-800 disabled:opacity-50"
+          >
+            {busy ? "Uploading…" : "Upload"}
+          </button>
+          <p className="text-[10px] leading-snug text-stone-400">
+            PNG/JPG/WebP · 4:5 · &lt;4 MB
+          </p>
+        </Form>
+      </div>
+    </section>
+  );
+}
+
+// Static template artwork sources (built-ins) — keeps the gallery
+// thumbnails lightweight (no Konva mount). Order MUST match
+// STANDINGS_TEMPLATES in standings-poster.tsx.
+const STANDINGS_TEMPLATES_SRCS = [
+  "/poster/templates/standings.png",
+  "/poster/templates/standings-light.png",
+  "/poster/templates/standings-dark.png",
+  "/poster/templates/standings-general-01.png",
+  "/poster/templates/standings-general-02.png",
+];
+
 function highlightMatch(text: string, q: string): ReactNode {
   const i = text.toLowerCase().indexOf(q);
   if (i < 0 || !q) return text;
@@ -2048,11 +2524,50 @@ const PODIUM_TIER = [
 // and the poster is mounted on demand.
 function StandingsLeaderboard({
   snapshots,
+  subdomain,
+  customStandingsTemplates,
+  disabledStandingsTemplates,
+  defaultTemplate,
+  defaultTemplateId,
+  orgName,
+  posterDate,
+  posterPlace,
+  fontEn,
+  fontMl,
 }: {
   snapshots: StandingsSnapshot[];
+  subdomain: string;
+  customStandingsTemplates: CustomTpl[];
+  disabledStandingsTemplates: string[];
+  defaultTemplate: number;
+  defaultTemplateId: string | null;
+  orgName: string;
+  posterDate: string | null;
+  posterPlace: string | null;
+  fontEn: string | null;
+  fontMl: string | null;
 }) {
   const navigation = useNavigation();
   const busy = navigation.state !== "idle";
+
+  // Templates available to THIS tenant (legacy for Pantharangadi,
+  // general + uploaded customs for everyone else). Hidden ones are
+  // dropped from the per-snapshot picker.
+  const templateChoices = useMemo(
+    () =>
+      usableStandingsTemplates(
+        eventStandingsTemplateList(subdomain, customStandingsTemplates),
+        disabledStandingsTemplates,
+      ),
+    [subdomain, customStandingsTemplates, disabledStandingsTemplates],
+  );
+  const builtinPosOf = (key: string) =>
+    Math.max(
+      0,
+      templateChoices
+        .filter((c) => c.builtinIndex !== null)
+        .findIndex((c) => c.key === key),
+    );
 
   const sorted = useMemo(
     () => [...snapshots].sort((a, b) => b.afterN - a.afterN),
@@ -2262,29 +2777,45 @@ function StandingsLeaderboard({
             <span className="mr-1 text-[11px] font-semibold uppercase tracking-wider text-stone-500">
               Template
             </span>
-            {STANDINGS_TEMPLATE_NAMES.map((nm, i) => (
-              <Form method="post" key={nm}>
-                <input
-                  type="hidden"
-                  name="intent"
-                  value="set_snapshot_template"
-                />
-                <input type="hidden" name="after_n" value={sel.afterN} />
-                <input type="hidden" name="template" value={i} />
-                <button
-                  type="submit"
-                  disabled={busy}
-                  className={`rounded-md border px-2.5 py-1 text-xs font-medium transition disabled:opacity-50 ${
-                    i === sel.template
-                      ? "border-stone-900 bg-stone-900 text-white"
-                      : "border-stone-300 bg-white text-stone-700 hover:bg-stone-100"
-                  }`}
-                >
-                  {i === sel.template ? "✓ " : ""}
-                  {nm}
-                </button>
-              </Form>
-            ))}
+            {templateChoices.map((c) => {
+              const active =
+                sel.templateId
+                  ? c.key === sel.templateId
+                  : c.builtinIndex !== null &&
+                    c.builtinIndex === sel.template;
+              return (
+                <Form method="post" key={c.key}>
+                  <input
+                    type="hidden"
+                    name="intent"
+                    value="set_snapshot_template"
+                  />
+                  <input type="hidden" name="after_n" value={sel.afterN} />
+                  <input
+                    type="hidden"
+                    name="template"
+                    value={c.builtinIndex ?? 0}
+                  />
+                  <input
+                    type="hidden"
+                    name="template_id"
+                    value={c.builtinIndex === null ? c.key : ""}
+                  />
+                  <button
+                    type="submit"
+                    disabled={busy}
+                    className={`rounded-md border px-2.5 py-1 text-xs font-medium transition disabled:opacity-50 ${
+                      active
+                        ? "border-stone-900 bg-stone-900 text-white"
+                        : "border-stone-300 bg-white text-stone-700 hover:bg-stone-100"
+                    }`}
+                  >
+                    {active ? "✓ " : ""}
+                    {c.name}
+                  </button>
+                </Form>
+              );
+            })}
           </div>
 
           <div className="ml-auto flex items-center gap-2">
@@ -2330,15 +2861,31 @@ function StandingsLeaderboard({
           </div>
         </div>
 
-        {posterOpen && (
-          <div className="mt-1 overflow-hidden rounded-lg border border-stone-200 bg-white">
-            <StandingsShareCard
-              key={`poster-${sel.afterN}-${sel.template}`}
-              snapshot={sel}
-              templateIndex={sel.template}
-            />
-          </div>
-        )}
+        {posterOpen && (() => {
+          const chosen =
+            pickStandingsTemplate(
+              templateChoices,
+              sel.template ?? defaultTemplate,
+              sel.templateId ?? defaultTemplateId,
+              0,
+            ) ?? templateChoices[0];
+          return (
+            <div className="mt-1 overflow-hidden rounded-lg border border-stone-200 bg-white">
+              <StandingsShareCard
+                key={`poster-${sel.afterN}-${chosen?.key}`}
+                snapshot={sel}
+                templateIndex={chosen?.builtinIndex ?? 0}
+                customSrc={chosen?.src ?? undefined}
+                meta={{
+                  orgName,
+                  posterDate: posterDate ?? undefined,
+                  posterPlace: posterPlace ?? undefined,
+                }}
+                fontFamily={posterFontStack(fontEn, fontMl)}
+              />
+            </div>
+          );
+        })()}
       </div>
     </section>
   );
@@ -2347,10 +2894,28 @@ function StandingsLeaderboard({
 function StandingsView({
   snapshots,
   defaultTemplate,
+  defaultTemplateId,
+  customStandingsTemplates,
+  disabledStandingsTemplates,
+  subdomain,
+  orgName,
+  posterDate,
+  posterPlace,
+  fontEn,
+  fontMl,
   finalPosterUrl,
 }: {
   snapshots: StandingsSnapshot[];
   defaultTemplate: number;
+  defaultTemplateId: string | null;
+  customStandingsTemplates: CustomTpl[];
+  disabledStandingsTemplates: string[];
+  subdomain: string;
+  orgName: string;
+  posterDate: string | null;
+  posterPlace: string | null;
+  fontEn: string | null;
+  fontMl: string | null;
   finalPosterUrl: string | null;
 }) {
   const actionData = useActionData<typeof action>();
@@ -2358,6 +2923,25 @@ function StandingsView({
   const busy = navigation.state !== "idle";
   const [csv, setCsv] = useState("");
   const [finalName, setFinalName] = useState("");
+
+  // Tenant-aware standings template choices (also drives the
+  // upload-CSV form's template selector below).
+  const viewChoices = useMemo(
+    () =>
+      usableStandingsTemplates(
+        eventStandingsTemplateList(subdomain, customStandingsTemplates),
+        disabledStandingsTemplates,
+      ),
+    [subdomain, customStandingsTemplates, disabledStandingsTemplates],
+  );
+  const initialKey =
+    defaultTemplateId ??
+    viewChoices.find((c) => c.builtinIndex === defaultTemplate)?.key ??
+    viewChoices[0]?.key ??
+    "0";
+  const [uploadTplKey, setUploadTplKey] = useState<string>(initialKey);
+  const uploadTpl =
+    viewChoices.find((c) => c.key === uploadTplKey) ?? viewChoices[0];
 
   const onPickFile = (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -2478,21 +3062,35 @@ function StandingsView({
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <span className="text-sm font-medium mr-1">Template</span>
-            {STANDINGS_TEMPLATE_NAMES.map((nm, i) => (
-              <label
-                key={nm}
-                className="inline-flex items-center gap-1.5 rounded-md border border-stone-300 bg-white px-2.5 py-1.5 text-xs font-medium text-stone-700 cursor-pointer has-[:checked]:border-stone-900 has-[:checked]:bg-stone-900 has-[:checked]:text-white"
-              >
-                <input
-                  type="radio"
-                  name="template"
-                  value={i}
-                  defaultChecked={i === defaultTemplate}
-                  className="sr-only"
-                />
-                {nm}
-              </label>
-            ))}
+            <input
+              type="hidden"
+              name="template"
+              value={uploadTpl?.builtinIndex ?? 0}
+            />
+            <input
+              type="hidden"
+              name="template_id"
+              value={uploadTpl?.builtinIndex === null ? uploadTpl.key : ""}
+            />
+            {viewChoices.map((c) => {
+              const checked = c.key === uploadTplKey;
+              return (
+                <label
+                  key={c.key}
+                  className="inline-flex items-center gap-1.5 rounded-md border border-stone-300 bg-white px-2.5 py-1.5 text-xs font-medium text-stone-700 cursor-pointer has-[:checked]:border-stone-900 has-[:checked]:bg-stone-900 has-[:checked]:text-white"
+                >
+                  <input
+                    type="radio"
+                    name="__sel_tpl"
+                    value={c.key}
+                    checked={checked}
+                    onChange={() => setUploadTplKey(c.key)}
+                    className="sr-only"
+                  />
+                  {c.name}
+                </label>
+              );
+            })}
           </div>
           <div className="flex items-center gap-3">
             <label className="inline-flex items-center gap-2 rounded-md border border-stone-300 bg-white px-3 py-1.5 text-xs font-medium text-stone-700 hover:bg-stone-50 cursor-pointer">
@@ -2540,9 +3138,29 @@ function StandingsView({
         </Form>
       </section>
 
+      <StandingsTemplatesManager
+        subdomain={subdomain}
+        customStandingsTemplates={customStandingsTemplates}
+        disabledStandingsTemplates={disabledStandingsTemplates}
+        defaultTemplate={defaultTemplate}
+        defaultTemplateId={defaultTemplateId}
+      />
+
       {/* Interactive leaderboard — checkpoint switcher, search, podium,
           and an on-demand poster, in one panel. */}
-      <StandingsLeaderboard snapshots={snapshots} />
+      <StandingsLeaderboard
+        snapshots={snapshots}
+        subdomain={subdomain}
+        customStandingsTemplates={customStandingsTemplates}
+        disabledStandingsTemplates={disabledStandingsTemplates}
+        defaultTemplate={defaultTemplate}
+        defaultTemplateId={defaultTemplateId}
+        orgName={orgName}
+        posterDate={posterDate}
+        posterPlace={posterPlace}
+        fontEn={fontEn}
+        fontMl={fontMl}
+      />
     </div>
   );
 }

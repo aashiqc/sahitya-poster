@@ -3,22 +3,44 @@ import { Download, Share2, X } from "lucide-react";
 import type Konva from "konva";
 import {
   StandingsPosterCanvas,
+  eventStandingsTemplateList,
   exportStandingsPng,
+  pickStandingsTemplate,
   shareStandings,
+  usableStandingsTemplates,
 } from "./standings-poster";
+import { posterFontStack, type CustomTpl } from "./poster-canvas";
 
 export type StandingsSnapshot = {
   afterN: number;
   template: number;
+  templateId: string | null;
   rows: { name: string; points: number }[];
+};
+
+/** Subset of PosterMeta this sheet needs to pick the right template
+ *  and render the org overlay on general/custom standings posters. */
+export type StandingsPosterMeta = {
+  subdomain: string;
+  orgName: string;
+  posterDate: string | null;
+  posterPlace: string | null;
+  fontEn: string | null;
+  fontMl: string | null;
+  standingsDefaultTemplate: number;
+  standingsDefaultTemplateId: string | null;
+  customStandingsTemplates: CustomTpl[];
+  disabledStandingsTemplates: string[];
 };
 
 export function StandingsSheet({
   history,
+  posterMeta,
   onClose,
 }: {
   // Newest checkpoint first (loader sorts after_n desc).
   history: StandingsSnapshot[];
+  posterMeta: StandingsPosterMeta;
   onClose: () => void;
 }) {
   // Index into `history`; 0 is always the latest checkpoint.
@@ -144,12 +166,44 @@ export function StandingsSheet({
           ) : (
             <>
               <div className="overflow-hidden rounded-2xl ring-1 ring-black/10 shadow-[0_12px_30px_-16px_rgba(11,9,10,0.4)]">
-                <StandingsPosterCanvas
-                  key={snapshot!.afterN}
-                  data={{ afterN, rows: snapshot!.rows }}
-                  templateIndex={snapshot!.template}
-                  stageRef={stageRef}
-                />
+                {(() => {
+                  const list = usableStandingsTemplates(
+                    eventStandingsTemplateList(
+                      posterMeta.subdomain,
+                      posterMeta.customStandingsTemplates,
+                    ),
+                    posterMeta.disabledStandingsTemplates,
+                  );
+                  // Per-snapshot wins; templateId (custom UUID) beats
+                  // the numeric template (built-in index).
+                  const chosen =
+                    pickStandingsTemplate(
+                      list,
+                      snapshot!.template ??
+                        posterMeta.standingsDefaultTemplate,
+                      snapshot!.templateId ??
+                        posterMeta.standingsDefaultTemplateId,
+                      0,
+                    ) ?? list[0];
+                  return (
+                    <StandingsPosterCanvas
+                      key={`${snapshot!.afterN}-${chosen?.key}`}
+                      data={{ afterN, rows: snapshot!.rows }}
+                      templateIndex={chosen?.builtinIndex ?? 0}
+                      customSrc={chosen?.src ?? undefined}
+                      meta={{
+                        orgName: posterMeta.orgName,
+                        posterDate: posterMeta.posterDate ?? undefined,
+                        posterPlace: posterMeta.posterPlace ?? undefined,
+                      }}
+                      fontFamily={posterFontStack(
+                        posterMeta.fontEn,
+                        posterMeta.fontMl,
+                      )}
+                      stageRef={stageRef}
+                    />
+                  );
+                })()}
               </div>
 
               <div className="mt-4 flex items-center justify-center gap-2.5">

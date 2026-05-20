@@ -1,7 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import type Konva from "konva";
 import { Stage, Layer, Image as KImage, Text, Rect, Group } from "react-konva";
-import { PosterSkeleton, usePosterImage } from "./poster-canvas";
+import {
+  PosterSkeleton,
+  usePosterImage,
+  type CustomTpl,
+} from "./poster-canvas";
+import { TEMPLATE_SUBDOMAIN } from "~/lib/constants";
 
 // ─────────────────────────────────────────────────────────────────────
 // Standings poster — overlays the "after N" number and the team/points
@@ -47,9 +52,24 @@ type SLayout = {
 };
 type STemplate = {
   src: string;
+  // "legacy" templates are Pantharangadi-baked (org name + date + place
+  // already on the artwork). "general" templates are tenant-neutral —
+  // every other tenant gets these and the org name / date / place are
+  // rendered as overlay text in the template's `meta` zone.
+  scope: "legacy" | "general" | "custom";
   layout: SLayout;
   // Top-3 emphasis, strictly in priority order; ranks 4+ use base style.
   rankStyle: Record<number, { color: string; size: number }>;
+  // Overlay zone for general/custom: org name (display) + a date line
+  // and a place line. Each line is rendered as its own Text block at
+  // the default position below.
+  meta?: {
+    color: string;
+    align?: "left" | "center" | "right";
+    orgName: { x: number; y: number; w: number; size?: number };
+    date: { x: number; y: number; w: number; size?: number };
+    place: { x: number; y: number; w: number; size?: number };
+  };
 };
 
 // All coords are native 1080×1350 (templates are exactly that size).
@@ -57,6 +77,7 @@ export const STANDINGS_TEMPLATES: STemplate[] = [
   // 0 — Original (geometric burst, "after _ Team Point" centred top).
   {
     src: "/poster/templates/standings.png",
+    scope: "legacy",
     layout: {
       afterX: 558,
       afterY: 98,
@@ -85,6 +106,7 @@ export const STANDINGS_TEMPLATES: STemplate[] = [
   // footer wordmark bottom-left. Dark text on peach/white.
   {
     src: "/poster/templates/standings-light.png",
+    scope: "legacy",
     layout: {
       afterX: 180,
       afterY: 190,
@@ -113,6 +135,7 @@ export const STANDINGS_TEMPLATES: STemplate[] = [
   // bottom-right. Light text on dark navy.
   {
     src: "/poster/templates/standings-dark.png",
+    scope: "legacy",
     layout: {
       afterX: 595,
       afterY: 108,
@@ -136,34 +159,215 @@ export const STANDINGS_TEMPLATES: STemplate[] = [
       3: { color: "#FFFFFF", size: 41 },
     },
   },
+  // 3 — general-01 (peach/bird/flowers). Tenant-neutral, mirrors the
+  // light template layout. Org name above the baked "Sahityotsav"
+  // wordmark; date + place below it. After-N + table use the same
+  // coordinates as the legacy light template so the layout reads the
+  // same out of the box.
+  {
+    src: "/poster/templates/standings-general-01.png",
+    scope: "general",
+    layout: {
+      afterX: 180,
+      afterY: 190,
+      afterW: 160,
+      afterH: 130,
+      afterSize: 78,
+      afterColor: "#3A2FB0",
+      listX: 110,
+      pointsRight: 548,
+      pointsBoxW: 84,
+      nameGap: 8,
+      rowC0: 378,
+      rowPitch: 58,
+      maxRows: 8,
+      baseNameSize: 35,
+      baseColor: "#2B2738",
+    },
+    rankStyle: {
+      1: { color: "#9C0503", size: 42 },
+      2: { color: "#262150", size: 40 },
+      3: { color: "#262150", size: 38 },
+    },
+    meta: {
+      color: "#2B2738",
+      align: "left",
+      orgName: { x: 70, y: 920, w: 600, size: 40 },
+      date: { x: 72, y: 970, w: 360, size: 24 },
+      place: { x: 72, y: 1005, w: 600, size: 24 },
+    },
+  },
+  // 4 — general-02 (navy/flowers). Tenant-neutral mirror of the dark
+  // template — open band on the right; light text on dark navy.
+  {
+    src: "/poster/templates/standings-general-02.png",
+    scope: "general",
+    layout: {
+      afterX: 595,
+      afterY: 108,
+      afterW: 170,
+      afterH: 130,
+      afterSize: 82,
+      afterColor: "#F2B5C4",
+      listX: 500,
+      pointsRight: 1000,
+      pointsBoxW: 100,
+      nameGap: 8,
+      rowC0: 320,
+      rowPitch: 62,
+      maxRows: 8,
+      baseNameSize: 37,
+      baseColor: "#D9D2E4",
+    },
+    rankStyle: {
+      1: { color: "#FFFFFF", size: 46 },
+      2: { color: "#FFFFFF", size: 43 },
+      3: { color: "#FFFFFF", size: 41 },
+    },
+    meta: {
+      color: "#E9D9DF",
+      align: "left",
+      orgName: { x: 440, y: 930, w: 580, size: 40 },
+      date: { x: 442, y: 982, w: 360, size: 24 },
+      place: { x: 442, y: 1018, w: 600, size: 24 },
+    },
+  },
 ];
 
 export const STANDINGS_TEMPLATE_NAMES = [
   "Original",
   "Light flowers",
   "Dark flowers",
+  "Peach (general)",
+  "Navy (general)",
 ] as const;
+
+// Neutral starting layout for a tenant-uploaded custom standings
+// background — admin can fine-tune via the layout editor later.
+const CUSTOM_DEFAULT_STEMPLATE: STemplate = {
+  src: "",
+  scope: "custom",
+  layout: { ...STANDINGS_TEMPLATES[3].layout },
+  rankStyle: { ...STANDINGS_TEMPLATES[3].rankStyle },
+  meta: {
+    color: "#1A1718",
+    align: "left",
+    orgName: { x: 70, y: 920, w: 940, size: 40 },
+    date: { x: 72, y: 970, w: 360, size: 24 },
+    place: { x: 72, y: 1005, w: 940, size: 24 },
+  },
+};
+
+// ─────────────────────────────────────────────────────────────────────
+// Tenant-aware template picking (mirrors poster-canvas.tsx for the
+// result poster). Built-in keys stay as stringified indices so existing
+// numeric `events.standings_template` / `team_standings.template`
+// values keep resolving; customs key by their UUID.
+// ─────────────────────────────────────────────────────────────────────
+
+export type StandingsTemplateChoice = {
+  key: string;
+  name: string;
+  builtinIndex: number | null;
+  src: string | null;
+};
+
+export function eventStandingsTemplateList(
+  subdomain: string | null | undefined,
+  custom: CustomTpl[],
+): StandingsTemplateChoice[] {
+  const want = subdomain === TEMPLATE_SUBDOMAIN ? "legacy" : "general";
+  const builtins = STANDINGS_TEMPLATES.map((t, i) => ({ t, i })).filter(
+    (x) => x.t.scope === want,
+  );
+  const base = builtins.length
+    ? builtins
+    : STANDINGS_TEMPLATES.map((t, i) => ({ t, i }));
+  const list: StandingsTemplateChoice[] = base.map((x, n) => ({
+    key: String(x.i),
+    name: STANDINGS_TEMPLATE_NAMES[x.i] ?? `Template ${n + 1}`,
+    builtinIndex: x.i,
+    src: null,
+  }));
+  for (const c of custom)
+    list.push({
+      key: c.id,
+      name: c.name || "Custom",
+      builtinIndex: null,
+      src: c.src,
+    });
+  return list;
+}
+
+export function pickStandingsTemplate(
+  list: StandingsTemplateChoice[],
+  defaultIndex: number,
+  defaultId: string | null,
+  shuffle = 0,
+): StandingsTemplateChoice | null {
+  if (list.length === 0) return null;
+  let start = 0;
+  if (defaultId) {
+    const i = list.findIndex((x) => x.key === defaultId);
+    if (i >= 0) start = i;
+  } else {
+    const builtinCount =
+      list.filter((x) => x.builtinIndex !== null).length || list.length;
+    start = (((defaultIndex % builtinCount) + builtinCount) % builtinCount);
+  }
+  const n = list.length;
+  return list[(((start + shuffle) % n) + n) % n];
+}
+
+export function usableStandingsTemplates(
+  list: StandingsTemplateChoice[],
+  disabled: string[] | null | undefined,
+): StandingsTemplateChoice[] {
+  if (!disabled || disabled.length === 0) return list;
+  const d = new Set(disabled);
+  const keep = list.filter((c) => !d.has(c.key));
+  return keep.length ? keep : list;
+}
 
 
 export const StandingsPosterCanvas = ({
   data,
   templateIndex = 0,
+  customSrc,
+  meta,
+  fontFamily,
   stageRef,
   displayWidth,
 }: {
   data: StandingsData;
   templateIndex?: number;
+  /** Tenant-uploaded background URL. When set, the built-in template
+   *  is ignored and the neutral custom layout is used. */
+  customSrc?: string;
+  /** Overlay text drawn on general/custom templates (the legacy
+   *  Pantharangadi templates have all of this baked into the artwork
+   *  and so it's ignored when scope === "legacy"). */
+  meta?: {
+    orgName?: string;
+    posterDate?: string;
+    posterPlace?: string;
+  };
+  /** Poster font stack to use for all overlay text. Falls back to the
+   *  body font when omitted. */
+  fontFamily?: string;
   stageRef?: React.MutableRefObject<Konva.Stage | null>;
   displayWidth?: number;
 }) => {
-  const tpl =
-    STANDINGS_TEMPLATES[
-      ((templateIndex | 0) % STANDINGS_TEMPLATES.length +
-        STANDINGS_TEMPLATES.length) %
-        STANDINGS_TEMPLATES.length
-    ];
+  const tpl: STemplate = customSrc
+    ? { ...CUSTOM_DEFAULT_STEMPLATE, src: customSrc }
+    : STANDINGS_TEMPLATES[
+        (((templateIndex | 0) % STANDINGS_TEMPLATES.length) +
+          STANDINGS_TEMPLATES.length) %
+          STANDINGS_TEMPLATES.length
+      ];
   const LAYOUT = tpl.layout;
   const RANK_STYLE = tpl.rankStyle;
+  const OVERLAY_FONT = fontFamily || BODY_FONT;
   const [mounted, setMounted] = useState(false);
   useEffect(() => {
     let active = true;
@@ -294,6 +498,51 @@ export const StandingsPosterCanvas = ({
                 </Group>
               );
             })}
+
+            {/* Tenant overlay — only on general/custom templates. The
+                legacy Pantharangadi templates bake the org name + date
+                + place into the artwork, so nothing is drawn for them. */}
+            {tpl.meta && (
+              <>
+                {meta?.orgName?.trim() && (
+                  <Text
+                    x={tpl.meta.orgName.x}
+                    y={tpl.meta.orgName.y}
+                    width={tpl.meta.orgName.w}
+                    align={tpl.meta.align ?? "left"}
+                    text={meta.orgName.trim()}
+                    fontFamily={OVERLAY_FONT}
+                    fontSize={tpl.meta.orgName.size ?? 36}
+                    fontStyle="bold"
+                    fill={tpl.meta.color}
+                  />
+                )}
+                {meta?.posterDate?.trim() && (
+                  <Text
+                    x={tpl.meta.date.x}
+                    y={tpl.meta.date.y}
+                    width={tpl.meta.date.w}
+                    align={tpl.meta.align ?? "left"}
+                    text={meta.posterDate.trim()}
+                    fontFamily={OVERLAY_FONT}
+                    fontSize={tpl.meta.date.size ?? 24}
+                    fill={tpl.meta.color}
+                  />
+                )}
+                {meta?.posterPlace?.trim() && (
+                  <Text
+                    x={tpl.meta.place.x}
+                    y={tpl.meta.place.y}
+                    width={tpl.meta.place.w}
+                    align={tpl.meta.align ?? "left"}
+                    text={meta.posterPlace.trim()}
+                    fontFamily={OVERLAY_FONT}
+                    fontSize={tpl.meta.place.size ?? 24}
+                    fill={tpl.meta.color}
+                  />
+                )}
+              </>
+            )}
           </Layer>
         </Stage>
       )}

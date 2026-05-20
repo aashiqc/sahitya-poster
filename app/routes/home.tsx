@@ -199,7 +199,7 @@ export async function loader({ request }: Route.LoaderArgs) {
       .eq("status", "published"),
     supabase
       .from("team_standings")
-      .select("after_n, rank, team_name, points, template")
+      .select("after_n, rank, team_name, points, template, template_id")
       .eq("event_id", event.id)
       .order("after_n", { ascending: false })
       .order("rank", { ascending: true }),
@@ -259,6 +259,7 @@ export async function loader({ request }: Route.LoaderArgs) {
     team_name: string;
     points: number;
     template: number | null;
+    template_id: string | null;
   };
   const sRows = (standingsRes.data ?? []) as SRow[];
   // Group every uploaded checkpoint by its `after_n` so the UI can let
@@ -276,6 +277,7 @@ export async function loader({ request }: Route.LoaderArgs) {
       // Each checkpoint carries its own template (uniform across its
       // rows) — the poster uses that checkpoint's own choice.
       template: rows[0]?.template ?? 0,
+      templateId: rows[0]?.template_id ?? null,
       rows: rows
         .slice()
         .sort((a, b) => a.rank - b.rank)
@@ -421,6 +423,10 @@ export default function Home({ loaderData }: Route.ComponentProps) {
     result_template_id?: string | null;
     custom_templates?: CustomTpl[] | null;
     disabled_templates?: string[] | null;
+    standings_template?: number | null;
+    standings_template_id?: string | null;
+    custom_standings_templates?: CustomTpl[] | null;
+    disabled_standings_templates?: string[] | null;
     poster_lang?: string | null;
     poster_name?: string | null;
     poster_font_en?: string | null;
@@ -439,6 +445,16 @@ export default function Home({ loaderData }: Route.ComponentProps) {
       : [],
     disabledTemplates: Array.isArray(evRel.disabled_templates)
       ? evRel.disabled_templates
+      : [],
+    standingsDefaultTemplate: evRel.standings_template ?? 0,
+    standingsDefaultTemplateId: evRel.standings_template_id ?? null,
+    customStandingsTemplates: Array.isArray(evRel.custom_standings_templates)
+      ? evRel.custom_standings_templates
+      : [],
+    disabledStandingsTemplates: Array.isArray(
+      evRel.disabled_standings_templates,
+    )
+      ? evRel.disabled_standings_templates
       : [],
     lang: evRel.poster_lang === "ml" ? "ml" : "en",
     fontEn: evRel.poster_font_en ?? null,
@@ -521,6 +537,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
       {standingsOpen && (
         <StandingsSheet
           history={standingsHistory}
+          posterMeta={posterMeta}
           onClose={() => setStandingsOpen(false)}
         />
       )}
@@ -759,6 +776,10 @@ type PosterMeta = {
   defaultTemplateId: string | null;
   customTemplates: CustomTpl[];
   disabledTemplates: string[];
+  standingsDefaultTemplate: number;
+  standingsDefaultTemplateId: string | null;
+  customStandingsTemplates: CustomTpl[];
+  disabledStandingsTemplates: string[];
   lang: PosterLang;
   fontEn: string | null;
   fontMl: string | null;
