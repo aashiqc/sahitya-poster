@@ -564,7 +564,10 @@ export async function action({ request }: Route.ActionArgs) {
     const id = String(fd.get("template_id") ?? "").trim();
     if (!id)
       return data({ error: "Missing template." }, { headers: Object.fromEntries(headers) });
-    const ev = event as { disabled_templates?: string[] | null };
+    const ev = event as {
+      disabled_templates?: string[] | null;
+      custom_templates?: CustomTpl[] | null;
+    };
     const cur = Array.isArray(ev.disabled_templates)
       ? ev.disabled_templates
       : [];
@@ -572,6 +575,26 @@ export async function action({ request }: Route.ActionArgs) {
     const next = wasDisabled
       ? cur.filter((k) => k !== id)
       : [...cur, id];
+    // At least one template must stay enabled — disabling them all
+    // would leave the public site and share view without a poster.
+    if (!wasDisabled) {
+      const tenantSub =
+        (event as { organizations?: { subdomain?: string } | null })
+          .organizations?.subdomain ?? null;
+      const all = eventTemplateList(
+        tenantSub,
+        Array.isArray(ev.custom_templates) ? ev.custom_templates : [],
+      );
+      const remaining = usableTemplates(all, next);
+      if (remaining.length === 0)
+        return data(
+          {
+            error:
+              "Keep at least one template enabled — the public site and share view need one to render.",
+          },
+          { headers: Object.fromEntries(headers) },
+        );
+    }
     const { error } = await supabase
       .from("events")
       .update({ disabled_templates: next })
@@ -1003,12 +1026,38 @@ export async function action({ request }: Route.ActionArgs) {
     const id = String(fd.get("template_id") ?? "").trim();
     if (!id)
       return data({ error: "Missing template." }, { headers: Object.fromEntries(headers) });
-    const ev = event as { disabled_standings_templates?: string[] | null };
+    const ev = event as {
+      disabled_standings_templates?: string[] | null;
+      custom_standings_templates?: CustomTpl[] | null;
+    };
     const cur = Array.isArray(ev.disabled_standings_templates)
       ? ev.disabled_standings_templates
       : [];
     const wasDisabled = cur.includes(id);
     const next = wasDisabled ? cur.filter((k) => k !== id) : [...cur, id];
+    // At least one standings template must stay enabled — same guard
+    // as the result-poster toggle so the public site never ends up
+    // with nothing to render.
+    if (!wasDisabled) {
+      const tenantSub =
+        (event as { organizations?: { subdomain?: string } | null })
+          .organizations?.subdomain ?? null;
+      const all = eventStandingsTemplateList(
+        tenantSub,
+        Array.isArray(ev.custom_standings_templates)
+          ? ev.custom_standings_templates
+          : [],
+      );
+      const remaining = usableStandingsTemplates(all, next);
+      if (remaining.length === 0)
+        return data(
+          {
+            error:
+              "Keep at least one standings template enabled — the public site needs one to render.",
+          },
+          { headers: Object.fromEntries(headers) },
+        );
+    }
     const { error } = await supabase
       .from("events")
       .update({ disabled_standings_templates: next })
@@ -1117,11 +1166,36 @@ export async function action({ request }: Route.ActionArgs) {
     const ev = event as {
       custom_standings_templates?: CustomTpl[] | null;
       standings_template_id?: string | null;
+      disabled_standings_templates?: string[] | null;
+      standings_layout?: Record<string, unknown> | null;
     };
     const existing = Array.isArray(ev.custom_standings_templates)
       ? ev.custom_standings_templates
       : [];
     const target = existing.find((t) => t.id === id);
+    const tenantSub =
+      (event as { organizations?: { subdomain?: string } | null })
+        .organizations?.subdomain ?? null;
+    const remainingCustoms = existing.filter((t) => t.id !== id);
+    const remainingAll = eventStandingsTemplateList(
+      tenantSub,
+      remainingCustoms,
+    );
+    const remainingDisabled = (
+      Array.isArray(ev.disabled_standings_templates)
+        ? ev.disabled_standings_templates
+        : []
+    ).filter((k) => k !== id);
+    if (
+      usableStandingsTemplates(remainingAll, remainingDisabled).length === 0
+    )
+      return data(
+        {
+          error:
+            "Can't delete — that's the only standings template that would remain enabled. Enable another built-in first.",
+        },
+        { headers: Object.fromEntries(headers) },
+      );
     if (target?.src) {
       try {
         const p = new URL(target.src).pathname;
@@ -1135,10 +1209,18 @@ export async function action({ request }: Route.ActionArgs) {
         /* best-effort; metadata removal below is what matters */
       }
     }
+    // Strip the deleted id from every list/map that could still point
+    // at it — defaults, disabled-set, saved layout.
     const patch: Record<string, unknown> = {
-      custom_standings_templates: existing.filter((t) => t.id !== id),
+      custom_standings_templates: remainingCustoms,
+      disabled_standings_templates: remainingDisabled,
     };
     if (ev.standings_template_id === id) patch.standings_template_id = null;
+    if (ev.standings_layout && typeof ev.standings_layout === "object") {
+      const { [id]: _drop, ...keep } = ev.standings_layout;
+      void _drop;
+      patch.standings_layout = keep;
+    }
     const { error } = await supabase
       .from("events")
       .update(patch)
@@ -1291,11 +1373,31 @@ export async function action({ request }: Route.ActionArgs) {
     const ev = event as {
       custom_templates?: CustomTpl[] | null;
       result_template_id?: string | null;
+      disabled_templates?: string[] | null;
+      poster_layout?: Record<string, unknown> | null;
     };
     const existing = Array.isArray(ev.custom_templates)
       ? ev.custom_templates
       : [];
     const target = existing.find((t) => t.id === id);
+    // Refuse to delete if the resulting template set would leave zero
+    // enabled templates — the public site and share view need one.
+    const tenantSub =
+      (event as { organizations?: { subdomain?: string } | null })
+        .organizations?.subdomain ?? null;
+    const remainingCustoms = existing.filter((t) => t.id !== id);
+    const remainingAll = eventTemplateList(tenantSub, remainingCustoms);
+    const remainingDisabled = (
+      Array.isArray(ev.disabled_templates) ? ev.disabled_templates : []
+    ).filter((k) => k !== id);
+    if (usableTemplates(remainingAll, remainingDisabled).length === 0)
+      return data(
+        {
+          error:
+            "Can't delete — that's the only template that would remain enabled. Enable another built-in first.",
+        },
+        { headers: Object.fromEntries(headers) },
+      );
     if (target?.src) {
       try {
         const p = new URL(target.src).pathname;
@@ -1309,10 +1411,19 @@ export async function action({ request }: Route.ActionArgs) {
         /* best-effort; metadata removal below is what matters */
       }
     }
+    // Strip the deleted id from every list/map that could still point
+    // at it — defaults, disabled-set, saved layout — so the share view
+    // and public site never re-resolve to a gone template.
     const patch: Record<string, unknown> = {
-      custom_templates: existing.filter((t) => t.id !== id),
+      custom_templates: remainingCustoms,
+      disabled_templates: remainingDisabled,
     };
     if (ev.result_template_id === id) patch.result_template_id = null;
+    if (ev.poster_layout && typeof ev.poster_layout === "object") {
+      const { [id]: _drop, ...keep } = ev.poster_layout;
+      void _drop;
+      patch.poster_layout = keep;
+    }
     const { error } = await supabase
       .from("events")
       .update(patch)
@@ -2349,6 +2460,10 @@ function StandingsTemplateStudio({
     [subdomain, customStandingsTemplates],
   );
   const disabledSet = new Set(disabledStandingsTemplates);
+  // Total currently enabled — used to dim the hide / delete buttons
+  // on the last surviving template so the admin can't lock themself
+  // out (the action enforces the same guard server-side).
+  const enabledCount = choices.filter((c) => !disabledSet.has(c.key)).length;
   const defChoice = pickStandingsTemplate(
     choices,
     defaultTemplate,
@@ -2557,19 +2672,33 @@ function StandingsTemplateStudio({
                       value="toggle_standings_template_disabled"
                     />
                     <input type="hidden" name="template_id" value={c.key} />
-                    <button
-                      type="submit"
-                      disabled={busy}
-                      title={isDisabled ? "Enable" : "Hide"}
-                      aria-label={isDisabled ? "Enable" : "Hide"}
-                      className="grid size-6 shrink-0 place-items-center rounded text-stone-400 transition hover:bg-stone-100 hover:text-stone-700 disabled:opacity-50"
-                    >
-                      {isDisabled ? (
-                        <EyeOff className="size-3.5" />
-                      ) : (
-                        <Eye className="size-3.5" />
-                      )}
-                    </button>
+                    {(() => {
+                      // Last surviving enabled template — disable the hide
+                      // button so the admin can't end up with zero.
+                      const blockHide =
+                        !isDisabled && enabledCount <= 1;
+                      return (
+                        <button
+                          type="submit"
+                          disabled={busy || blockHide}
+                          title={
+                            blockHide
+                              ? "Can't hide — keep at least one template enabled"
+                              : isDisabled
+                                ? "Enable"
+                                : "Hide"
+                          }
+                          aria-label={isDisabled ? "Enable" : "Hide"}
+                          className="grid size-6 shrink-0 place-items-center rounded text-stone-400 transition hover:bg-stone-100 hover:text-stone-700 disabled:opacity-40 disabled:hover:bg-transparent"
+                        >
+                          {isDisabled ? (
+                            <EyeOff className="size-3.5" />
+                          ) : (
+                            <Eye className="size-3.5" />
+                          )}
+                        </button>
+                      );
+                    })()}
                   </Form>
                   {isDefault ? (
                     <span
@@ -3365,60 +3494,69 @@ function StandingsLeaderboard({
                 standingsOverrides={chosenOverrides}
               />
             ) : (
-              <p className="px-5 py-10 text-center text-sm text-stone-500">
-                No standings template available.
-              </p>
+              <div className="m-4 rounded-lg border border-dashed border-amber-300 bg-amber-50/60 px-4 py-5 text-center">
+                <p className="text-sm font-semibold text-amber-900">
+                  No standings template enabled.
+                </p>
+                <p className="mt-1 text-xs leading-relaxed text-amber-800/90">
+                  Every standings template is hidden, so no poster can
+                  be shared from the public site. Enable at least one
+                  template above to render a poster here.
+                </p>
+              </div>
             )}
 
-            <div className="border-t border-stone-100 bg-stone-50/60 px-4 py-3">
-              <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-stone-500">
-                Template for this snapshot
-              </p>
-              <div className="flex flex-wrap gap-1.5">
-                {templateChoices.map((c) => {
-                  const active = sel.templateId
-                    ? c.key === sel.templateId
-                    : c.builtinIndex !== null &&
-                      c.builtinIndex === sel.template;
-                  return (
-                    <Form method="post" key={c.key}>
-                      <input
-                        type="hidden"
-                        name="intent"
-                        value="set_snapshot_template"
-                      />
-                      <input
-                        type="hidden"
-                        name="after_n"
-                        value={sel.afterN}
-                      />
-                      <input
-                        type="hidden"
-                        name="template"
-                        value={c.builtinIndex ?? 0}
-                      />
-                      <input
-                        type="hidden"
-                        name="template_id"
-                        value={c.builtinIndex === null ? c.key : ""}
-                      />
-                      <button
-                        type="submit"
-                        disabled={busy}
-                        className={`rounded-md border px-2.5 py-1 text-xs font-medium transition disabled:opacity-50 ${
-                          active
-                            ? "border-stone-900 bg-stone-900 text-white"
-                            : "border-stone-300 bg-white text-stone-700 hover:bg-stone-100"
-                        }`}
-                      >
-                        {active ? "✓ " : ""}
-                        {c.name}
-                      </button>
-                    </Form>
-                  );
-                })}
+            {templateChoices.length > 0 && (
+              <div className="border-t border-stone-100 bg-stone-50/60 px-4 py-3">
+                <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-stone-500">
+                  Template for this snapshot
+                </p>
+                <div className="flex flex-wrap gap-1.5">
+                  {templateChoices.map((c) => {
+                    const active = sel.templateId
+                      ? c.key === sel.templateId
+                      : c.builtinIndex !== null &&
+                        c.builtinIndex === sel.template;
+                    return (
+                      <Form method="post" key={c.key}>
+                        <input
+                          type="hidden"
+                          name="intent"
+                          value="set_snapshot_template"
+                        />
+                        <input
+                          type="hidden"
+                          name="after_n"
+                          value={sel.afterN}
+                        />
+                        <input
+                          type="hidden"
+                          name="template"
+                          value={c.builtinIndex ?? 0}
+                        />
+                        <input
+                          type="hidden"
+                          name="template_id"
+                          value={c.builtinIndex === null ? c.key : ""}
+                        />
+                        <button
+                          type="submit"
+                          disabled={busy}
+                          className={`rounded-md border px-2.5 py-1 text-xs font-medium transition disabled:opacity-50 ${
+                            active
+                              ? "border-stone-900 bg-stone-900 text-white"
+                              : "border-stone-300 bg-white text-stone-700 hover:bg-stone-100"
+                          }`}
+                        >
+                          {active ? "✓ " : ""}
+                          {c.name}
+                        </button>
+                      </Form>
+                    );
+                  })}
+                </div>
               </div>
-            </div>
+            )}
           </div>
         </aside>
       </div>
@@ -4313,6 +4451,11 @@ function TemplateStudioView({
     posterMeta.customTemplates,
   );
   const disabledSet = new Set(posterMeta.disabledTemplates ?? []);
+  // How many templates are currently enabled — used to dim the hide
+  // button on the last surviving enabled template so the admin can't
+  // lock themselves into a zero-template public site (the action
+  // enforces the same guard server-side).
+  const enabledCount = choices.filter((c) => !disabledSet.has(c.key)).length;
   // Position of a template among the built-in set (for the numeric
   // `result_template` the default needs to keep working).
   const builtinPosOf = (key: string) =>
@@ -4648,18 +4791,26 @@ function TemplateStudioView({
                       value="toggle_template_disabled"
                     />
                     <input type="hidden" name="template_id" value={c.key} />
+                    {(() => {
+                      // Last surviving enabled template — block hide so
+                      // the public site never ends up with no poster.
+                      const blockHide =
+                        !isDisabled && enabledCount <= 1;
+                      return (
                     <button
                       type="submit"
-                      disabled={busy}
+                      disabled={busy || blockHide}
                       title={
-                        isDisabled
-                          ? "Enable — use in posters"
-                          : "Hide — skip in posters & public site"
+                        blockHide
+                          ? "Can't hide — keep at least one template enabled"
+                          : isDisabled
+                            ? "Enable — use in posters"
+                            : "Hide — skip in posters & public site"
                       }
                       aria-label={
                         isDisabled ? "Enable template" : "Hide template"
                       }
-                      className="grid size-6 shrink-0 place-items-center rounded text-stone-400 transition hover:bg-stone-100 hover:text-stone-700 disabled:opacity-50"
+                      className="grid size-6 shrink-0 place-items-center rounded text-stone-400 transition hover:bg-stone-100 hover:text-stone-700 disabled:opacity-40 disabled:hover:bg-transparent"
                     >
                       {isDisabled ? (
                         <EyeOff className="size-3.5" />
@@ -4667,6 +4818,8 @@ function TemplateStudioView({
                         <Eye className="size-3.5" />
                       )}
                     </button>
+                      );
+                    })()}
                   </Form>
                   {isDefault ? (
                     <span
@@ -5042,12 +5195,15 @@ function SharePostersView({
     }
     const num = (s: string | null | undefined) => {
       const n = parseInt(String(s ?? "").trim(), 10);
-      return Number.isFinite(n) ? n : Number.POSITIVE_INFINITY;
+      return Number.isFinite(n) ? n : Number.NEGATIVE_INFINITY;
     };
+    // Sort by result_no DESC so the most recently published poster is
+    // first — admins almost always come here to share the newest one,
+    // so paging from the latest is the fast path.
     pubs.sort(
       (a, b) =>
-        num(a.program.result?.result_no) - num(b.program.result?.result_no) ||
-        a.program.code.localeCompare(b.program.code),
+        num(b.program.result?.result_no) - num(a.program.result?.result_no) ||
+        b.program.code.localeCompare(a.program.code),
     );
 
     const out: ShareItem[] = [];
@@ -5095,29 +5251,80 @@ function SharePostersView({
     return out;
   }, [levels, eventName, siteUrl, posterMeta]);
 
+  // `idx` = position in `items`. items is sorted latest→oldest, so 0 is
+  // always the most recent published poster. The default fast path:
+  // admin lands → latest is already on screen → tap Share.
   const [idx, setIdx] = useState(0);
   const [tmplShift, setTmplShift] = useState(0);
   const [busy, setBusy] = useState<null | "download" | "share">(null);
+  const [query, setQuery] = useState("");
   const stageRef = useRef<Konva.Stage | null>(null);
 
   const total = items.length;
   const clampedIdx = Math.min(idx, Math.max(total - 1, 0));
   const item = items[clampedIdx];
+  const isLatest = clampedIdx === 0;
 
-  const go = (d: number) => {
+  // Filtered chip list. Matches on result_no, program code, and
+  // program name so admins on mobile can thumb-search.
+  const q = query.trim().toLowerCase();
+  const matches = q
+    ? items
+        .map((it, i) => ({ it, i }))
+        .filter(
+          ({ it }) =>
+            String(it.data.resultNo ?? "").toLowerCase().includes(q) ||
+            it.code.toLowerCase().includes(q) ||
+            it.programName.toLowerCase().includes(q),
+        )
+    : items.map((it, i) => ({ it, i }));
+
+  // Step "older" (idx+1) or "newer" (idx-1). The list is DESC so
+  // increasing idx moves toward older posters.
+  const goNewer = () => {
     setBusy(null);
-    setIdx((i) => Math.min(Math.max(i + d, 0), total - 1));
+    setIdx((i) => Math.max(i - 1, 0));
+  };
+  const goOlder = () => {
+    setBusy(null);
+    setIdx((i) => Math.min(i + 1, total - 1));
+  };
+  const goLatest = () => {
+    setBusy(null);
+    setIdx(0);
+  };
+  const jumpTo = (i: number) => {
+    setBusy(null);
+    setIdx(Math.min(Math.max(i, 0), total - 1));
   };
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "ArrowRight") go(1);
-      if (e.key === "ArrowLeft") go(-1);
+      // ← moves toward newer (smaller idx), → toward older (larger
+      // idx) — i.e. the visual chip strip order (left = newest).
+      if (e.key === "ArrowLeft") goNewer();
+      if (e.key === "ArrowRight") goOlder();
+      if (e.key === "Home") goLatest();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [total]);
+
+  // Templates usable for sharing — strict, excludes admin-disabled ones.
+  // If every template is hidden the share flow has nothing to render.
+  const tplChoices = useMemo(
+    () =>
+      usableTemplates(
+        eventTemplateList(posterMeta.subdomain, posterMeta.customTemplates),
+        posterMeta.disabledTemplates,
+      ),
+    [
+      posterMeta.subdomain,
+      posterMeta.customTemplates,
+      posterMeta.disabledTemplates,
+    ],
+  );
 
   if (total === 0) {
     return (
@@ -5126,6 +5333,21 @@ function SharePostersView({
           No shareable result posters yet. Publish results (2+ winners) to
           share their posters. Team-standings posters live in the Team
           standings tab.
+        </p>
+      </div>
+    );
+  }
+
+  if (tplChoices.length === 0) {
+    return (
+      <div className="mx-auto max-w-md rounded-xl border border-dashed border-amber-300 bg-amber-50/60 p-8 text-center">
+        <p className="text-sm font-semibold text-amber-900">
+          No poster template enabled.
+        </p>
+        <p className="mt-1.5 text-xs leading-relaxed text-amber-800/90">
+          Every result-poster template is hidden, so there's nothing to
+          share. Open <strong>Poster templates</strong> and enable at
+          least one — your saved layout will load automatically.
         </p>
       </div>
     );
@@ -5152,42 +5374,112 @@ function SharePostersView({
   }
 
   return (
-    <div className="mx-auto max-w-md">
-      {/* Status */}
-      <div className="flex items-center justify-between gap-3 mb-3">
-        <div className="min-w-0">
-          <p className="text-[11px] font-mono uppercase tracking-widest text-stone-400">
-            {item?.code}
-            {item?.data.resultNo ? ` · Result #${item.data.resultNo}` : ""} ·{" "}
-            {clampedIdx + 1} of {total}
-          </p>
-          <p className="text-sm font-semibold truncate">
-            {item?.programName}
-          </p>
-        </div>
+    <div className="mx-auto max-w-md space-y-3">
+      {/* Top status — latest pill + counts. Tapping "Latest" is the
+          one-touch jump back to the newest poster. */}
+      <div className="flex items-center justify-between gap-3">
+        <button
+          type="button"
+          onClick={goLatest}
+          disabled={isLatest}
+          className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-[11px] font-bold uppercase tracking-wider transition disabled:cursor-default ${
+            isLatest
+              ? "bg-emerald-100 text-emerald-700"
+              : "bg-stone-900 text-white hover:bg-stone-800"
+          }`}
+        >
+          <span
+            className={`size-1.5 rounded-full ${
+              isLatest ? "bg-emerald-500" : "bg-white"
+            }`}
+            aria-hidden
+          />
+          {isLatest ? "Showing latest" : "Jump to latest"}
+        </button>
         <span className="shrink-0 text-xs tabular-nums text-stone-400">
           {clampedIdx + 1} / {total}
         </span>
       </div>
 
-      {/* Poster */}
+      {/* Search + chip strip — one-tap jump to any published poster.
+          Sorted newest first. Visually compact so phones see ~3 chips
+          per scroll without losing readability. */}
+      <div className="space-y-2">
+        <div className="relative">
+          <Search
+            className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-stone-400"
+            aria-hidden
+          />
+          <input
+            type="text"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Find by #, code or program…"
+            aria-label="Find a published poster"
+            className="w-full rounded-full border border-stone-300 bg-white py-1.5 pl-8 pr-7 text-xs text-stone-900 placeholder:text-stone-400 transition focus:border-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-600/25"
+          />
+          {query && (
+            <button
+              type="button"
+              onClick={() => setQuery("")}
+              aria-label="Clear search"
+              className="absolute right-2 top-1/2 grid size-4 -translate-y-1/2 place-items-center rounded-full text-stone-400 transition hover:bg-stone-100 hover:text-stone-600"
+            >
+              <X className="size-3" />
+            </button>
+          )}
+        </div>
+        {matches.length === 0 ? (
+          <p className="text-center text-[11px] text-stone-400">
+            No published poster matches “{query.trim()}”.
+          </p>
+        ) : (
+          <div className="-mx-1 flex gap-1.5 overflow-x-auto px-1 pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+            {matches.map(({ it, i }) => {
+              const active = i === clampedIdx;
+              const latestChip = i === 0;
+              return (
+                <button
+                  key={it.key}
+                  type="button"
+                  onClick={() => jumpTo(i)}
+                  aria-current={active}
+                  className={`shrink-0 rounded-full border px-3 py-1.5 text-xs font-medium whitespace-nowrap transition ${
+                    active
+                      ? "border-stone-900 bg-stone-900 text-white shadow-sm"
+                      : "border-stone-200 bg-white text-stone-700 hover:bg-stone-100"
+                  }`}
+                >
+                  {latestChip && !active && (
+                    <span
+                      className="mr-1 inline-block size-1.5 rounded-full bg-emerald-500 align-middle"
+                      aria-hidden
+                      title="Latest"
+                    />
+                  )}
+                  <span className="tabular-nums">
+                    #{it.data.resultNo ?? "—"}
+                  </span>
+                  <span className="opacity-60"> · </span>
+                  <span>{it.programName}</span>
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* Hero — the selected poster */}
       <div className="overflow-hidden rounded-xl ring-1 ring-stone-200 shadow-sm bg-white">
         {item &&
           (() => {
-            const choices = usableTemplates(
-              eventTemplateList(
-                posterMeta.subdomain,
-                posterMeta.customTemplates,
-              ),
-              posterMeta.disabledTemplates,
-            );
             const tpl =
               pickFromList(
-                choices,
+                tplChoices,
                 posterMeta.defaultTemplate,
                 posterMeta.defaultTemplateId,
                 rotationOffset(item.data.resultNo, item.code) + tmplShift,
-              ) ?? choices[0];
+              ) ?? tplChoices[0];
             return (
               <PosterCanvas
                 key={item.key}
@@ -5203,57 +5495,81 @@ function SharePostersView({
           })()}
       </div>
 
-      {/* Controls */}
-      <div className="mt-4 flex items-center gap-2">
-        <button
-          type="button"
-          onClick={() => go(-1)}
-          disabled={clampedIdx === 0}
-          className="inline-flex items-center gap-1 rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm font-medium text-stone-700 disabled:opacity-40 hover:bg-stone-50"
-        >
-          <ChevronLeft className="size-4" /> Prev
-        </button>
-        <button
-          type="button"
-          onClick={() => go(1)}
-          disabled={clampedIdx >= total - 1}
-          className="inline-flex items-center gap-1 rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm font-medium text-stone-700 disabled:opacity-40 hover:bg-stone-50"
-        >
-          Next <ChevronRight className="size-4" />
-        </button>
-
-        <div className="ml-auto flex items-center gap-2">
+      {/* Selected-item caption */}
+      <div className="flex items-baseline justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-[11px] font-mono uppercase tracking-widest text-stone-400">
+            {item?.code}
+            {item?.data.resultNo ? ` · Result #${item.data.resultNo}` : ""}
+          </p>
+          <p className="truncate text-sm font-semibold text-stone-900">
+            {item?.programName}
+          </p>
+        </div>
+        {tplChoices.length > 1 && (
           <button
             type="button"
             onClick={() => setTmplShift((s) => s + 1)}
             aria-label="Shuffle template"
-            title="Shuffle template"
-            className="inline-flex size-9 items-center justify-center rounded-lg border border-stone-300 bg-white text-stone-600 hover:bg-stone-50"
+            title="Cycle through templates"
+            className="inline-flex size-9 shrink-0 items-center justify-center rounded-lg border border-stone-300 bg-white text-stone-600 transition hover:bg-stone-50"
           >
             <Shuffle className="size-4" />
           </button>
+        )}
+      </div>
+
+      {/* Primary action — big, full-width Share button. Tap target
+          first; everything else is secondary. */}
+      <button
+        type="button"
+        onClick={onShare}
+        disabled={busy !== null}
+        className="flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-3.5 text-base font-semibold text-white shadow-sm transition active:scale-[0.99] hover:bg-emerald-700 disabled:opacity-60"
+      >
+        <Share2 className="size-5" />
+        {busy === "share" ? "Preparing…" : "Share poster"}
+      </button>
+
+      {/* Secondary actions: Download + step controls. The steppers are
+          a fallback for the chip strip above. */}
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={onDownload}
+          disabled={busy !== null}
+          className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm font-medium text-stone-700 disabled:opacity-50 hover:bg-stone-50"
+        >
+          <Download className="size-4" />
+          {busy === "download" ? "…" : "Download"}
+        </button>
+        <div className="flex items-center overflow-hidden rounded-lg border border-stone-300 bg-white">
           <button
             type="button"
-            onClick={onDownload}
-            disabled={busy !== null}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm font-medium text-stone-700 disabled:opacity-50 hover:bg-stone-50"
+            onClick={goNewer}
+            disabled={clampedIdx === 0}
+            aria-label="Newer poster"
+            title="Newer (←)"
+            className="grid size-9 place-items-center text-stone-700 transition hover:bg-stone-50 disabled:opacity-40"
           >
-            <Download className="size-4" />
-            {busy === "download" ? "…" : "Download"}
+            <ChevronLeft className="size-4" />
           </button>
+          <span className="h-9 w-px bg-stone-200" />
           <button
             type="button"
-            onClick={onShare}
-            disabled={busy !== null}
-            className="inline-flex items-center gap-1.5 rounded-lg bg-stone-900 px-3 py-2 text-sm font-semibold text-white disabled:opacity-50 hover:bg-stone-800"
+            onClick={goOlder}
+            disabled={clampedIdx >= total - 1}
+            aria-label="Older poster"
+            title="Older (→)"
+            className="grid size-9 place-items-center text-stone-700 transition hover:bg-stone-50 disabled:opacity-40"
           >
-            <Share2 className="size-4" />
-            {busy === "share" ? "…" : "Share"}
+            <ChevronRight className="size-4" />
           </button>
         </div>
       </div>
-      <p className="mt-2 text-[11px] text-stone-400">
-        Result posters only, in result-number order. Use ← → keys to move.
+
+      <p className="text-[11px] text-stone-400">
+        Sorted latest first · tap a chip above to jump, or use ← → keys.
         Team-standings posters are in the Team standings tab.
       </p>
     </div>

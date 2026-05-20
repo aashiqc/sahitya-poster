@@ -363,14 +363,17 @@ export function pickStandingsTemplate(
   return list[(((start + shuffle) % n) + n) % n];
 }
 
+/** Templates usable for public standings / share: the full list minus
+ *  the admin-disabled keys. Strict — returns an empty array when every
+ *  template is disabled, so callers MUST render an empty state instead
+ *  of silently falling back to a disabled template. */
 export function usableStandingsTemplates(
   list: StandingsTemplateChoice[],
   disabled: string[] | null | undefined,
 ): StandingsTemplateChoice[] {
   if (!disabled || disabled.length === 0) return list;
   const d = new Set(disabled);
-  const keep = list.filter((c) => !d.has(c.key));
-  return keep.length ? keep : list;
+  return list.filter((c) => !d.has(c.key));
 }
 
 

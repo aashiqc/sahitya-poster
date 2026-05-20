@@ -509,16 +509,16 @@ export function rotationOffset(
 }
 
 /** Templates usable for public posters / share: the full list minus the
- *  admin-disabled keys. Never empty — if every template is disabled it
- *  falls back to the full list so a poster always renders. */
+ *  admin-disabled keys. Strict — returns an empty array when every
+ *  template is disabled, so callers MUST render an empty state instead
+ *  of silently falling back to disabled artwork. */
 export function usableTemplates(
   list: TemplateChoice[],
   disabled: string[] | null | undefined,
 ): TemplateChoice[] {
   if (!disabled || disabled.length === 0) return list;
   const d = new Set(disabled);
-  const keep = list.filter((c) => !d.has(c.key));
-  return keep.length ? keep : list;
+  return list.filter((c) => !d.has(c.key));
 }
 
 /** Template indices a tenant may use. The Pantharangadi tenant keeps the

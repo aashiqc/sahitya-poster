@@ -169,28 +169,35 @@ export function StandingsSheet({
           {!hasData ? (
             <EmptyState />
           ) : (
-            <>
-              <div className="overflow-hidden rounded-2xl ring-1 ring-black/10 shadow-[0_12px_30px_-16px_rgba(11,9,10,0.4)]">
-                {(() => {
-                  const list = usableStandingsTemplates(
-                    eventStandingsTemplateList(
-                      posterMeta.subdomain,
-                      posterMeta.customStandingsTemplates,
-                    ),
-                    posterMeta.disabledStandingsTemplates,
-                  );
-                  // Per-snapshot wins; templateId (custom UUID) beats
-                  // the numeric template (built-in index).
-                  const chosen =
-                    pickStandingsTemplate(
-                      list,
-                      snapshot!.template ??
-                        posterMeta.standingsDefaultTemplate,
-                      snapshot!.templateId ??
-                        posterMeta.standingsDefaultTemplateId,
-                      0,
-                    ) ?? list[0];
-                  return (
+            (() => {
+              const list = usableStandingsTemplates(
+                eventStandingsTemplateList(
+                  posterMeta.subdomain,
+                  posterMeta.customStandingsTemplates,
+                ),
+                posterMeta.disabledStandingsTemplates,
+              );
+              // Strict mode: organisers may have hidden every standings
+              // template. In that case we MUST NOT render one — surface
+              // a soft empty state instead of falling back to a hidden
+              // template's artwork.
+              if (list.length === 0) {
+                return <NoTemplateState />;
+              }
+              // Per-snapshot wins; templateId (custom UUID) beats
+              // the numeric template (built-in index).
+              const chosen =
+                pickStandingsTemplate(
+                  list,
+                  snapshot!.template ??
+                    posterMeta.standingsDefaultTemplate,
+                  snapshot!.templateId ??
+                    posterMeta.standingsDefaultTemplateId,
+                  0,
+                ) ?? list[0];
+              return (
+                <>
+                  <div className="overflow-hidden rounded-2xl ring-1 ring-black/10 shadow-[0_12px_30px_-16px_rgba(11,9,10,0.4)]">
                     <StandingsPosterCanvas
                       key={`${snapshot!.afterN}-${chosen?.key}`}
                       data={{ afterN, rows: snapshot!.rows }}
@@ -212,31 +219,31 @@ export function StandingsSheet({
                       }
                       stageRef={stageRef}
                     />
-                  );
-                })()}
-              </div>
+                  </div>
 
-              <div className="mt-4 flex items-center justify-center gap-2.5">
-                <button
-                  type="button"
-                  onClick={onDownload}
-                  disabled={busy !== null}
-                  className="inline-flex items-center gap-2 rounded-full bg-red text-white px-5 py-2.5 text-sm font-semibold shadow-[0_6px_16px_-6px_rgba(191,6,3,0.6)] transition-all duration-200 active:scale-[0.97] hover:bg-brand-600 disabled:opacity-50"
-                >
-                  {busy === "download" ? <Spinner /> : <Download className="size-[18px]" aria-hidden />}
-                  Download
-                </button>
-                <button
-                  type="button"
-                  onClick={onShare}
-                  disabled={busy !== null}
-                  className="inline-flex items-center gap-2 rounded-full border border-black/15 bg-white text-ink-800 px-5 py-2.5 text-sm font-semibold transition-all duration-200 active:scale-[0.97] hover:border-yellow hover:bg-yellow/15 disabled:opacity-50"
-                >
-                  {busy === "share" ? <Spinner /> : <Share2 className="size-[18px]" aria-hidden />}
-                  Share
-                </button>
-              </div>
-            </>
+                  <div className="mt-4 flex items-center justify-center gap-2.5">
+                    <button
+                      type="button"
+                      onClick={onDownload}
+                      disabled={busy !== null}
+                      className="inline-flex items-center gap-2 rounded-full bg-red text-white px-5 py-2.5 text-sm font-semibold shadow-[0_6px_16px_-6px_rgba(191,6,3,0.6)] transition-all duration-200 active:scale-[0.97] hover:bg-brand-600 disabled:opacity-50"
+                    >
+                      {busy === "download" ? <Spinner /> : <Download className="size-[18px]" aria-hidden />}
+                      Download
+                    </button>
+                    <button
+                      type="button"
+                      onClick={onShare}
+                      disabled={busy !== null}
+                      className="inline-flex items-center gap-2 rounded-full border border-black/15 bg-white text-ink-800 px-5 py-2.5 text-sm font-semibold transition-all duration-200 active:scale-[0.97] hover:border-yellow hover:bg-yellow/15 disabled:opacity-50"
+                    >
+                      {busy === "share" ? <Spinner /> : <Share2 className="size-[18px]" aria-hidden />}
+                      Share
+                    </button>
+                  </div>
+                </>
+              );
+            })()
           )}
         </div>
       </div>
@@ -262,6 +269,23 @@ function EmptyState() {
       <p className="text-xs text-ink-400 mt-2">
         They'll appear here as soon as the organisers post the latest
         standings.
+      </p>
+    </div>
+  );
+}
+
+/** Shown when the organiser has hidden every standings template — the
+ *  data exists, but there is no enabled template to render it on. */
+function NoTemplateState() {
+  return (
+    <div className="rounded-2xl border border-dashed border-black/15 bg-paper/40 px-5 py-8 text-center">
+      <p className="text-sm font-semibold text-ink-800">
+        No standings poster template enabled.
+      </p>
+      <p className="mt-1.5 text-xs leading-relaxed text-ink-700/80">
+        The organisers have hidden every team-standings template. Once
+        at least one is enabled in the admin, the latest standings
+        poster will appear here.
       </p>
     </div>
   );

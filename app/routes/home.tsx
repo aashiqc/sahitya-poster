@@ -1881,6 +1881,36 @@ function ResultBubble({
     }
   }
 
+  // Strict mode: when every poster template has been hidden by the
+  // admin, `tplChoices` is empty and we MUST NOT render a disabled
+  // template. Show a soft empty state alongside the "Another result"
+  // affordance so the chat flow can keep going.
+  if (!tpl) {
+    return (
+      <div>
+        <div className="rounded-2xl border border-dashed border-black/15 bg-white/70 px-5 py-6 text-center">
+          <p className="text-sm font-semibold text-ink-800">
+            No poster template enabled yet.
+          </p>
+          <p className="mt-1.5 text-xs leading-relaxed text-ink-700/80">
+            The organisers have hidden every poster template. Once at
+            least one is enabled, this result's poster will appear
+            here.
+          </p>
+        </div>
+        <div className="mt-3 flex justify-end">
+          <button
+            type="button"
+            onClick={onDifferentLevel}
+            className="rounded-full border border-black/15 bg-white px-4 py-2 text-xs font-semibold text-ink-800 shadow-sm transition-all duration-200 hover:-translate-y-px hover:border-yellow hover:bg-yellow/15 active:translate-y-0 active:scale-[0.97] shrink-0"
+          >
+            Another result
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div>
       <button
@@ -1892,8 +1922,8 @@ function ResultBubble({
       >
         <PosterCanvas
           data={posterData}
-          templateIndex={tpl?.builtinIndex ?? 0}
-          customSrc={tpl?.src ?? undefined}
+          templateIndex={tpl.builtinIndex ?? 0}
+          customSrc={tpl.src ?? undefined}
           stageRef={stageRef}
         />
       </button>
@@ -1916,13 +1946,15 @@ function ResultBubble({
           >
             {busy === "share" ? <Spinner /> : <ShareIcon />}
           </IconButton>
-          <IconButton
-            label="Switch template"
-            onClick={() => setTmpl((t) => t + 1)}
-            tone="ghost"
-          >
-            <SwapIcon />
-          </IconButton>
+          {tplChoices.length > 1 && (
+            <IconButton
+              label="Switch template"
+              onClick={() => setTmpl((t) => t + 1)}
+              tone="ghost"
+            >
+              <SwapIcon />
+            </IconButton>
+          )}
         </div>
         <button
           type="button"
@@ -1936,8 +1968,8 @@ function ResultBubble({
       {zoom && (
         <PosterZoomModal
           data={posterData}
-          templateIndex={tpl?.builtinIndex ?? 0}
-          customSrc={tpl?.src ?? undefined}
+          templateIndex={tpl.builtinIndex ?? 0}
+          customSrc={tpl.src ?? undefined}
           onClose={() => setZoom(false)}
         />
       )}
