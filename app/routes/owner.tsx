@@ -401,6 +401,148 @@ export async function action({
     };
   }
 
+  if (intent === "delete_organization") {
+    const subdomain = String(fd.get("subdomain") ?? "")
+      .trim()
+      .toLowerCase();
+    const confirm = String(fd.get("confirm_subdomain") ?? "")
+      .trim()
+      .toLowerCase();
+    if (!subdomain) return { error: "Missing subdomain." };
+    if (subdomain === TEMPLATE_SUBDOMAIN)
+      return {
+        error: `Refusing to delete the template tenant (“${TEMPLATE_SUBDOMAIN}”) — every new tenant clones its programs from it.`,
+      };
+    if (subdomain !== confirm)
+      return {
+        error: `Confirmation didn't match — type “${subdomain}” exactly to delete the tenant.`,
+      };
+
+    // 1. Resolve the org
+    const { data: org } = await svc
+      .from("organizations")
+      .select("id, name")
+      .eq("subdomain", subdomain)
+      .maybeSingle();
+    if (!org)
+      return { error: `No tenant “${subdomain}” to delete.` };
+
+    // 2. Collect everything we'll need to nuke before the FK chain
+    //    is broken: event ids (for storage prefixes + cascade) and
+    //    admin user ids (auth.users isn't FK-linked, must delete
+    //    explicitly via the admin API).
+    const { data: events } = await svc
+      .from("events")
+      .select("id")
+      .eq("organization_id", org.id);
+    const eventIds = (events ?? []).map((e) => e.id);
+
+    const { data: profs } = await svc
+      .from("profiles")
+      .select("user_id")
+      .eq("organization_id", org.id);
+    const userIds = Array.from(
+      new Set((profs ?? []).map((p) => p.user_id).filter(Boolean) as string[]),
+    );
+
+    // 3. Storage cleanup — best-effort. We list each event's prefix in
+    //    the `posters` bucket and remove the children, plus the
+    //    `final/<event>.{png,jpg,jpeg,webp}` single-file outputs.
+    //    Any failure here is logged into a tail note but doesn't abort
+    //    the row deletes (orphaned files are at worst a few MB).
+    const storageNotes: string[] = [];
+    for (const eid of eventIds) {
+      for (const prefix of [
+        `templates/${eid}`,
+        `templates/standings/${eid}`,
+      ]) {
+        try {
+          const { data: items, error } = await svc.storage
+            .from("posters")
+            .list(prefix, { limit: 1000 });
+          if (error) {
+            storageNotes.push(`list ${prefix}: ${error.message}`);
+            continue;
+          }
+          const paths = (items ?? [])
+            .filter((it) => it.name && !it.name.startsWith("."))
+            .map((it) => `${prefix}/${it.name}`);
+          if (paths.length) {
+            const { error: rmErr } = await svc.storage
+              .from("posters")
+              .remove(paths);
+            if (rmErr) storageNotes.push(`remove ${prefix}: ${rmErr.message}`);
+          }
+        } catch (e) {
+          storageNotes.push(`list ${prefix}: ${String(e)}`);
+        }
+      }
+      // Final-poster object lives at `final/<event_id>.<ext>` (one
+      // per event). Try the known image extensions; missing files
+      // are silently ignored by Supabase Storage.
+      try {
+        await svc.storage
+          .from("posters")
+          .remove([
+            `final/${eid}.png`,
+            `final/${eid}.jpg`,
+            `final/${eid}.jpeg`,
+            `final/${eid}.webp`,
+          ]);
+      } catch (e) {
+        storageNotes.push(`final ${eid}: ${String(e)}`);
+      }
+    }
+
+    // 4. Delete events. FK cascades wipe levels, programs, results,
+    //    result_winners, team_standings and posters in one statement.
+    if (eventIds.length) {
+      const { error: evErr } = await svc
+        .from("events")
+        .delete()
+        .in("id", eventIds);
+      if (evErr) return { error: `Events: ${evErr.message}` };
+    }
+
+    // 5. Profiles for this org (FK to organizations is RESTRICT, so
+    //    these must go before the org row itself).
+    const { error: prErr } = await svc
+      .from("profiles")
+      .delete()
+      .eq("organization_id", org.id);
+    if (prErr) return { error: `Profiles: ${prErr.message}` };
+
+    // 6. The org row. `admin_invitations` cascades automatically.
+    const { error: oErr } = await svc
+      .from("organizations")
+      .delete()
+      .eq("id", org.id);
+    if (oErr) return { error: `Organization: ${oErr.message}` };
+
+    // 7. Auth users — only delete ones that have no remaining
+    //    profile rows (defensive: in theory a user could be bound to
+    //    multiple orgs; we never want to break the others).
+    let deletedUsers = 0;
+    for (const uid of userIds) {
+      const { count } = await svc
+        .from("profiles")
+        .select("user_id", { count: "exact", head: true })
+        .eq("user_id", uid);
+      if ((count ?? 0) > 0) continue;
+      const { error: uErr } = await svc.auth.admin.deleteUser(uid);
+      if (!uErr) deletedUsers++;
+      else storageNotes.push(`auth.user ${uid}: ${uErr.message}`);
+    }
+
+    const tail = storageNotes.length
+      ? ` · ⚠ ${storageNotes.length} non-blocking issue(s): ${storageNotes.slice(0, 3).join("; ")}${storageNotes.length > 3 ? "…" : ""}`
+      : "";
+    return {
+      ok: true,
+      message: `Deleted “${org.name}” (${subdomain}) — ${eventIds.length} event(s), ${userIds.length} profile(s), ${deletedUsers} auth user(s) removed.${tail}`,
+    };
+  }
+
   if (intent === "resync_programs") {
     const subdomain = String(fd.get("subdomain") ?? "")
       .trim()
@@ -534,6 +676,14 @@ export default function OwnerConsole({ loaderData }: Route.ComponentProps) {
   const approveId = searchParams.get("approve");
   const approveRequest = approveId
     ? accessRequests.find((r) => r.id === approveId) ?? null
+    : null;
+
+  // "Delete tenant" mode — driven by ?delete=<subdomain>. Shows a
+  // type-to-confirm panel under Create-tenant; the action wipes the
+  // org's events / profiles / org row + storage objects + auth users.
+  const deleteSub = searchParams.get("delete");
+  const deleteTenant = deleteSub
+    ? tenants.find((t) => t.subdomain === deleteSub) ?? null
     : null;
 
   const field =
@@ -817,34 +967,62 @@ export default function OwnerConsole({ loaderData }: Route.ComponentProps) {
                               <div className="font-mono text-[11.5px] text-stone-700 break-all">
                                 {t.adminEmail}
                               </div>
-                              {t.adminUserId && (
-                                <Form method="post">
-                                  <input
-                                    type="hidden"
-                                    name="intent"
-                                    value="reset_admin_password"
-                                  />
-                                  <input
-                                    type="hidden"
-                                    name="user_id"
-                                    value={t.adminUserId}
-                                  />
-                                  <input
-                                    type="hidden"
-                                    name="email"
-                                    value={t.adminEmail}
-                                  />
-                                  <button
-                                    type="submit"
-                                    className="text-[11px] font-medium text-stone-400 underline decoration-dotted underline-offset-4 transition hover:text-brand-700"
-                                  >
-                                    Reset password
-                                  </button>
-                                </Form>
-                              )}
+                              <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                                {t.adminUserId && (
+                                  <Form method="post">
+                                    <input
+                                      type="hidden"
+                                      name="intent"
+                                      value="reset_admin_password"
+                                    />
+                                    <input
+                                      type="hidden"
+                                      name="user_id"
+                                      value={t.adminUserId}
+                                    />
+                                    <input
+                                      type="hidden"
+                                      name="email"
+                                      value={t.adminEmail}
+                                    />
+                                    <button
+                                      type="submit"
+                                      className="text-[11px] font-medium text-stone-400 underline decoration-dotted underline-offset-4 transition hover:text-brand-700"
+                                    >
+                                      Reset password
+                                    </button>
+                                  </Form>
+                                )}
+                                {t.subdomain &&
+                                  t.subdomain !== TEMPLATE_SUBDOMAIN && (
+                                    <Link
+                                      to={{
+                                        search: `?delete=${t.subdomain}`,
+                                        hash: "#delete-tenant",
+                                      }}
+                                      className="text-[11px] font-medium text-red-500 underline decoration-dotted underline-offset-4 transition hover:text-red-700"
+                                    >
+                                      Delete tenant
+                                    </Link>
+                                  )}
+                              </div>
                             </div>
                           ) : (
-                            <span className="text-stone-300">—</span>
+                            <div className="space-y-1">
+                              <span className="text-stone-300">—</span>
+                              {t.subdomain &&
+                                t.subdomain !== TEMPLATE_SUBDOMAIN && (
+                                  <Link
+                                    to={{
+                                      search: `?delete=${t.subdomain}`,
+                                      hash: "#delete-tenant",
+                                    }}
+                                    className="block text-[11px] font-medium text-red-500 underline decoration-dotted underline-offset-4 transition hover:text-red-700"
+                                  >
+                                    Delete tenant
+                                  </Link>
+                                )}
+                            </div>
                           )}
                         </td>
                       </tr>
@@ -1006,6 +1184,105 @@ export default function OwnerConsole({ loaderData }: Route.ComponentProps) {
                 </button>
               </Form>
             </section>
+
+            {/* Delete tenant — surfaces only when ?delete=<sub> is in
+                the URL (set by the per-row Delete link). Mirrors the
+                Approve panel shape but in a destructive red palette
+                with a type-the-subdomain confirmation. */}
+            {deleteTenant && (
+              <section
+                id="delete-tenant"
+                className={`${card} border-red-200 p-5 scroll-mt-6`}
+                style={{ animationDelay: ".05s" }}
+              >
+                <div className="flex items-baseline justify-between gap-2">
+                  <h2 className="font-[Fraunces,serif] text-lg tracking-tight text-red-700">
+                    Delete tenant
+                  </h2>
+                  <span className="text-[10px] font-semibold uppercase tracking-[0.18em] text-red-700">
+                    Destructive
+                  </span>
+                </div>
+                <p className="mt-1 text-xs leading-relaxed text-stone-600">
+                  Permanently removes <strong>{deleteTenant.name}</strong>
+                  {deleteTenant.subdomain && (
+                    <>
+                      {" "}
+                      (
+                      <code className="rounded bg-stone-100 px-1 py-0.5 font-mono text-[11px] text-stone-700">
+                        {deleteTenant.subdomain}
+                      </code>
+                      )
+                    </>
+                  )}{" "}
+                  — every event, every result, every uploaded template,
+                  the admin login, and all storage objects under{" "}
+                  <code className="rounded bg-stone-100 px-1 py-0.5 font-mono text-[10px] text-stone-700">
+                    posters/templates/&lt;event&gt;
+                  </code>{" "}
+                  and{" "}
+                  <code className="rounded bg-stone-100 px-1 py-0.5 font-mono text-[10px] text-stone-700">
+                    posters/final/&lt;event&gt;.*
+                  </code>
+                  . This cannot be undone.
+                </p>
+                <Form
+                  method="post"
+                  className="mt-4 space-y-3"
+                  key={deleteTenant.subdomain ?? "none"}
+                >
+                  <input
+                    type="hidden"
+                    name="intent"
+                    value="delete_organization"
+                  />
+                  <input
+                    type="hidden"
+                    name="subdomain"
+                    value={deleteTenant.subdomain ?? ""}
+                  />
+                  <label className="block space-y-1">
+                    <span className={lbl}>
+                      Type{" "}
+                      <code className="rounded bg-stone-100 px-1 py-0.5 font-mono text-[11px] text-stone-700">
+                        {deleteTenant.subdomain}
+                      </code>{" "}
+                      to confirm
+                    </span>
+                    <input
+                      name="confirm_subdomain"
+                      required
+                      autoComplete="off"
+                      className={`${field} font-mono`}
+                      placeholder={deleteTenant.subdomain ?? ""}
+                    />
+                  </label>
+                  <div className="flex flex-wrap items-center justify-end gap-2">
+                    <Link
+                      to={{ search: "", hash: "" }}
+                      className="rounded-md border border-stone-300 px-3 py-1.5 text-xs font-medium text-stone-700 hover:bg-stone-50"
+                    >
+                      Cancel
+                    </Link>
+                    <button
+                      type="submit"
+                      disabled={busy}
+                      onClick={(e) => {
+                        if (
+                          !confirm(
+                            `Permanently delete “${deleteTenant.name}”? This wipes every event, result and admin login for the tenant.`,
+                          )
+                        )
+                          e.preventDefault();
+                      }}
+                      className="rounded-md bg-red-600 px-4 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:bg-red-700 disabled:opacity-50"
+                    >
+                      {busy ? "Deleting…" : "Permanently delete"}
+                    </button>
+                  </div>
+                </Form>
+              </section>
+            )}
 
             <section
               className={`${card} p-5`}
