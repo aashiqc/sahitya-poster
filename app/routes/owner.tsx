@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, type ReactNode } from "react";
 import {
   Form,
   Link,
@@ -168,6 +168,46 @@ export async function action({
     return {
       ok: true,
       message: `New password for ${email || "admin"}: ${pwd}  — copy it now, it is shown only once.`,
+    };
+  }
+
+  if (intent === "edit_admin_credentials") {
+    // Update one tenant admin's email and / or password. Password is
+    // optional — blank means "keep the current one"; non-blank must
+    // be ≥ 6 chars to match the create-tenant minimum. We never echo
+    // the owner-supplied password back in the success banner (only
+    // `reset_admin_password` does that, because it generates a random
+    // one the owner needs to copy).
+    const userId = String(fd.get("user_id") ?? "").trim();
+    const newEmail = String(fd.get("admin_email") ?? "")
+      .trim()
+      .toLowerCase();
+    const newPassword = String(fd.get("admin_password") ?? "");
+    if (!userId) return { error: "No admin account on that tenant." };
+    if (!newEmail) return { error: "Admin email is required." };
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(newEmail))
+      return { error: "That email doesn't look valid." };
+    if (newPassword && newPassword.length < 6)
+      return {
+        error: "New password must be at least 6 characters (or leave it blank).",
+      };
+
+    const updates: { email: string; email_confirm: true; password?: string } = {
+      email: newEmail,
+      // Mark the new email confirmed straight away — owners changing
+      // credentials shouldn't trigger the verification round-trip.
+      email_confirm: true,
+    };
+    if (newPassword) updates.password = newPassword;
+
+    const { error } = await svc.auth.admin.updateUserById(userId, updates);
+    if (error) return { error: `Update failed: ${error.message}` };
+
+    const changedParts: string[] = [`email → ${newEmail}`];
+    if (newPassword) changedParts.push("password updated");
+    return {
+      ok: true,
+      message: `Admin credentials updated · ${changedParts.join(" · ")}.`,
     };
   }
 
@@ -679,34 +719,53 @@ export default function OwnerConsole({ loaderData }: Route.ComponentProps) {
   // submits a hidden `request_id` so the action flips the row to
   // 'approved' only after provisioning succeeds.
   const [searchParams] = useSearchParams();
+  // Three modal-driving URL params, all mutually exclusive in practice:
+  //   ?approve=<request_id>   open the Approve tenant modal (with the
+  //                            create-tenant form prefilled).
+  //   ?edit=<user_id>          open the Edit credentials modal.
+  //   ?delete=<subdomain>      open the Delete tenant modal.
+  // The component reads each into a derived "open" target and renders
+  // the corresponding modal at the page root.
   const approveId = searchParams.get("approve");
   const approveRequest = approveId
     ? accessRequests.find((r) => r.id === approveId) ?? null
     : null;
+  const approveOpen = !!approveRequest;
 
-  // "Delete tenant" mode — driven by ?delete=<subdomain>. Renders a
-  // centred modal with a type-to-confirm input; the action wipes the
-  // org's events / profiles / org row + storage objects + auth users.
+  const editUserId = searchParams.get("edit");
+  const editTenant = editUserId
+    ? tenants.find((t) => t.adminUserId === editUserId) ?? null
+    : null;
+  const editOpen = !!editTenant;
+
   const deleteSub = searchParams.get("delete");
   const deleteTenant = deleteSub
     ? tenants.find((t) => t.subdomain === deleteSub) ?? null
     : null;
   const deleteOpen = !!deleteTenant;
-  // Clear the `?delete=` param via the router so the modal closes
-  // without a full reload; preserves any other search params we add
-  // in the future.
-  const closeDelete = () => {
+
+  // Shared close helpers — clear one param via the router without a
+  // full reload, preserving any other params we add in the future.
+  const clearParam = (key: string) => {
     const params = new URLSearchParams(searchParams);
-    params.delete("delete");
+    params.delete(key);
     const search = params.toString();
     navigate({ search: search ? `?${search}` : "" });
   };
-  // Escape key dismisses the modal. Body-scroll lock while open so the
-  // background doesn't drift behind the dialog.
+  const closeApprove = () => clearParam("approve");
+  const closeEdit = () => clearParam("edit");
+  const closeDelete = () => clearParam("delete");
+
+  // One Escape listener + body-scroll lock for whichever modal is open.
+  // Listing each open-state in the deps array keeps the effect honest.
+  const anyModalOpen = approveOpen || editOpen || deleteOpen;
   useEffect(() => {
-    if (!deleteOpen) return;
+    if (!anyModalOpen) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") closeDelete();
+      if (e.key !== "Escape") return;
+      if (approveOpen) closeApprove();
+      else if (editOpen) closeEdit();
+      else if (deleteOpen) closeDelete();
     };
     const prev = document.body.style.overflow;
     document.body.style.overflow = "hidden";
@@ -716,7 +775,7 @@ export default function OwnerConsole({ loaderData }: Route.ComponentProps) {
       document.body.style.overflow = prev;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [deleteOpen]);
+  }, [anyModalOpen, approveOpen, editOpen, deleteOpen]);
 
   const field =
     "w-full rounded-md border border-stone-300/80 bg-white px-3 py-2 text-sm text-stone-900 placeholder:text-stone-400 transition focus:outline-none focus:border-brand-600 focus:ring-2 focus:ring-brand-600/15";
@@ -853,15 +912,12 @@ export default function OwnerConsole({ loaderData }: Route.ComponentProps) {
                       </p>
                     </div>
                     <div className="flex shrink-0 gap-1.5">
-                      {/* Approve = jump to the Create-tenant form with
+                      {/* Approve = open the Create-tenant modal with
                           org_name + request_id prefilled. Status only
                           flips to 'approved' once provisioning succeeds,
                           so a half-done attempt is safely resumable. */}
                       <Link
-                        to={{
-                          search: `?approve=${r.id}`,
-                          hash: "#create-tenant",
-                        }}
+                        to={{ search: `?approve=${r.id}` }}
                         className="rounded-md bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700"
                       >
                         Approve
@@ -1012,37 +1068,42 @@ export default function OwnerConsole({ loaderData }: Route.ComponentProps) {
                               </div>
                               <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
                                 {t.adminUserId && (
-                                  <Form method="post">
-                                    <input
-                                      type="hidden"
-                                      name="intent"
-                                      value="reset_admin_password"
-                                    />
-                                    <input
-                                      type="hidden"
-                                      name="user_id"
-                                      value={t.adminUserId}
-                                    />
-                                    <input
-                                      type="hidden"
-                                      name="email"
-                                      value={t.adminEmail}
-                                    />
-                                    <button
-                                      type="submit"
-                                      className="text-[11px] font-medium text-stone-400 underline decoration-dotted underline-offset-4 transition hover:text-brand-700"
+                                  <>
+                                    <Link
+                                      to={{ search: `?edit=${t.adminUserId}` }}
+                                      className="text-[11px] font-medium text-stone-500 underline decoration-dotted underline-offset-4 transition hover:text-brand-700"
                                     >
-                                      Reset password
-                                    </button>
-                                  </Form>
+                                      Edit
+                                    </Link>
+                                    <Form method="post">
+                                      <input
+                                        type="hidden"
+                                        name="intent"
+                                        value="reset_admin_password"
+                                      />
+                                      <input
+                                        type="hidden"
+                                        name="user_id"
+                                        value={t.adminUserId}
+                                      />
+                                      <input
+                                        type="hidden"
+                                        name="email"
+                                        value={t.adminEmail}
+                                      />
+                                      <button
+                                        type="submit"
+                                        className="text-[11px] font-medium text-stone-400 underline decoration-dotted underline-offset-4 transition hover:text-brand-700"
+                                      >
+                                        Reset password
+                                      </button>
+                                    </Form>
+                                  </>
                                 )}
                                 {t.subdomain &&
                                   t.subdomain !== TEMPLATE_SUBDOMAIN && (
                                     <Link
-                                      to={{
-                                        search: `?delete=${t.subdomain}`,
-                                        hash: "#delete-tenant",
-                                      }}
+                                      to={{ search: `?delete=${t.subdomain}` }}
                                       className="text-[11px] font-medium text-red-500 underline decoration-dotted underline-offset-4 transition hover:text-red-700"
                                     >
                                       Delete tenant
@@ -1079,8 +1140,7 @@ export default function OwnerConsole({ loaderData }: Route.ComponentProps) {
           {/* Create + maintain */}
           <div className="order-1 space-y-5 lg:col-span-5">
             <section
-              id="create-tenant"
-              className={`${card} p-5 scroll-mt-6`}
+              className={`${card} p-5`}
               style={{ animationDelay: ".04s" }}
             >
               <div className="flex items-baseline justify-between gap-2">
@@ -1101,131 +1161,14 @@ export default function OwnerConsole({ loaderData }: Route.ComponentProps) {
                   &lt;sub&gt;.{rootDomain}/admin
                 </span>
               </p>
-              {approveRequest && (
-                <div className="mt-4 rounded-lg border border-emerald-200 bg-emerald-50/70 px-3 py-2.5 text-xs leading-relaxed text-emerald-900">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="font-semibold">
-                        Approving request from{" "}
-                        <span className="font-mono">
-                          {approveRequest.organization_name}
-                        </span>
-                      </p>
-                      <p className="mt-0.5 text-emerald-800/80">
-                        {approveRequest.name} ·{" "}
-                        <a
-                          href={`tel:${approveRequest.mobile.replace(/\s+/g, "")}`}
-                          className="font-mono underline-offset-2 hover:underline"
-                        >
-                          {approveRequest.mobile}
-                        </a>
-                      </p>
-                    </div>
-                    <Link
-                      to={{ search: "", hash: "" }}
-                      className="shrink-0 rounded-md border border-emerald-200 bg-white px-2 py-1 text-[11px] font-medium text-emerald-800 hover:bg-emerald-50"
-                    >
-                      Cancel
-                    </Link>
-                  </div>
-                </div>
-              )}
-              {/* `key` remounts the form when the approved request
-                  changes, so the controlled defaultValue actually
-                  re-seeds the input. */}
-              <Form
-                method="post"
-                className="mt-4 grid gap-3 sm:grid-cols-2"
-                key={approveRequest?.id ?? "blank"}
-              >
-                <input type="hidden" name="intent" value="create_tenant" />
-                {approveRequest && (
-                  <input
-                    type="hidden"
-                    name="request_id"
-                    value={approveRequest.id}
-                  />
-                )}
-                <label className="space-y-1">
-                  <span className={lbl}>Organization name</span>
-                  <input
-                    name="org_name"
-                    required
-                    defaultValue={approveRequest?.organization_name ?? ""}
-                    className={field}
-                    placeholder="SSF Pantharangadi Sector"
-                  />
-                </label>
-                <label className="space-y-1">
-                  <span className={lbl}>Level</span>
-                  <select
-                    name="org_level"
-                    defaultValue="unit"
-                    className={field}
-                  >
-                    <option value="unit">Unit</option>
-                    <option value="sector">Sector</option>
-                    <option value="division">Division</option>
-                    <option value="district">District</option>
-                  </select>
-                </label>
-                <label className="space-y-1">
-                  <span className={lbl}>Subdomain</span>
-                  <input
-                    name="subdomain"
-                    required
-                    className={`${field} font-mono`}
-                    placeholder="pantharangadi"
-                    pattern="[a-z0-9-]+"
-                  />
-                </label>
-                <label className="space-y-1">
-                  <span className={lbl}>Event name</span>
-                  <input
-                    name="event_name"
-                    required
-                    className={field}
-                    placeholder="Saaheethyolsav 26"
-                  />
-                </label>
-                <label className="space-y-1">
-                  <span className={lbl}>Event · Malayalam</span>
-                  <input
-                    name="event_name_ml"
-                    className={field}
-                    lang="ml"
-                    placeholder="optional"
-                  />
-                </label>
-                <label className="space-y-1">
-                  <span className={lbl}>Admin email</span>
-                  <input
-                    name="admin_email"
-                    type="email"
-                    required
-                    className={`${field} font-mono`}
-                    placeholder="admin@example.com"
-                  />
-                </label>
-                <label className="space-y-1">
-                  <span className={lbl}>Admin password</span>
-                  <input
-                    name="admin_password"
-                    type="text"
-                    required
-                    minLength={6}
-                    className={`${field} font-mono`}
-                    placeholder="≥ 6 chars"
-                  />
-                </label>
-                <button
-                  type="submit"
-                  disabled={busyFor("create_tenant")}
-                  className="mt-1 rounded-md bg-brand-700 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-brand-800 disabled:opacity-50 sm:col-span-2"
-                >
-                  {busyFor("create_tenant") ? "Creating…" : "Create tenant"}
-                </button>
-              </Form>
+              <div className="mt-4">
+                <CreateTenantForm
+                  approveRequest={null}
+                  busyFor={busyFor}
+                  field={field}
+                  lbl={lbl}
+                />
+              </div>
             </section>
 
             <section
@@ -1270,6 +1213,179 @@ export default function OwnerConsole({ loaderData }: Route.ComponentProps) {
           </div>
         </div>
       </main>
+
+      {/* Approve modal — opens when the owner clicks Approve on a
+          pending access request. Wraps the Create-tenant form with
+          a green banner showing the requester's contact, prefilled
+          org_name + hidden request_id. */}
+      {approveOpen && approveRequest && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="approve-tenant-title"
+          className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/45 px-4 py-6 sm:py-10 backdrop-blur-sm"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) closeApprove();
+          }}
+        >
+          <div
+            className="relative w-full max-w-xl overflow-hidden rounded-2xl border border-emerald-200 bg-white shadow-[0_24px_60px_-20px_rgba(0,0,0,0.4)]"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-baseline justify-between gap-2 border-b border-emerald-100 bg-emerald-50/60 px-5 py-3">
+              <h2
+                id="approve-tenant-title"
+                className="font-[Fraunces,serif] text-base tracking-tight text-emerald-800"
+              >
+                Approve request
+              </h2>
+              <span className="text-[10px] font-semibold uppercase tracking-[0.18em] text-emerald-700">
+                Provision
+              </span>
+            </div>
+            <div className="px-5 py-4">
+              <div className="rounded-lg border border-emerald-200 bg-emerald-50/70 px-3 py-2.5 text-xs leading-relaxed text-emerald-900">
+                <p className="font-semibold">
+                  From{" "}
+                  <span className="font-mono">
+                    {approveRequest.organization_name}
+                  </span>
+                </p>
+                <p className="mt-0.5 text-emerald-800/80">
+                  {approveRequest.name} ·{" "}
+                  <a
+                    href={`tel:${approveRequest.mobile.replace(/\s+/g, "")}`}
+                    className="font-mono underline-offset-2 hover:underline"
+                  >
+                    {approveRequest.mobile}
+                  </a>
+                </p>
+              </div>
+              <p className="mt-3 text-[11px] leading-relaxed text-stone-500">
+                The request is only marked{" "}
+                <span className="font-semibold">approved</span> once
+                provisioning succeeds. If anything fails it rolls back
+                and the request stays in the list, ready to retry.
+              </p>
+              <div className="mt-4">
+                <CreateTenantForm
+                  approveRequest={approveRequest}
+                  busyFor={busyFor}
+                  field={field}
+                  lbl={lbl}
+                  trailingAction={
+                    <button
+                      type="button"
+                      onClick={closeApprove}
+                      className="rounded-md border border-stone-300 px-3 py-2 text-sm font-medium text-stone-700 hover:bg-stone-50"
+                    >
+                      Cancel
+                    </button>
+                  }
+                />
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Edit credentials modal — change one tenant admin's email
+          and / or password. Email field is pre-filled with the
+          current address; the password field is optional. */}
+      {editOpen && editTenant && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="edit-admin-title"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 px-4 py-8 backdrop-blur-sm"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) closeEdit();
+          }}
+        >
+          <div
+            className="relative w-full max-w-md overflow-hidden rounded-2xl border border-stone-200 bg-white shadow-[0_24px_60px_-20px_rgba(0,0,0,0.4)]"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-baseline justify-between gap-2 border-b border-stone-100 bg-stone-50/60 px-5 py-3">
+              <h2
+                id="edit-admin-title"
+                className="font-[Fraunces,serif] text-base tracking-tight text-stone-900"
+              >
+                Edit credentials
+              </h2>
+              <span className="text-[10px] font-semibold uppercase tracking-[0.18em] text-brand-700">
+                {editTenant.name}
+              </span>
+            </div>
+            <div className="px-5 py-4">
+              <p className="text-xs leading-relaxed text-stone-600">
+                Update the admin login for{" "}
+                <strong>{editTenant.name}</strong>. The new email is
+                marked confirmed immediately — no verification step
+                needed. Leave the password blank to keep the existing
+                one.
+              </p>
+              <Form
+                method="post"
+                className="mt-4 space-y-3"
+                key={editTenant.adminUserId ?? "none"}
+              >
+                <input
+                  type="hidden"
+                  name="intent"
+                  value="edit_admin_credentials"
+                />
+                <input
+                  type="hidden"
+                  name="user_id"
+                  value={editTenant.adminUserId ?? ""}
+                />
+                <label className="block space-y-1">
+                  <span className={lbl}>Admin email</span>
+                  <input
+                    name="admin_email"
+                    type="email"
+                    required
+                    autoFocus
+                    defaultValue={editTenant.adminEmail ?? ""}
+                    className={`${field} font-mono`}
+                    placeholder="admin@example.com"
+                  />
+                </label>
+                <label className="block space-y-1">
+                  <span className={lbl}>New password (optional)</span>
+                  <input
+                    name="admin_password"
+                    type="text"
+                    minLength={6}
+                    autoComplete="new-password"
+                    className={`${field} font-mono`}
+                    placeholder="Leave blank to keep current"
+                  />
+                </label>
+                <div className="flex flex-wrap items-center justify-end gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={closeEdit}
+                    className="rounded-md border border-stone-300 px-3 py-1.5 text-xs font-medium text-stone-700 hover:bg-stone-50"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={busyFor("edit_admin_credentials")}
+                    className="rounded-md bg-brand-700 px-4 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:bg-brand-800 disabled:opacity-50"
+                  >
+                    {busyFor("edit_admin_credentials")
+                      ? "Saving…"
+                      : "Save changes"}
+                  </button>
+                </div>
+              </Form>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Delete-tenant modal — rendered at the page root so it sits
           above every column. Driven by `?delete=<sub>`; click-outside
@@ -1391,5 +1507,137 @@ export default function OwnerConsole({ loaderData }: Route.ComponentProps) {
         </div>
       )}
     </div>
+  );
+}
+
+/** Shape of an approve-mode prefill source. Just the bits the create-
+ *  tenant form actually uses — kept inline here so a small refactor of
+ *  the access_requests schema doesn't have to propagate. */
+type ApproveSource = {
+  id: string;
+  organization_name: string;
+};
+
+/** The Create-tenant form, extracted so it can render both inline in
+ *  the right column AND inside the Approve modal with prefilled
+ *  values + a hidden request_id. `approveRequest` is null for the
+ *  inline (manual) instance and an object for the modal instance.
+ *  `trailingAction` lets the modal slot a Cancel button next to the
+ *  Create-tenant submit. */
+function CreateTenantForm({
+  approveRequest,
+  busyFor,
+  field,
+  lbl,
+  trailingAction,
+}: {
+  approveRequest: ApproveSource | null;
+  busyFor: (
+    intent: string,
+    match?: Record<string, string | number | null | undefined>,
+  ) => boolean;
+  field: string;
+  lbl: string;
+  trailingAction?: ReactNode;
+}) {
+  return (
+    <Form
+      method="post"
+      className="grid gap-3 sm:grid-cols-2"
+      // The `key` remounts the form when the approved request changes
+      // so the controlled defaultValue actually re-seeds the input.
+      key={approveRequest?.id ?? "blank"}
+    >
+      <input type="hidden" name="intent" value="create_tenant" />
+      {approveRequest && (
+        <input
+          type="hidden"
+          name="request_id"
+          value={approveRequest.id}
+        />
+      )}
+      <label className="space-y-1">
+        <span className={lbl}>Organization name</span>
+        <input
+          name="org_name"
+          required
+          defaultValue={approveRequest?.organization_name ?? ""}
+          className={field}
+          placeholder="SSF Pantharangadi Sector"
+        />
+      </label>
+      <label className="space-y-1">
+        <span className={lbl}>Level</span>
+        <select name="org_level" defaultValue="unit" className={field}>
+          <option value="unit">Unit</option>
+          <option value="sector">Sector</option>
+          <option value="division">Division</option>
+          <option value="district">District</option>
+        </select>
+      </label>
+      <label className="space-y-1">
+        <span className={lbl}>Subdomain</span>
+        <input
+          name="subdomain"
+          required
+          className={`${field} font-mono`}
+          placeholder="pantharangadi"
+          pattern="[a-z0-9-]+"
+        />
+      </label>
+      <label className="space-y-1">
+        <span className={lbl}>Event name</span>
+        <input
+          name="event_name"
+          required
+          className={field}
+          placeholder="Saaheethyolsav 26"
+        />
+      </label>
+      <label className="space-y-1">
+        <span className={lbl}>Event · Malayalam</span>
+        <input
+          name="event_name_ml"
+          className={field}
+          lang="ml"
+          placeholder="optional"
+        />
+      </label>
+      <label className="space-y-1">
+        <span className={lbl}>Admin email</span>
+        <input
+          name="admin_email"
+          type="email"
+          required
+          className={`${field} font-mono`}
+          placeholder="admin@example.com"
+        />
+      </label>
+      <label className="space-y-1 sm:col-span-2">
+        <span className={lbl}>Admin password</span>
+        <input
+          name="admin_password"
+          type="text"
+          required
+          minLength={6}
+          className={`${field} font-mono`}
+          placeholder="≥ 6 chars"
+        />
+      </label>
+      <div className="mt-1 flex flex-wrap items-center justify-end gap-2 sm:col-span-2">
+        {trailingAction}
+        <button
+          type="submit"
+          disabled={busyFor("create_tenant")}
+          className="rounded-md bg-brand-700 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-brand-800 disabled:opacity-50"
+        >
+          {busyFor("create_tenant")
+            ? "Creating…"
+            : approveRequest
+              ? "Approve & create tenant"
+              : "Create tenant"}
+        </button>
+      </div>
+    </Form>
   );
 }
