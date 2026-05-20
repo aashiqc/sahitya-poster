@@ -2,6 +2,7 @@ import { Form, data, redirect, useActionData, useNavigation } from "react-router
 import type { Route } from "./+types/admin.login";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createSupabaseServerClient, resolveTenant } from "~/lib/supabase.server";
+import { ownerEmails } from "~/lib/supabase.owner.server";
 import { ROOT_DOMAIN } from "~/lib/constants";
 
 export function meta() {
@@ -24,16 +25,27 @@ const NO_SECTOR = "__no_sector__";
 async function postLoginRedirect(
   request: Request,
   supabase: SupabaseClient,
+  context: unknown,
 ): Promise<string> {
   const sub = resolveTenant(request);
   if (sub) {
     const t = new URL(request.url).searchParams.get("tenant");
     return t ? `/admin?tenant=${encodeURIComponent(t)}` : "/admin";
   }
+  // Apex sign-in. Route the signed-in user to the right console:
+  //  - owner-allowlisted email → the owner console
+  //  - an org-bound profile     → that organisation's admin
+  //  - neither                  → show a friendly error (NO_SECTOR)
   const {
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) return "/admin/login";
+  if (
+    user.email &&
+    ownerEmails(context).includes(user.email.toLowerCase())
+  ) {
+    return `https://owner.${ROOT_DOMAIN}/owner`;
+  }
   const { data: profile } = await supabase
     .from("profiles")
     .select("organizations(subdomain)")
@@ -45,24 +57,24 @@ async function postLoginRedirect(
   return orgSub ? `https://${orgSub}.${ROOT_DOMAIN}/admin` : NO_SECTOR;
 }
 
-export async function loader({ request }: Route.LoaderArgs) {
+export async function loader({ request, context }: Route.LoaderArgs) {
   const { supabase, headers } = createSupabaseServerClient(request);
   const {
     data: { user },
   } = await supabase.auth.getUser();
   if (user) {
-    const dest = await postLoginRedirect(request, supabase);
+    const dest = await postLoginRedirect(request, supabase, context);
     if (dest !== NO_SECTOR)
       return redirect(dest, { headers: Object.fromEntries(headers) });
-    // Signed in but no sector — fall through to render the form with
-    // an error so the page is informative instead of a redirect loop.
+    // Signed in but neither owner nor org-bound — fall through to
+    // render the form with an error rather than a redirect loop.
   }
   return data(null, { headers: Object.fromEntries(headers) });
 }
 
 type ActionResult = { error: string } | { message: string } | undefined;
 
-export async function action({ request }: Route.ActionArgs): Promise<Response | ActionResult> {
+export async function action({ request, context }: Route.ActionArgs): Promise<Response | ActionResult> {
   const formData = await request.formData();
   const email = String(formData.get("email") ?? "").trim();
   const password = String(formData.get("password") ?? "");
@@ -85,7 +97,7 @@ export async function action({ request }: Route.ActionArgs): Promise<Response | 
 
   const { error } = await supabase.auth.signInWithPassword({ email, password });
   if (error) return { error: error.message };
-  const dest = await postLoginRedirect(request, supabase);
+  const dest = await postLoginRedirect(request, supabase, context);
   if (dest === NO_SECTOR) {
     return {
       error:

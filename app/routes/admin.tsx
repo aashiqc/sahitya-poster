@@ -47,6 +47,7 @@ import {
   resolveTenant,
   siteUrlFromRequest,
 } from "~/lib/supabase.server";
+import { ownerEmails } from "~/lib/supabase.owner.server";
 import { ROOT_DOMAIN } from "~/lib/constants";
 import {
   POSTER_FONTS_EN,
@@ -233,11 +234,12 @@ function categorySlug(s: string): string {
 // ============================================================================
 // Loader
 // ============================================================================
-export async function loader({ request }: Route.LoaderArgs) {
+export async function loader({ request, context }: Route.LoaderArgs) {
   // Apex / reserved host (`sahityotsav.live/admin`, `www.../admin`, …):
   // there is no tenant on this host, so loadTenantEvent would 404. Send
-  // the visitor where they actually need to go — to their own sector's
-  // admin dashboard once signed in, or to login otherwise.
+  // the visitor where they actually need to go — owner console for an
+  // allowlisted owner, their own org's dashboard for an org admin, or
+  // login if signed out.
   if (!resolveTenant(request)) {
     const { supabase, headers } = createSupabaseServerClient(request);
     const {
@@ -245,6 +247,14 @@ export async function loader({ request }: Route.LoaderArgs) {
     } = await supabase.auth.getUser();
     if (!user) {
       return redirect("/admin/login", {
+        headers: Object.fromEntries(headers),
+      });
+    }
+    if (
+      user.email &&
+      ownerEmails(context).includes(user.email.toLowerCase())
+    ) {
+      return redirect(`https://owner.${ROOT_DOMAIN}/owner`, {
         headers: Object.fromEntries(headers),
       });
     }

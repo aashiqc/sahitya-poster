@@ -1,5 +1,12 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { Link, data, useRevalidator } from "react-router";
+import {
+  Form,
+  Link,
+  data,
+  useActionData,
+  useNavigation,
+  useRevalidator,
+} from "react-router";
 import type { Route } from "./+types/home";
 import {
   createSupabaseServerClient,
@@ -95,6 +102,46 @@ export function meta({ data }: Route.MetaArgs) {
   ];
 }
 
+/** Apex access-request form. Anonymous insert is allowed by RLS with
+ *  length-guarded CHECK constraints; the owner console reads via the
+ *  service-role client and either approves or rejects each row. */
+export async function action({ request }: Route.ActionArgs) {
+  const fd = await request.formData();
+  const name = String(fd.get("name") ?? "").trim();
+  const mobile = String(fd.get("mobile") ?? "").trim();
+  const organization_name = String(fd.get("organization_name") ?? "").trim();
+  if (
+    name.length < 2 ||
+    mobile.length < 6 ||
+    organization_name.length < 2
+  ) {
+    return data(
+      { error: "Please fill in your name, mobile and organisation name." },
+      { status: 400 },
+    );
+  }
+  if (
+    name.length > 120 ||
+    mobile.length > 30 ||
+    organization_name.length > 200
+  ) {
+    return data({ error: "Some fields are too long." }, { status: 400 });
+  }
+  const { supabase, headers } = createSupabaseServerClient(request);
+  const { error } = await supabase
+    .from("access_requests")
+    .insert({ name, mobile, organization_name });
+  if (error)
+    return data(
+      { error: "Couldn’t send the request — please try again." },
+      { status: 500, headers: Object.fromEntries(headers) },
+    );
+  return data(
+    { ok: true as const, message: "Request sent — we’ll be in touch." },
+    { headers: Object.fromEntries(headers) },
+  );
+}
+
 export async function loader({ request }: Route.LoaderArgs) {
   const { supabase, headers } = createSupabaseServerClient(request);
   const siteUrl = siteUrlFromRequest(request);
@@ -109,12 +156,13 @@ export async function loader({ request }: Route.LoaderArgs) {
         mode: "apex" as const,
         siteUrl,
         rootDomain: ROOT_DOMAIN,
-        contactEmail: "owner@sahityotsav.live",
       },
       {
         headers: {
           ...Object.fromEntries(headers),
-          "Cache-Control": "public, max-age=300, s-maxage=600",
+          // The page is dynamic now (POSTs the form), so no public CDN
+          // caching — short browser cache only.
+          "Cache-Control": "private, max-age=30",
         },
       },
     );
@@ -541,18 +589,17 @@ function Ssf({ className = "" }: { className?: string }) {
 // "Contact admin to register" CTA, so first-time visitors aren't met
 // by a 404. Designed lean and static-feeling; no chat/poster runtime.
 // ─────────────────────────────────────────────────────────────────────
-function ApexLanding({
-  rootDomain,
-  contactEmail,
-}: {
-  rootDomain: string;
-  contactEmail: string;
-}) {
-  const mailto =
-    `mailto:${contactEmail}?subject=${encodeURIComponent("Sahityotsav · new address request")}` +
-    `&body=${encodeURIComponent(
-      "Hi,\n\nI'd like to set up Sahityotsav results for our team.\n\nName of organisation:\nLevel (unit / sector / division / district):\nContact person + number:\n\nThanks.",
-    )}`;
+function ApexLanding({ rootDomain }: { rootDomain: string }) {
+  const actionData = useActionData() as
+    | { ok?: true; message?: string; error?: string }
+    | undefined;
+  const navigation = useNavigation();
+  const busy = navigation.state !== "idle";
+  const sent = actionData?.ok === true;
+
+  const inputCls =
+    "w-full rounded-xl border border-ink-200 bg-paper px-3.5 py-2.5 text-sm text-ink-900 placeholder:text-ink-400 focus:outline-none focus:border-brand-600 focus:ring-2 focus:ring-brand-600/25";
+
   return (
     <main className="relative min-h-dvh bg-paper text-ink-900">
       <WaveBackground />
@@ -572,10 +619,10 @@ function ApexLanding({
           </p>
           <div className="mt-6 flex flex-wrap items-center justify-center gap-3">
             <a
-              href={mailto}
+              href="#request"
               className="inline-flex items-center gap-2 rounded-full bg-brand-700 px-5 py-2.5 text-sm font-semibold text-paper shadow-sm hover:bg-brand-800"
             >
-              Request a new address →
+              Request a new address ↓
             </a>
             <Link
               to="/admin"
@@ -586,30 +633,92 @@ function ApexLanding({
           </div>
         </header>
 
-        {/* Request CTA */}
-        <section className="mt-12 rounded-2xl border border-ink-200 bg-paper-2/60 p-6 sm:p-8">
-          <div className="flex flex-col items-start gap-4 sm:flex-row sm:items-center sm:justify-between">
-            <div className="max-w-xl">
-              <h2 className="font-display text-xl tracking-tight sm:text-2xl">
-                Want a live results page for your team?
-              </h2>
-              <p className="mt-2 text-sm leading-relaxed text-ink-700">
-                Contact the admin to get your own address —
-                <span className="font-mono text-ink-900">
-                  {" "}
-                  your-name.{rootDomain}
-                </span>{" "}
-                — with an admin account, your program list and
-                ready-made result posters.
-              </p>
+        {/* Request form — posts to /. Goes into the owner's pending
+            access-request list (no mail, no leaving the site). */}
+        <section
+          id="request"
+          className="mt-12 rounded-2xl border border-ink-200 bg-paper-2/60 p-6 shadow-sm sm:p-8"
+        >
+          <h2 className="font-display text-xl tracking-tight sm:text-2xl">
+            Request a live results page for your team
+          </h2>
+          <p className="mt-2 text-sm leading-relaxed text-ink-700">
+            Send your details — the owner will set up your address
+            (e.g.{" "}
+            <span className="font-mono text-ink-900">
+              your-name.{rootDomain}
+            </span>
+            ) and share an admin login.
+          </p>
+
+          {sent ? (
+            <div className="mt-6 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+              ✓ {actionData?.message ?? "Request sent — we’ll be in touch."}
             </div>
-            <a
-              href={mailto}
-              className="inline-flex shrink-0 items-center gap-2 rounded-full bg-ink-900 px-5 py-2.5 text-sm font-semibold text-paper hover:bg-ink-800"
-            >
-              Email {contactEmail}
-            </a>
-          </div>
+          ) : (
+            <Form method="post" className="mt-5 grid gap-3 sm:grid-cols-2">
+              <label className="space-y-1.5 sm:col-span-2">
+                <span className="text-[11px] font-semibold uppercase tracking-wider text-ink-600">
+                  Your name
+                </span>
+                <input
+                  name="name"
+                  type="text"
+                  required
+                  minLength={2}
+                  maxLength={120}
+                  autoComplete="name"
+                  placeholder="e.g. Muhammed Shammas"
+                  className={inputCls}
+                />
+              </label>
+              <label className="space-y-1.5">
+                <span className="text-[11px] font-semibold uppercase tracking-wider text-ink-600">
+                  Mobile number
+                </span>
+                <input
+                  name="mobile"
+                  type="tel"
+                  required
+                  minLength={6}
+                  maxLength={30}
+                  inputMode="tel"
+                  autoComplete="tel"
+                  placeholder="+91 …"
+                  className={inputCls}
+                />
+              </label>
+              <label className="space-y-1.5">
+                <span className="text-[11px] font-semibold uppercase tracking-wider text-ink-600">
+                  Organisation name
+                </span>
+                <input
+                  name="organization_name"
+                  type="text"
+                  required
+                  minLength={2}
+                  maxLength={200}
+                  autoComplete="organization"
+                  placeholder="e.g. SSF Anithara Unit"
+                  className={inputCls}
+                />
+              </label>
+              {actionData?.error && (
+                <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 sm:col-span-2">
+                  {actionData.error}
+                </p>
+              )}
+              <div className="sm:col-span-2">
+                <button
+                  type="submit"
+                  disabled={busy}
+                  className="inline-flex items-center gap-2 rounded-full bg-ink-900 px-5 py-2.5 text-sm font-semibold text-paper hover:bg-ink-800 disabled:opacity-50"
+                >
+                  {busy ? "Sending…" : "Send request"}
+                </button>
+              </div>
+            </Form>
+          )}
         </section>
       </div>
     </main>

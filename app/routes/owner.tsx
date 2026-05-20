@@ -114,7 +114,24 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     };
   });
 
-  return data({ tenants, rootDomain: ROOT_DOMAIN });
+  // Pending access requests submitted from the apex landing form.
+  const { data: pendingReqs } = await svc
+    .from("access_requests")
+    .select("id, name, mobile, organization_name, created_at")
+    .eq("status", "pending")
+    .order("created_at", { ascending: false });
+
+  return data({
+    tenants,
+    rootDomain: ROOT_DOMAIN,
+    accessRequests: (pendingReqs ?? []) as {
+      id: string;
+      name: string;
+      mobile: string;
+      organization_name: string;
+      created_at: string;
+    }[],
+  });
 }
 
 type ActionResult = { error: string } | { ok: true; message: string };
@@ -147,6 +164,33 @@ export async function action({
     return {
       ok: true,
       message: `New password for ${email || "admin"}: ${pwd}  — copy it now, it is shown only once.`,
+    };
+  }
+
+  if (intent === "process_access_request") {
+    const id = String(fd.get("request_id") ?? "").trim();
+    const decision = String(fd.get("decision") ?? "").trim();
+    if (!id) return { error: "Missing request id." };
+    if (decision === "delete") {
+      const { error } = await svc.from("access_requests").delete().eq("id", id);
+      if (error) return { error: error.message };
+      return { ok: true, message: "Request deleted." };
+    }
+    const next =
+      decision === "approve"
+        ? "approved"
+        : decision === "reject"
+          ? "rejected"
+          : null;
+    if (!next) return { error: "Unknown decision." };
+    const { error } = await svc
+      .from("access_requests")
+      .update({ status: next })
+      .eq("id", id);
+    if (error) return { error: error.message };
+    return {
+      ok: true,
+      message: next === "approved" ? "Request approved." : "Request rejected.",
     };
   }
 
@@ -454,7 +498,7 @@ const GRAIN =
   "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.82' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)'/%3E%3C/svg%3E\")";
 
 export default function OwnerConsole({ loaderData }: Route.ComponentProps) {
-  const { tenants, rootDomain } = loaderData;
+  const { tenants, rootDomain, accessRequests } = loaderData;
   const actionData = useActionData<typeof action>();
   const nav = useNavigation();
   const busy = nav.state !== "idle";
@@ -546,6 +590,109 @@ export default function OwnerConsole({ loaderData }: Route.ComponentProps) {
           <div className="o-rise mb-4 rounded-lg border border-emerald-200 bg-emerald-50/80 px-4 py-2.5 text-sm leading-relaxed text-emerald-800">
             {actionData.message}
           </div>
+        )}
+
+        {/* ── Pending access requests — apex form submissions ── */}
+        {accessRequests.length > 0 && (
+          <section
+            className={`${card} o-rise mb-5 overflow-hidden`}
+            style={{ animationDelay: ".05s" }}
+          >
+            <div className="flex items-center justify-between border-b border-stone-100 px-5 py-3">
+              <h2 className="font-[Fraunces,serif] text-base tracking-tight">
+                Pending access requests
+              </h2>
+              <span className="rounded-full bg-yellow-50 px-2 py-0.5 text-[11px] font-medium tabular-nums text-yellow-800 ring-1 ring-yellow-200">
+                {accessRequests.length}
+              </span>
+            </div>
+            <ul className="divide-y divide-stone-100">
+              {accessRequests.map((r) => {
+                const ts = new Date(r.created_at);
+                return (
+                  <li
+                    key={r.id}
+                    className="flex flex-wrap items-center gap-x-5 gap-y-2 px-5 py-3"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-semibold text-stone-900">
+                        {r.organization_name}
+                      </p>
+                      <p className="mt-0.5 truncate text-xs text-stone-600">
+                        {r.name} ·{" "}
+                        <a
+                          href={`tel:${r.mobile.replace(/\s+/g, "")}`}
+                          className="font-mono text-stone-700 hover:text-brand-700"
+                        >
+                          {r.mobile}
+                        </a>{" "}
+                        ·{" "}
+                        <span className="text-stone-400">
+                          {ts.toLocaleString("en-IN", {
+                            day: "2-digit",
+                            month: "short",
+                            hour: "2-digit",
+                            minute: "2-digit",
+                          })}
+                        </span>
+                      </p>
+                    </div>
+                    <div className="flex shrink-0 gap-1.5">
+                      <Form method="post" className="contents">
+                        <input
+                          type="hidden"
+                          name="intent"
+                          value="process_access_request"
+                        />
+                        <input
+                          type="hidden"
+                          name="request_id"
+                          value={r.id}
+                        />
+                        <button
+                          type="submit"
+                          name="decision"
+                          value="approve"
+                          disabled={busy}
+                          className="rounded-md bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
+                        >
+                          Approve
+                        </button>
+                        <button
+                          type="submit"
+                          name="decision"
+                          value="reject"
+                          disabled={busy}
+                          className="rounded-md border border-stone-300 px-3 py-1.5 text-xs font-medium text-stone-700 hover:bg-stone-50 disabled:opacity-50"
+                        >
+                          Reject
+                        </button>
+                        <button
+                          type="submit"
+                          name="decision"
+                          value="delete"
+                          disabled={busy}
+                          onClick={(e) => {
+                            if (!confirm("Delete this request?"))
+                              e.preventDefault();
+                          }}
+                          className="rounded-md border border-stone-300 px-2 py-1.5 text-xs font-medium text-red-700 hover:bg-red-50 disabled:opacity-50"
+                          title="Delete"
+                          aria-label="Delete request"
+                        >
+                          ✕
+                        </button>
+                      </Form>
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+            <p className="border-t border-stone-100 bg-stone-50/60 px-5 py-2 text-[11px] text-stone-500">
+              Approving doesn’t provision the tenant — use Create
+              tenant below with their organisation details.
+            </p>
+          </section>
         )}
 
         {/* ── Side-by-side: ledger (left) · create + maintain (right) ── */}

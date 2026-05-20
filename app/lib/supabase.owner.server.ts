@@ -35,7 +35,7 @@ export function createServiceRoleClient(context: unknown): SupabaseClient {
   });
 }
 
-function ownerEmails(context: unknown): string[] {
+export function ownerEmails(context: unknown): string[] {
   return (cfEnv(context).OWNER_EMAILS ?? "")
     .split(/[,\s]+/)
     .map((e) => e.trim().toLowerCase())
