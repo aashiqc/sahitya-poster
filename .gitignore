@@ -13,3 +13,9 @@
 .dev.vars*
 worker-configuration.d.ts
 
+# Vercel (unused — project deploys via wrangler; folder is local-only)
+.vercel
+
+# Local-only data: ad-hoc CSVs the admin uses for re-imports
+competitions.csv
+
