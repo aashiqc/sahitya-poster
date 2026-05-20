@@ -6,9 +6,9 @@ import {
   redirect,
   useActionData,
   useNavigate,
-  useNavigation,
   useSearchParams,
 } from "react-router";
+import { useBusyFor } from "~/lib/use-busy";
 import type { Route } from "./+types/owner";
 import { createSupabaseServerClient } from "~/lib/supabase.server";
 import {
@@ -667,9 +667,12 @@ const GRAIN =
 export default function OwnerConsole({ loaderData }: Route.ComponentProps) {
   const { tenants, rootDomain, accessRequests } = loaderData;
   const actionData = useActionData<typeof action>();
-  const nav = useNavigation();
   const navigate = useNavigate();
-  const busy = nav.state !== "idle";
+  // Intent-scoped busy. Each button derives its own loading state from
+  // the active submission's `intent` (and optional discriminator),
+  // so clicking one button no longer disables every other button on
+  // the page.
+  const busyFor = useBusyFor();
 
   // "Approve" mode — driven by ?approve=<request_id>. When set, the
   // Create-tenant form prefills `org_name` from that request and
@@ -878,16 +881,27 @@ export default function OwnerConsole({ loaderData }: Route.ComponentProps) {
                           type="submit"
                           name="decision"
                           value="reject"
-                          disabled={busy}
+                          disabled={busyFor("process_access_request", {
+                            request_id: r.id,
+                            decision: "reject",
+                          })}
                           className="rounded-md border border-stone-300 px-3 py-1.5 text-xs font-medium text-stone-700 hover:bg-stone-50 disabled:opacity-50"
                         >
-                          Reject
+                          {busyFor("process_access_request", {
+                            request_id: r.id,
+                            decision: "reject",
+                          })
+                            ? "Rejecting…"
+                            : "Reject"}
                         </button>
                         <button
                           type="submit"
                           name="decision"
                           value="delete"
-                          disabled={busy}
+                          disabled={busyFor("process_access_request", {
+                            request_id: r.id,
+                            decision: "delete",
+                          })}
                           onClick={(e) => {
                             if (!confirm("Delete this request?"))
                               e.preventDefault();
@@ -1206,10 +1220,10 @@ export default function OwnerConsole({ loaderData }: Route.ComponentProps) {
                 </label>
                 <button
                   type="submit"
-                  disabled={busy}
+                  disabled={busyFor("create_tenant")}
                   className="mt-1 rounded-md bg-brand-700 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-brand-800 disabled:opacity-50 sm:col-span-2"
                 >
-                  {busy ? "Creating…" : "Create tenant"}
+                  {busyFor("create_tenant") ? "Creating…" : "Create tenant"}
                 </button>
               </Form>
             </section>
@@ -1246,10 +1260,10 @@ export default function OwnerConsole({ loaderData }: Route.ComponentProps) {
                 </label>
                 <button
                   type="submit"
-                  disabled={busy}
+                  disabled={busyFor("resync_programs")}
                   className="rounded-md border border-stone-300 px-4 py-2 text-sm font-semibold text-stone-800 transition hover:border-stone-400 hover:bg-stone-50 disabled:opacity-50"
                 >
-                  {busy ? "Syncing…" : "Re-sync"}
+                  {busyFor("resync_programs") ? "Syncing…" : "Re-sync"}
                 </button>
               </Form>
             </section>
@@ -1355,7 +1369,7 @@ export default function OwnerConsole({ loaderData }: Route.ComponentProps) {
                   </button>
                   <button
                     type="submit"
-                    disabled={busy}
+                    disabled={busyFor("delete_organization")}
                     onClick={(e) => {
                       if (
                         !confirm(
@@ -1366,7 +1380,9 @@ export default function OwnerConsole({ loaderData }: Route.ComponentProps) {
                     }}
                     className="rounded-md bg-red-600 px-4 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:bg-red-700 disabled:opacity-50"
                   >
-                    {busy ? "Deleting…" : "Permanently delete"}
+                    {busyFor("delete_organization")
+                      ? "Deleting…"
+                      : "Permanently delete"}
                   </button>
                 </div>
               </Form>

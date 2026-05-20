@@ -13,7 +13,6 @@ import {
   redirect,
   useActionData,
   useNavigate,
-  useNavigation,
   useSearchParams,
 } from "react-router";
 import {
@@ -49,6 +48,7 @@ import {
 } from "~/lib/supabase.server";
 import { ownerEmails } from "~/lib/supabase.owner.server";
 import { ROOT_DOMAIN } from "~/lib/constants";
+import { useBusyFor } from "~/lib/use-busy";
 import {
   POSTER_FONTS_EN,
   POSTER_FONTS_ML,
@@ -2160,8 +2160,7 @@ function ImportResultsView({
   publishedCount: number;
 }) {
   const actionData = useActionData<typeof action>();
-  const navigation = useNavigation();
-  const busy = navigation.state !== "idle";
+  const busyFor = useBusyFor();
   const [csv, setCsv] = useState("");
 
   const onPickFile = (e: ChangeEvent<HTMLInputElement>) => {
@@ -2286,10 +2285,10 @@ function ImportResultsView({
           )}
           <button
             type="submit"
-            disabled={busy}
+            disabled={busyFor("upload_results")}
             className="rounded-md bg-stone-900 px-4 py-2 text-sm font-medium text-white hover:bg-stone-800 disabled:opacity-50"
           >
-            {busy ? "Importing…" : "Import results"}
+            {busyFor("upload_results") ? "Importing…" : "Import results"}
           </button>
         </Form>
       </section>
@@ -2309,7 +2308,7 @@ function ImportResultsView({
             />
             <button
               type="submit"
-              disabled={busy || draftCount === 0}
+              disabled={busyFor("publish_all_drafts") || draftCount === 0}
               onClick={(e) => {
                 if (
                   !confirm(
@@ -2320,7 +2319,7 @@ function ImportResultsView({
               }}
               className="inline-flex items-center gap-2 rounded-md bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
             >
-              {busy
+              {busyFor("publish_all_drafts")
                 ? "Working…"
                 : `Publish all drafts${draftCount ? ` (${draftCount})` : ""}`}
             </button>
@@ -2333,7 +2332,7 @@ function ImportResultsView({
             />
             <button
               type="submit"
-              disabled={busy || publishedCount === 0}
+              disabled={busyFor("delete_all_published") || publishedCount === 0}
               onClick={(e) => {
                 if (
                   !confirm(
@@ -2344,7 +2343,7 @@ function ImportResultsView({
               }}
               className="inline-flex items-center gap-2 rounded-md border border-red-300 px-4 py-2 text-sm font-semibold text-red-700 hover:bg-red-50 disabled:opacity-50"
             >
-              {busy
+              {busyFor("delete_all_published")
                 ? "Working…"
                 : `Delete all live results${publishedCount ? ` (${publishedCount})` : ""}`}
             </button>
@@ -2453,8 +2452,7 @@ function StandingsTemplateStudio({
   fontMl: string | null;
 }) {
   const actionData = useActionData<typeof action>();
-  const navigation = useNavigation();
-  const busy = navigation.state !== "idle";
+  const busyFor = useBusyFor();
   const choices = useMemo(
     () => eventStandingsTemplateList(subdomain, customStandingsTemplates),
     [subdomain, customStandingsTemplates],
@@ -2680,7 +2678,11 @@ function StandingsTemplateStudio({
                       return (
                         <button
                           type="submit"
-                          disabled={busy || blockHide}
+                          disabled={
+                            busyFor("toggle_standings_template_disabled", {
+                              template_id: c.key,
+                            }) || blockHide
+                          }
                           title={
                             blockHide
                               ? "Can't hide — keep at least one template enabled"
@@ -2727,7 +2729,11 @@ function StandingsTemplateStudio({
                       />
                       <button
                         type="submit"
-                        disabled={busy}
+                        disabled={busyFor("set_default_standings_template", {
+                          standings_template: builtinPosOf(c.key),
+                          standings_template_id:
+                            c.builtinIndex === null ? c.key : "",
+                        })}
                         title="Set as default"
                         className="grid size-6 shrink-0 place-items-center rounded text-stone-400 transition hover:bg-stone-100 hover:text-brand-700 disabled:opacity-50"
                       >
@@ -2804,10 +2810,12 @@ function StandingsTemplateStudio({
             </label>
             <button
               type="submit"
-              disabled={busy}
+              disabled={busyFor("upload_standings_template")}
               className="rounded-md bg-stone-900 px-2 py-1 text-xs font-medium text-white hover:bg-stone-800 disabled:opacity-50"
             >
-              {busy ? "Uploading…" : "Upload"}
+              {busyFor("upload_standings_template")
+                ? "Uploading…"
+                : "Upload"}
             </button>
             <p className="text-[10px] leading-snug text-stone-400">
               PNG/JPG/WebP · 4:5 · &lt;4 MB
@@ -2868,7 +2876,11 @@ function StandingsTemplateStudio({
                   />
                   <button
                     type="submit"
-                    disabled={busy}
+                    disabled={busyFor("set_default_standings_template", {
+                      standings_template: builtinPosOf(cur.key),
+                      standings_template_id:
+                        cur.builtinIndex === null ? cur.key : "",
+                    })}
                     className="inline-flex items-center gap-1.5 rounded-md border border-stone-300 px-3 py-1.5 text-xs font-medium text-stone-700 transition hover:bg-stone-50 disabled:opacity-50"
                   >
                     <Star className="size-3.5" />
@@ -2896,10 +2908,12 @@ function StandingsTemplateStudio({
                 />
                 <button
                   type="submit"
-                  disabled={busy}
+                  disabled={busyFor("save_standings_layout")}
                   className="rounded-md bg-stone-900 px-4 py-1.5 text-xs font-semibold text-white hover:bg-stone-800 disabled:opacity-50"
                 >
-                  {busy ? "Saving…" : "Save layout"}
+                  {busyFor("save_standings_layout")
+                    ? "Saving…"
+                    : "Save layout"}
                 </button>
               </Form>
             </div>
@@ -3202,8 +3216,7 @@ function StandingsLeaderboard({
   fontEn: string | null;
   fontMl: string | null;
 }) {
-  const navigation = useNavigation();
-  const busy = navigation.state !== "idle";
+  const busyFor = useBusyFor();
 
   // Templates available to THIS tenant (legacy for Pantharangadi,
   // general + uploaded customs for everyone else). Hidden ones are
@@ -3449,7 +3462,7 @@ function StandingsLeaderboard({
               <input type="hidden" name="after_n" value={sel.afterN} />
               <button
                 type="submit"
-                disabled={busy}
+                disabled={busyFor("delete_standings", { after_n: sel.afterN })}
                 onClick={(e) => {
                   if (
                     !confirm(
@@ -3541,7 +3554,12 @@ function StandingsLeaderboard({
                         />
                         <button
                           type="submit"
-                          disabled={busy}
+                          disabled={busyFor("set_snapshot_template", {
+                            after_n: sel.afterN,
+                            template: c.builtinIndex ?? 0,
+                            template_id:
+                              c.builtinIndex === null ? c.key : "",
+                          })}
                           className={`rounded-md border px-2.5 py-1 text-xs font-medium transition disabled:opacity-50 ${
                             active
                               ? "border-stone-900 bg-stone-900 text-white"
@@ -3594,8 +3612,7 @@ function StandingsView({
   finalPosterUrl: string | null;
 }) {
   const actionData = useActionData<typeof action>();
-  const navigation = useNavigation();
-  const busy = navigation.state !== "idle";
+  const busyFor = useBusyFor();
   const [csv, setCsv] = useState("");
   const [finalName, setFinalName] = useState("");
 
@@ -3660,10 +3677,12 @@ function StandingsView({
                 />
                 <button
                   type="submit"
-                  disabled={busy}
+                  disabled={busyFor("clear_final_poster")}
                   className="inline-flex items-center gap-2 rounded-lg border border-red-300 px-3 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-50 disabled:opacity-50"
                 >
-                  Remove final poster
+                  {busyFor("clear_final_poster")
+                    ? "Removing…"
+                    : "Remove final poster"}
                 </button>
               </Form>
             </div>
@@ -3696,10 +3715,14 @@ function StandingsView({
           </div>
           <button
             type="submit"
-            disabled={busy}
+            disabled={busyFor("upload_final_poster")}
             className="inline-flex items-center gap-2 rounded-lg bg-stone-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50 hover:bg-stone-800"
           >
-            {busy ? "Publishing…" : finalPosterUrl ? "Replace poster" : "Publish final poster"}
+            {busyFor("upload_final_poster")
+              ? "Publishing…"
+              : finalPosterUrl
+                ? "Replace poster"
+                : "Publish final poster"}
           </button>
         </Form>
       </section>
@@ -3805,10 +3828,10 @@ function StandingsView({
           )}
           <button
             type="submit"
-            disabled={busy}
+            disabled={busyFor("upload_standings")}
             className="inline-flex items-center gap-2 rounded-lg bg-stone-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50 hover:bg-stone-800"
           >
-            {busy ? "Saving…" : "Upload standings"}
+            {busyFor("upload_standings") ? "Saving…" : "Upload standings"}
           </button>
         </Form>
       </section>
@@ -3862,9 +3885,8 @@ function ResultModal({
   levels: LevelRow[];
 }) {
   const navigate = useNavigate();
-  const navigation = useNavigation();
   const actionData = useActionData<typeof action>();
-  const busy = navigation.state !== "idle";
+  const busyFor = useBusyFor();
 
   const close = () => navigate("/admin", { preventScrollReset: true });
 
@@ -4205,7 +4227,7 @@ function ResultModal({
                 type="submit"
                 name="intent"
                 value="delete_result"
-                disabled={busy}
+                disabled={busyFor("delete_result")}
                 onClick={(e) => {
                   if (
                     !confirm("Delete this result? Winners will also be removed.")
@@ -4215,7 +4237,7 @@ function ResultModal({
                 }}
                 className="text-xs text-red-600 hover:text-red-700 hover:underline"
               >
-                Delete result
+                {busyFor("delete_result") ? "Deleting…" : "Delete result"}
               </button>
             )}
           </div>
@@ -4230,19 +4252,19 @@ function ResultModal({
                 type="submit"
                 name="intent"
                 value="save_draft"
-                disabled={busy}
+                disabled={busyFor("save_draft")}
                 className="rounded-lg border border-stone-300 hover:bg-white text-stone-700 px-4 py-2 text-sm font-medium disabled:opacity-50"
               >
-                Save draft
+                {busyFor("save_draft") ? "Saving…" : "Save draft"}
               </button>
               <button
                 type="submit"
                 name="intent"
                 value="save_publish"
-                disabled={busy}
+                disabled={busyFor("save_publish")}
                 className="rounded-lg bg-brand-700 hover:bg-brand-800 text-white px-5 py-2 text-sm font-semibold disabled:opacity-50"
               >
-                {busy ? "…" : "Publish"}
+                {busyFor("save_publish") ? "…" : "Publish"}
               </button>
             </div>
           </div>
@@ -4444,8 +4466,7 @@ function TemplateStudioView({
   siteUrl: string;
 }) {
   const actionData = useActionData<typeof action>();
-  const navigation = useNavigation();
-  const busy = navigation.state !== "idle";
+  const busyFor = useBusyFor();
   const choices: TemplateChoice[] = eventTemplateList(
     posterMeta.subdomain,
     posterMeta.customTemplates,
@@ -4576,7 +4597,13 @@ function TemplateStudioView({
         value={builtinPosOf(c.key)}
       />
       <input type="hidden" name="result_template_id" value={c.key} />
-      <button type="submit" disabled={busy} className={className}>
+      <button
+        type="submit"
+        disabled={busyFor("set_default_template", {
+          result_template_id: c.key,
+        })}
+        className={className}
+      >
         {children}
       </button>
     </Form>
@@ -4718,10 +4745,10 @@ function TemplateStudioView({
 
           <button
             type="submit"
-            disabled={busy}
+            disabled={busyFor("save_poster_settings")}
             className="rounded-md bg-stone-900 px-4 py-2 text-sm font-medium text-white hover:bg-stone-800 disabled:opacity-50"
           >
-            {busy ? "Saving…" : "Save wording"}
+            {busyFor("save_poster_settings") ? "Saving…" : "Save wording"}
           </button>
         </Form>
       </section>
@@ -4799,7 +4826,11 @@ function TemplateStudioView({
                       return (
                     <button
                       type="submit"
-                      disabled={busy || blockHide}
+                      disabled={
+                        busyFor("toggle_template_disabled", {
+                          template_id: c.key,
+                        }) || blockHide
+                      }
                       title={
                         blockHide
                           ? "Can't hide — keep at least one template enabled"
@@ -4902,10 +4933,10 @@ function TemplateStudioView({
             </label>
             <button
               type="submit"
-              disabled={busy}
+              disabled={busyFor("upload_template")}
               className="rounded-md bg-stone-900 px-2 py-1 text-xs font-medium text-white hover:bg-stone-800 disabled:opacity-50"
             >
-              {busy ? "Uploading…" : "Upload"}
+              {busyFor("upload_template") ? "Uploading…" : "Upload"}
             </button>
             <p className="text-[10px] leading-snug text-stone-400">
               PNG/JPG/WebP · 4:5 · &lt;4 MB
@@ -4972,10 +5003,10 @@ function TemplateStudioView({
               />
               <button
                 type="submit"
-                disabled={busy}
+                disabled={busyFor("save_poster_layout")}
                 className="rounded-md bg-stone-900 px-4 py-1.5 text-xs font-semibold text-white hover:bg-stone-800 disabled:opacity-50"
               >
-                {busy ? "Saving…" : "Save layout"}
+                {busyFor("save_poster_layout") ? "Saving…" : "Save layout"}
               </button>
             </Form>
           </div>
