@@ -1,4 +1,5 @@
 import { Link, data } from "react-router";
+import { ArrowLeft } from "lucide-react";
 import type { Route } from "./+types/result.$programCode";
 import {
   createSupabaseServerClient,
@@ -151,9 +152,13 @@ export default function PublicResult({ loaderData }: Route.ComponentProps) {
           <div className="flex items-center justify-between gap-3 text-gold-200">
             <Link
               to="/"
-              className="inline-flex items-center gap-1.5 text-sm hover:text-paper transition"
+              className="group inline-flex items-center gap-1.5 text-sm hover:text-paper transition"
             >
-              <span aria-hidden>←</span>
+              <ArrowLeft
+                aria-hidden
+                className="size-4 transition-transform duration-200 group-hover:-translate-x-0.5"
+                strokeWidth={2}
+              />
               <span>All results</span>
             </Link>
             {result.result_no && (

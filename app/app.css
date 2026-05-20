@@ -126,6 +126,18 @@ h1:lang(ml), h2:lang(ml) {
   background:
     radial-gradient(125% 85% at 50% 0%, #FFF6E0 0%, #FBEDCF 50%, #F3E2C6 100%);
 }
+/* Subtle hand-feel grain laid over the cream gradient — keeps the page
+   warm without making the wave bands the only visual layer above the
+   fold. SVG fractal noise scales perfectly at any DPI. */
+.app-grain {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  mix-blend-mode: multiply;
+  opacity: 0.06;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 0.05  0 0 0 0 0.03  0 0 0 0 0.04  0 0 0 0.9 0'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)'/%3E%3C/svg%3E");
+  background-size: 160px 160px;
+}
 
 @keyframes wave-scroll {
   from { transform: translate3d(0, 0, 0); }
@@ -141,23 +153,25 @@ h1:lang(ml), h2:lang(ml) {
   background-size: 50% 100%;
   will-change: transform;
 }
+/* Slightly slower scroll + lower opacities so the chat content stays
+   the focal layer; the waves are atmosphere, not subject. */
 .app-wave--back {
   height: min(48vh, 480px);
-  opacity: 0.30;
+  opacity: 0.22;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 600 220' preserveAspectRatio='none'%3E%3Cpath fill='%23FFCE05' d='M0 112 C100 64 200 64 300 112 S500 160 600 112 L600 220 L0 220 Z'/%3E%3C/svg%3E");
-  animation: wave-scroll 30s linear infinite;
+  animation: wave-scroll 42s linear infinite;
 }
 .app-wave--mid {
   height: min(38vh, 380px);
-  opacity: 0.45;
+  opacity: 0.34;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 600 220' preserveAspectRatio='none'%3E%3Cpath fill='%23F0A52E' d='M0 118 C100 52 200 52 300 118 S500 184 600 118 L600 220 L0 220 Z'/%3E%3C/svg%3E");
-  animation: wave-scroll 21s linear infinite;
+  animation: wave-scroll 30s linear infinite;
 }
 .app-wave--front {
   height: min(28vh, 300px);
-  opacity: 0.62;
+  opacity: 0.48;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 600 220' preserveAspectRatio='none'%3E%3Cpath fill='%23C25A2A' d='M0 124 C90 74 210 74 300 124 S510 174 600 124 L600 220 L0 220 Z'/%3E%3C/svg%3E");
-  animation: wave-scroll 14s linear infinite;
+  animation: wave-scroll 20s linear infinite;
 }
 
 /* SSF wordmark — always Cooper Black, the brand letterform */
@@ -166,37 +180,61 @@ h1:lang(ml), h2:lang(ml) {
   letter-spacing: 0.01em;
 }
 
-/* Chat bubble surfaces — soft, layered, premium */
+/* Chat bubble surfaces — paper-soft, layered, premium. The shadow
+   stack is tight: one fine inner highlight, one short ambient, one
+   diffuse depth — so the bubble feels grounded without bloom. */
 .bubble-bot {
   background: linear-gradient(180deg, #FFFFFF 0%, #FEFDFB 100%);
-  border: 1px solid rgba(11, 9, 10, 0.07);
+  border: 1px solid rgba(11, 9, 10, 0.06);
   box-shadow:
-    0 1px 0 rgba(255, 255, 255, 0.9) inset,
-    0 6px 18px -10px rgba(11, 9, 10, 0.18),
-    0 2px 6px -3px rgba(11, 9, 10, 0.08);
+    0 1px 0 rgba(255, 255, 255, 0.92) inset,
+    0 1px 2px rgba(11, 9, 10, 0.04),
+    0 8px 22px -14px rgba(11, 9, 10, 0.18);
 }
 .bubble-user {
-  background: linear-gradient(165deg, #1B1718 0%, #0B090A 100%);
+  background: linear-gradient(168deg, #1B1718 0%, #0B090A 100%);
   box-shadow:
     0 1px 0 rgba(255, 255, 255, 0.06) inset,
-    0 8px 20px -10px rgba(11, 9, 10, 0.45);
+    0 1px 2px rgba(11, 9, 10, 0.18),
+    0 10px 26px -14px rgba(11, 9, 10, 0.5);
 }
 
-/* Staggered message entrance */
+/* Staggered message entrance — refined from the previous bubble-in
+   so the row settles with a touch less drop and a faster catch. */
 @keyframes bubble-in {
-  0%   { opacity: 0; transform: translateY(10px) scale(0.985); }
+  0%   { opacity: 0; transform: translateY(8px) scale(0.99); }
   /* Rest at `none` (not an explicit transform): a lingering transform
      here would make the row a containing block for the position:fixed
      poster-zoom modal, breaking its full-viewport overlay. */
   100% { opacity: 1; transform: none; }
 }
 .animate-bubble-in {
-  animation: bubble-in 0.42s cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation: bubble-in 0.4s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+/* Soft sheen used on top-3 standings tiles. A diagonal highlight band
+   travels once on mount; pairs with the medal gradients so the cards
+   read as celebrated, not merely listed. */
+@keyframes medal-sheen {
+  0%   { transform: translateX(-120%); opacity: 0; }
+  35%  { opacity: 0.55; }
+  100% { transform: translateX(140%); opacity: 0; }
+}
+.medal-sheen::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: linear-gradient(115deg, transparent 30%, rgba(255,255,255,0.55) 50%, transparent 70%);
+  transform: translateX(-120%);
+  animation: medal-sheen 1.6s ease-out 0.25s both;
+  pointer-events: none;
 }
 
 @media (prefers-reduced-motion: reduce) {
   .animate-bubble-in,
-  .app-wave { animation: none !important; }
+  .app-wave,
+  .medal-sheen::after { animation: none !important; }
 }
 
 /* Restrained, branded scrollbar */

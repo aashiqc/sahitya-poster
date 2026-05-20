@@ -34,12 +34,18 @@ import { PosterZoomModal } from "~/components/poster-modal";
 import { StandingsSheet } from "~/components/standings-sheet";
 import {
   ArrowLeftRight,
+  Award,
+  Check,
   ChevronDown,
   ChevronRight,
+  Clock,
+  Crown,
   Download,
+  Medal,
   Share2,
   Sparkles,
   Trophy,
+  X,
 } from "lucide-react";
 
 export function meta({ data }: Route.MetaArgs) {
@@ -473,65 +479,71 @@ export default function Home({ loaderData }: Route.ComponentProps) {
       {/* Flowing layered waves — clean warm base + parallax wave bands */}
       <WaveBackground />
 
-      {/* ── Header — compact, mobile-first, sector-led ── */}
+      {/* ── Header — single-row, sector-led, newsroom-quiet.
+          The brand letterform "SSF" sits flush left as the masthead;
+          a hairline divider separates it from a two-tier title (small
+          "Sahityotsav" label over the prominent yellow sector). The
+          right-hand cluster carries a compact Live pulse + Standings
+          CTA. A single hairline yellow accent at the bottom replaces
+          the old 3 px rainbow bar. */}
       <header className="sticky top-0 z-20">
-        <div className="relative bg-gradient-to-b from-[#23110F] via-[#160C0D] to-[#0B090A] text-white backdrop-blur-xl shadow-[0_12px_34px_-14px_rgba(11,9,10,0.75)]">
-          <div
-            aria-hidden
-            className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-yellow/70 to-transparent"
-          />
-          <div className="mx-auto max-w-2xl md:max-w-3xl lg:max-w-4xl px-4 sm:px-5">
-            {/* Row 1 — brand + primary action */}
-            <div className="flex items-center justify-between gap-3 pt-3 pb-2">
-              <div className="flex min-w-0 items-center gap-2.5 sm:gap-3">
-                <span className="ssf-mark shrink-0 text-white text-[1.6rem] leading-none drop-shadow-[0_2px_8px_rgba(0,0,0,0.45)]">
-                  SSF
-                </span>
-                <span aria-hidden className="h-7 w-px shrink-0 bg-white/20" />
-                <img
-                  src="/sahityotsav-logo.png"
-                  alt={eventName ?? "Sahityotsav"}
-                  className="h-[18px] w-auto min-w-0 select-none"
-                  draggable={false}
-                />
+        <div className="relative bg-ink-900/95 text-paper backdrop-blur-md supports-[backdrop-filter]:bg-ink-900/90">
+          <div className="mx-auto flex max-w-2xl md:max-w-3xl lg:max-w-4xl items-center gap-3 px-4 sm:px-5 py-2.5 sm:py-3">
+            <div className="flex min-w-0 items-center gap-3 sm:gap-3.5">
+              <span
+                aria-hidden
+                className="ssf-mark shrink-0 text-paper text-[1.55rem] sm:text-[1.6rem] leading-none"
+              >
+                SSF
+              </span>
+              <span
+                aria-hidden
+                className="h-7 w-px shrink-0 bg-gradient-to-b from-transparent via-yellow/45 to-transparent"
+              />
+              <div className="min-w-0 leading-tight">
+                <p className="text-[9.5px] sm:text-[10px] font-semibold uppercase tracking-[0.22em] text-paper/55">
+                  Sahityotsav
+                </p>
+                <p className="font-opensans text-[12.5px] sm:text-sm font-bold uppercase tracking-[0.14em] text-yellow truncate">
+                  {sector}
+                </p>
               </div>
+            </div>
+
+            <div className="ml-auto flex shrink-0 items-center gap-2 sm:gap-2.5">
+              <span
+                aria-label="Live"
+                className="inline-flex items-center gap-1.5 rounded-full bg-paper/[0.06] ring-1 ring-inset ring-paper/10 px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.14em] text-yellow/95"
+              >
+                <span className="relative flex size-1.5">
+                  <span
+                    aria-hidden
+                    className="absolute inline-flex size-full animate-ping rounded-full bg-yellow/60"
+                  />
+                  <span className="relative inline-flex size-1.5 rounded-full bg-yellow" />
+                </span>
+                <span className="hidden xs:inline sm:inline">Live</span>
+              </span>
 
               <button
                 type="button"
                 onClick={() => setStandingsOpen(true)}
-                className="font-opensans group shrink-0 inline-flex items-center gap-1.5 rounded-full bg-white text-black px-3.5 py-2 text-xs font-bold tracking-wide uppercase shadow-[0_4px_14px_-4px_rgba(0,0,0,0.5)] transition-all duration-200 active:scale-[0.96] hover:shadow-[0_6px_18px_-4px_rgba(0,0,0,0.6)]"
+                className="group inline-flex items-center gap-1.5 rounded-full bg-paper text-ink-900 px-3 py-1.5 sm:px-3.5 sm:py-2 text-[11px] sm:text-xs font-bold uppercase tracking-[0.08em] shadow-[0_6px_14px_-8px_rgba(11,9,10,0.55)] transition-all duration-200 active:scale-[0.97] hover:-translate-y-px hover:shadow-[0_8px_18px_-8px_rgba(11,9,10,0.55)]"
               >
                 <Trophy
-                  className="size-4 transition-transform duration-200 group-hover:-rotate-12"
+                  className="size-3.5 sm:size-4 transition-transform duration-200 group-hover:-rotate-12"
                   strokeWidth={2.5}
                   aria-hidden
                 />
                 Standings
               </button>
             </div>
-
-            {/* Row 2 — sector (full width, prominent) + live heartbeat.
-                On its own line so it never collides with the button. */}
-            <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 pb-2.5 border-t border-white/10 pt-2">
-              <span className="font-opensans text-[13px] font-bold uppercase tracking-[0.16em] text-yellow">
-                {sector}
-              </span>
-              <span className="inline-flex shrink-0 items-center gap-1.5 text-[11px]">
-                <span className="relative flex size-2">
-                  <span className="absolute inline-flex size-full animate-ping rounded-full bg-yellow/70" />
-                  <span className="relative inline-flex size-2 rounded-full bg-yellow" />
-                </span>
-                <span className="font-bold tracking-[0.14em] uppercase text-yellow/90">
-                  Live
-                </span>
-              </span>
-            </div>
           </div>
 
-          {/* Decorative full-bleed brand edge */}
+          {/* Hairline brand accent — replaces the chunky 3 px gradient bar */}
           <div
             aria-hidden
-            className="h-[3px] w-full bg-gradient-to-r from-red via-yellow to-red opacity-90"
+            className="h-px w-full bg-gradient-to-r from-transparent via-yellow/55 to-transparent"
           />
         </div>
       </header>
@@ -671,8 +683,15 @@ function ApexLanding({ rootDomain }: { rootDomain: string }) {
           </p>
 
           {sent ? (
-            <div className="mt-6 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
-              ✓ {actionData?.message ?? "Request sent — we’ll be in touch."}
+            <div className="mt-6 flex items-start gap-2.5 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+              <Check
+                className="mt-0.5 size-4 shrink-0 text-emerald-600"
+                strokeWidth={2.5}
+                aria-hidden
+              />
+              <span>
+                {actionData?.message ?? "Request sent — we’ll be in touch."}
+              </span>
             </div>
           ) : (
             <Form method="post" className="mt-5 grid gap-3 sm:grid-cols-2">
@@ -756,6 +775,10 @@ function WaveBackground() {
       <div className="app-wave app-wave--back" />
       <div className="app-wave app-wave--mid" />
       <div className="app-wave app-wave--front" />
+      {/* A pinch of paper grain riding on top of everything keeps the
+          page from feeling like flat CSS. Multiply blend at ~6% — you
+          notice it only if you look for it. */}
+      <div className="app-grain" />
     </div>
   );
 }
@@ -1102,13 +1125,15 @@ function ChatFlow({
 
       <div ref={endRef} className="h-px" />
 
-      {/* Jump-to-latest — appears only while reading back through history */}
+      {/* Jump-to-latest — appears only while reading back through history.
+          Subtler shadow + fine inner highlight so it floats without
+          shouting; the yellow chevron still carries the brand cue. */}
       <button
         type="button"
         onClick={scrollToEnd}
         aria-hidden={atBottom}
         tabIndex={atBottom ? -1 : 0}
-        className={`fixed bottom-5 left-1/2 z-30 inline-flex items-center gap-1.5 rounded-full bg-black text-white px-4 py-2 text-xs font-semibold shadow-[0_10px_30px_-8px_rgba(11,9,10,0.55)] ring-1 ring-yellow/30 transition-all duration-300 ${
+        className={`fixed bottom-5 left-1/2 z-30 inline-flex items-center gap-1.5 rounded-full bg-ink-900 text-paper px-4 py-2 text-xs font-semibold shadow-[0_1px_0_rgba(255,255,255,0.08)_inset,0_10px_24px_-12px_rgba(11,9,10,0.55)] ring-1 ring-white/10 backdrop-blur-sm transition-all duration-300 ${
           atBottom
             ? "pointer-events-none translate-y-4 opacity-0"
             : "-translate-x-1/2 opacity-100 hover:-translate-y-0.5"
@@ -1163,25 +1188,40 @@ function BubbleRow({
 }
 
 function BotAvatar() {
+  // A deliberate red disk with a fine cream rim — feels stamped rather
+  // than glossy. The hairline ring + soft ambient shadow ground it
+  // against the bubble without competing with the brand stripe inside.
   return (
     <div
       aria-hidden
-      className="mt-0.5 shrink-0 size-8 sm:size-9 grid place-items-center rounded-full bg-gradient-to-br from-red to-brand-800 text-yellow shadow-[0_4px_12px_-4px_rgba(191,6,3,0.6)] ring-2 ring-white"
+      className="relative mt-0.5 shrink-0 size-8 sm:size-9 grid place-items-center rounded-full bg-gradient-to-br from-brand-500 to-brand-800 text-yellow ring-2 ring-paper shadow-[0_2px_8px_-4px_rgba(11,9,10,0.35)]"
     >
-      <Sparkles className="size-[15px] sm:size-4" strokeWidth={2.5} aria-hidden />
+      <span
+        aria-hidden
+        className="absolute inset-0 rounded-full ring-1 ring-inset ring-white/15"
+      />
+      <Sparkles
+        className="relative size-[15px] sm:size-4"
+        strokeWidth={2.25}
+        aria-hidden
+      />
     </div>
   );
 }
 
 function TypingDots() {
+  // Three small red dots riding a slow bounce stagger — softer hue
+  // and tighter spacing than before so the indicator reads as "still
+  // composing" rather than "loading something heavy".
   return (
     <span
       aria-label="Typing"
-      className="inline-flex items-center gap-1.5 py-1.5 px-1"
+      role="status"
+      className="inline-flex items-center gap-1.25 py-1.5 px-1"
     >
-      <span className="size-2 rounded-full bg-red/60 animate-bounce [animation-delay:-0.3s]" />
-      <span className="size-2 rounded-full bg-red/60 animate-bounce [animation-delay:-0.15s]" />
-      <span className="size-2 rounded-full bg-red/60 animate-bounce" />
+      <span className="size-[7px] rounded-full bg-red/55 animate-bounce [animation-delay:-0.32s]" />
+      <span className="size-[7px] rounded-full bg-red/70 animate-bounce [animation-delay:-0.16s]" />
+      <span className="size-[7px] rounded-full bg-red/85 animate-bounce" />
     </span>
   );
 }
@@ -1221,10 +1261,35 @@ function StandingsBubble({
   onOpenFull: () => void;
 }) {
   const top = standings.rows.slice(0, 3);
+  // Each tier carries its own card background, ring colour, badge
+  // gradient, and a Lucide icon. The first place tile picks up a
+  // one-shot sheen animation (medal-sheen in app.css) so it reads as
+  // the celebrated row without being a confetti party.
   const TIER = [
-    { ring: "ring-yellow/60", chip: "bg-yellow text-black", label: "1st" },
-    { ring: "ring-ink-300", chip: "bg-ink-200 text-ink-800", label: "2nd" },
-    { ring: "ring-[#d8a26a]/60", chip: "bg-[#caa06a] text-white", label: "3rd" },
+    {
+      ring: "ring-yellow/55",
+      bg: "bg-[radial-gradient(120%_120%_at_100%_0%,#FFF8D6_0%,#FFFDF5_55%,#FFFFFF_100%)]",
+      badge: "bg-gradient-to-br from-[#FFD43E] to-[#B08D00] text-black",
+      Icon: Crown,
+      label: "1st",
+      sheen: true,
+    },
+    {
+      ring: "ring-ink-300/60",
+      bg: "bg-[radial-gradient(120%_120%_at_100%_0%,#F4F4F2_0%,#FBFBFA_55%,#FFFFFF_100%)]",
+      badge: "bg-gradient-to-br from-[#DAD9D6] to-[#94908B] text-ink-900",
+      Icon: Medal,
+      label: "2nd",
+      sheen: false,
+    },
+    {
+      ring: "ring-[#d8a26a]/55",
+      bg: "bg-[radial-gradient(120%_120%_at_100%_0%,#F8E5CF_0%,#FDF7EE_55%,#FFFFFF_100%)]",
+      badge: "bg-gradient-to-br from-[#CB8E55] to-[#7E4E1F] text-white",
+      Icon: Award,
+      label: "3rd",
+      sheen: false,
+    },
   ] as const;
   return (
     <div>
@@ -1243,15 +1308,17 @@ function StandingsBubble({
       <ol className="mt-2.5 flex flex-col gap-1.5">
         {top.map((t, i) => {
           const tier = TIER[i] ?? TIER[2];
+          const Icon = tier.Icon;
           return (
             <li
               key={`${t.name}-${i}`}
-              className={`flex items-center gap-3 rounded-xl bg-white px-3 py-2.5 shadow-sm ring-1 ${tier.ring}`}
+              className={`relative overflow-hidden flex items-center gap-3 rounded-xl ${tier.bg} px-3 py-2.5 shadow-[0_1px_2px_rgba(11,9,10,0.04),0_8px_22px_-18px_rgba(11,9,10,0.45)] ring-1 ${tier.ring} ${tier.sheen ? "medal-sheen" : ""}`}
             >
               <span
-                className={`grid size-7 shrink-0 place-items-center rounded-full text-[11px] font-bold ${tier.chip}`}
+                className={`relative grid size-8 shrink-0 place-items-center rounded-full ${tier.badge} ring-1 ring-inset ring-white/40 shadow-[0_2px_6px_-2px_rgba(11,9,10,0.35)]`}
               >
-                {tier.label}
+                <Icon className="size-4" strokeWidth={2.25} aria-hidden />
+                <span className="sr-only">{tier.label} place</span>
               </span>
               <span className="min-w-0 flex-1 truncate text-sm font-semibold text-ink-900">
                 {t.name}
@@ -1413,9 +1480,7 @@ function FinalPosterBubble({ url }: { url: string }) {
             aria-label="Close"
             className="absolute top-4 right-4 size-10 grid place-items-center rounded-full bg-white/15 text-white hover:bg-white/25 transition-colors"
           >
-            <span aria-hidden className="text-xl leading-none">
-              ✕
-            </span>
+            <X aria-hidden className="size-5" strokeWidth={2} />
           </button>
         </div>
       )}
@@ -1991,10 +2056,14 @@ function IconButton({
   tone: "brand" | "ghost";
   children: ReactNode;
 }) {
+  // Tightened palette: brand carries a soft glow, ghost has a fine
+  // ink rim. Both lift 1 px on hover and settle on press — same
+  // motion vocabulary as ChoiceButton so the action row reads as a
+  // single instrument.
   const toneCls =
     tone === "brand"
-      ? "bg-red hover:bg-brand-600 text-white shadow-sm"
-      : "bg-white hover:bg-yellow/15 border border-black/10 text-black";
+      ? "bg-red text-white shadow-[0_6px_14px_-8px_rgba(191,6,3,0.55)] hover:bg-brand-600 active:shadow-none"
+      : "bg-paper text-ink-800 ring-1 ring-inset ring-ink-900/10 hover:bg-yellow/15 hover:ring-yellow/60";
   return (
     <button
       type="button"
@@ -2002,7 +2071,7 @@ function IconButton({
       disabled={disabled}
       aria-label={label}
       title={label}
-      className={`inline-flex items-center justify-center size-10 rounded-full disabled:opacity-50 transition ${toneCls}`}
+      className={`inline-flex items-center justify-center size-10 rounded-full transition-all duration-200 hover:-translate-y-px active:translate-y-0 active:scale-[0.96] disabled:opacity-50 disabled:hover:translate-y-0 ${toneCls}`}
     >
       {children}
     </button>
@@ -2023,8 +2092,10 @@ function Spinner() {
 }
 
 function ChoiceRow({ children }: { children: ReactNode }) {
+  // Hairline divider instead of dashed — sits more quietly between the
+  // message body and its CTAs.
   return (
-    <div className="mt-3 flex flex-wrap gap-2 pt-3 border-t border-dashed border-black/10">
+    <div className="mt-3 flex flex-wrap gap-2 pt-3 border-t border-ink-900/[0.06]">
       {children}
     </div>
   );
@@ -2039,9 +2110,12 @@ function ChoiceButton({
   children: ReactNode;
   primary?: boolean;
 }) {
+  // Pill CTA. Primary keeps a short, low-blur red glow; secondary
+  // trades the hard black border for an ink-tinted ring that warms to
+  // yellow on hover. Motion is unified with IconButton.
   const cls = primary
-    ? "rounded-full bg-red text-white px-4 py-2 text-xs font-semibold shadow-[0_4px_14px_-4px_rgba(191,6,3,0.6)] transition-all duration-200 hover:-translate-y-px hover:bg-brand-600 active:translate-y-0 active:scale-[0.97]"
-    : "rounded-full border border-black/15 bg-white text-ink-800 px-4 py-2 text-xs font-semibold transition-all duration-200 hover:-translate-y-px hover:border-yellow hover:bg-yellow/15 active:translate-y-0 active:scale-[0.97]";
+    ? "rounded-full bg-red text-white px-4 py-2 text-xs font-semibold shadow-[0_6px_14px_-8px_rgba(191,6,3,0.55)] transition-all duration-200 hover:-translate-y-px hover:bg-brand-600 active:translate-y-0 active:scale-[0.97] active:shadow-none"
+    : "rounded-full bg-paper text-ink-800 ring-1 ring-inset ring-ink-900/12 px-4 py-2 text-xs font-semibold transition-all duration-200 hover:-translate-y-px hover:bg-yellow/15 hover:ring-yellow/60 active:translate-y-0 active:scale-[0.97]";
   return (
     <button type="button" onClick={onClick} className={cls}>
       {children}
@@ -2064,8 +2138,19 @@ function NotYetLive({
       <WaveBackground />
 
       <div className="animate-bubble-in max-w-md w-full text-center bubble-bot rounded-3xl px-8 py-14">
-        <span className="inline-flex items-center gap-1.5 rounded-full bg-yellow text-black text-[11px] font-bold tracking-[0.18em] uppercase px-3.5 py-1.5 shadow-[0_4px_14px_-4px_rgba(255,206,5,0.7)]">
-          <span className="size-1.5 rounded-full bg-black animate-pulse" />
+        {/* Refined coming-soon chip — gold gradient + a Lucide Clock,
+            with a thin inner ring so the chip doesn't sit flat. The
+            small black ping behind the clock body animates the "still
+            preparing" beat without flooding the chip with bounce. */}
+        <span className="relative inline-flex items-center gap-2 rounded-full bg-gradient-to-br from-[#FFE072] to-[#FFCE05] text-black text-[11px] font-bold tracking-[0.18em] uppercase px-3.5 py-1.5 ring-1 ring-inset ring-black/10 shadow-[0_4px_12px_-6px_rgba(11,9,10,0.35)]">
+          <span className="relative flex size-1.5 items-center justify-center">
+            <span
+              aria-hidden
+              className="absolute inline-flex size-full animate-ping rounded-full bg-black/50"
+            />
+            <span className="relative size-1.5 rounded-full bg-black" />
+          </span>
+          <Clock className="size-3" strokeWidth={2.5} aria-hidden />
           Coming soon
         </span>
         <h1 className="font-editorial text-4xl font-semibold tracking-tight mt-7 text-ink-900">
