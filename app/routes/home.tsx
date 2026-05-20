@@ -480,21 +480,21 @@ export default function Home({ loaderData }: Route.ComponentProps) {
       <WaveBackground />
 
       {/* ── Header — mobile-first, sector-led, newsroom-quiet.
-          The brand letterform "SSF" sits flush left as the masthead;
-          a hairline divider separates it from a two-tier title (small
-          "Sahityotsav" label over the prominent yellow sector/unit
-          name). The right-hand cluster carries a compact Live pulse
-          + Standings CTA. The parent flex-wraps so on a narrow phone
-          the actions drop to a new line — the sector name never gets
-          truncated or shrunk to make room for them. A single hairline
-          yellow accent at the bottom replaces the old 3 px bar. */}
+          Everything stays on a single row from the smallest phone
+          upward. To keep the sector / unit / division name at its
+          natural size on narrow screens, the right cluster collapses:
+          the Live pill becomes a pulse dot (no text) below sm, and
+          the Standings button drops its label to leave just the
+          trophy icon. Both labels return on sm and above. */}
       <header className="sticky top-0 z-20">
         <div className="relative bg-ink-900/95 text-paper backdrop-blur-md supports-[backdrop-filter]:bg-ink-900/90">
-          <div className="mx-auto flex max-w-2xl md:max-w-3xl lg:max-w-4xl flex-wrap items-center gap-x-3 gap-y-2 px-4 sm:px-5 py-2.5 sm:py-3">
-            {/* Brand + sector — never truncated or shrunken on mobile.
-                If the device is narrow, the right cluster wraps below
-                this block, NOT into this block. */}
-            <div className="flex items-center gap-3 sm:gap-3.5">
+          <div className="mx-auto flex max-w-2xl md:max-w-3xl lg:max-w-4xl items-center gap-3 px-4 sm:px-5 py-2.5 sm:py-3">
+            {/* Brand + sector — never truncated or shrunken. min-w-0
+                lets the title block participate in flex shrinking only
+                so it doesn't push the row past 100vw; the inner text
+                still wraps freely if a sector name is exceptionally
+                long, rather than being clipped. */}
+            <div className="flex min-w-0 items-center gap-3 sm:gap-3.5">
               <span
                 aria-hidden
                 className="ssf-mark shrink-0 text-paper text-[1.6rem] leading-none"
@@ -518,7 +518,8 @@ export default function Home({ loaderData }: Route.ComponentProps) {
             <div className="ml-auto flex shrink-0 items-center gap-2 sm:gap-2.5">
               <span
                 aria-label="Live"
-                className="inline-flex items-center gap-1.5 rounded-full bg-paper/[0.06] ring-1 ring-inset ring-paper/10 px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.14em] text-yellow/95"
+                title="Live"
+                className="inline-flex items-center gap-1.5 rounded-full bg-paper/[0.06] ring-1 ring-inset ring-paper/10 px-2 py-1 sm:px-2.5 text-[10px] font-bold uppercase tracking-[0.14em] text-yellow/95"
               >
                 <span className="relative flex size-1.5">
                   <span
@@ -527,20 +528,21 @@ export default function Home({ loaderData }: Route.ComponentProps) {
                   />
                   <span className="relative inline-flex size-1.5 rounded-full bg-yellow" />
                 </span>
-                Live
+                <span className="hidden sm:inline">Live</span>
               </span>
 
               <button
                 type="button"
                 onClick={() => setStandingsOpen(true)}
-                className="group inline-flex items-center gap-1.5 rounded-full bg-paper text-ink-900 px-3 py-1.5 sm:px-3.5 sm:py-2 text-[11px] sm:text-xs font-bold uppercase tracking-[0.08em] shadow-[0_6px_14px_-8px_rgba(11,9,10,0.55)] transition-all duration-200 active:scale-[0.97] hover:-translate-y-px hover:shadow-[0_8px_18px_-8px_rgba(11,9,10,0.55)]"
+                aria-label="Open team standings"
+                className="group inline-flex items-center gap-1.5 rounded-full bg-paper text-ink-900 px-2.5 py-1.5 sm:px-3.5 sm:py-2 text-[11px] sm:text-xs font-bold uppercase tracking-[0.08em] shadow-[0_6px_14px_-8px_rgba(11,9,10,0.55)] transition-all duration-200 active:scale-[0.97] hover:-translate-y-px hover:shadow-[0_8px_18px_-8px_rgba(11,9,10,0.55)]"
               >
                 <Trophy
-                  className="size-3.5 sm:size-4 transition-transform duration-200 group-hover:-rotate-12"
+                  className="size-4 transition-transform duration-200 group-hover:-rotate-12"
                   strokeWidth={2.5}
                   aria-hidden
                 />
-                Standings
+                <span className="hidden sm:inline">Standings</span>
               </button>
             </div>
           </div>
