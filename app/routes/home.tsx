@@ -479,32 +479,37 @@ export default function Home({ loaderData }: Route.ComponentProps) {
       {/* Flowing layered waves — clean warm base + parallax wave bands */}
       <WaveBackground />
 
-      {/* ── Header — single-row, sector-led, newsroom-quiet.
+      {/* ── Header — mobile-first, sector-led, newsroom-quiet.
           The brand letterform "SSF" sits flush left as the masthead;
           a hairline divider separates it from a two-tier title (small
-          "Sahityotsav" label over the prominent yellow sector). The
-          right-hand cluster carries a compact Live pulse + Standings
-          CTA. A single hairline yellow accent at the bottom replaces
-          the old 3 px rainbow bar. */}
+          "Sahityotsav" label over the prominent yellow sector/unit
+          name). The right-hand cluster carries a compact Live pulse
+          + Standings CTA. The parent flex-wraps so on a narrow phone
+          the actions drop to a new line — the sector name never gets
+          truncated or shrunk to make room for them. A single hairline
+          yellow accent at the bottom replaces the old 3 px bar. */}
       <header className="sticky top-0 z-20">
         <div className="relative bg-ink-900/95 text-paper backdrop-blur-md supports-[backdrop-filter]:bg-ink-900/90">
-          <div className="mx-auto flex max-w-2xl md:max-w-3xl lg:max-w-4xl items-center gap-3 px-4 sm:px-5 py-2.5 sm:py-3">
-            <div className="flex min-w-0 items-center gap-3 sm:gap-3.5">
+          <div className="mx-auto flex max-w-2xl md:max-w-3xl lg:max-w-4xl flex-wrap items-center gap-x-3 gap-y-2 px-4 sm:px-5 py-2.5 sm:py-3">
+            {/* Brand + sector — never truncated or shrunken on mobile.
+                If the device is narrow, the right cluster wraps below
+                this block, NOT into this block. */}
+            <div className="flex items-center gap-3 sm:gap-3.5">
               <span
                 aria-hidden
-                className="ssf-mark shrink-0 text-paper text-[1.55rem] sm:text-[1.6rem] leading-none"
+                className="ssf-mark shrink-0 text-paper text-[1.6rem] leading-none"
               >
                 SSF
               </span>
               <span
                 aria-hidden
-                className="h-7 w-px shrink-0 bg-gradient-to-b from-transparent via-yellow/45 to-transparent"
+                className="h-8 w-px shrink-0 bg-gradient-to-b from-transparent via-yellow/45 to-transparent"
               />
-              <div className="min-w-0 leading-tight">
-                <p className="text-[9.5px] sm:text-[10px] font-semibold uppercase tracking-[0.22em] text-paper/55">
+              <div className="leading-tight">
+                <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-paper/55">
                   Sahityotsav
                 </p>
-                <p className="font-opensans text-[12.5px] sm:text-sm font-bold uppercase tracking-[0.14em] text-yellow truncate">
+                <p className="font-opensans text-sm sm:text-[15px] font-bold uppercase tracking-[0.14em] text-yellow">
                   {sector}
                 </p>
               </div>
@@ -522,7 +527,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
                   />
                   <span className="relative inline-flex size-1.5 rounded-full bg-yellow" />
                 </span>
-                <span className="hidden xs:inline sm:inline">Live</span>
+                Live
               </span>
 
               <button
