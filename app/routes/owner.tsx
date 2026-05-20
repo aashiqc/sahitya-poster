@@ -1,9 +1,11 @@
 import {
   Form,
+  Link,
   data,
   redirect,
   useActionData,
   useNavigation,
+  useSearchParams,
 } from "react-router";
 import type { Route } from "./+types/owner";
 import { createSupabaseServerClient } from "~/lib/supabase.server";
@@ -205,6 +207,11 @@ export async function action({
       .trim()
       .toLowerCase();
     const adminPassword = String(fd.get("admin_password") ?? "");
+    // Set when the owner started provisioning via the Approve link on
+    // a pending access request. The row stays 'pending' until every
+    // step below succeeds, so a failed/rolled-back attempt is fully
+    // resumable from the same Approve link.
+    const requestId = String(fd.get("request_id") ?? "").trim();
     const orgLevel = (() => {
       const v = String(fd.get("org_level") ?? "")
         .trim()
@@ -370,11 +377,27 @@ export async function action({
     });
     if (prErr) return await fail(`Profile: ${prErr.message}`);
 
+    // 6. Provisioning succeeded — only now flip the originating access
+    // request to 'approved'. Best-effort: a failure here does NOT
+    // unroll the tenant (the tenant exists and is usable); we just
+    // log the message in the success banner so the owner can clean
+    // the request up by hand.
+    let requestNote = "";
+    if (requestId) {
+      const { error: reqErr } = await svc
+        .from("access_requests")
+        .update({ status: "approved" })
+        .eq("id", requestId);
+      if (reqErr) {
+        requestNote = ` · ⚠ couldn't mark the access request approved (${reqErr.message})`;
+      }
+    }
+
     return {
       ok: true,
       message: `Created ${orgName} → ${tenantUrl(request, subdomain)} · login ${adminEmail} / ${adminPassword} · ${
         tplPrograms?.length ?? 0
-      } programs seeded (event is draft — the admin signs in and publishes).`,
+      } programs seeded (event is draft — the admin signs in and publishes).${requestNote}`,
     };
   }
 
@@ -502,6 +525,16 @@ export default function OwnerConsole({ loaderData }: Route.ComponentProps) {
   const actionData = useActionData<typeof action>();
   const nav = useNavigation();
   const busy = nav.state !== "idle";
+
+  // "Approve" mode — driven by ?approve=<request_id>. When set, the
+  // Create-tenant form prefills `org_name` from that request and
+  // submits a hidden `request_id` so the action flips the row to
+  // 'approved' only after provisioning succeeds.
+  const [searchParams] = useSearchParams();
+  const approveId = searchParams.get("approve");
+  const approveRequest = approveId
+    ? accessRequests.find((r) => r.id === approveId) ?? null
+    : null;
 
   const field =
     "w-full rounded-md border border-stone-300/80 bg-white px-3 py-2 text-sm text-stone-900 placeholder:text-stone-400 transition focus:outline-none focus:border-brand-600 focus:ring-2 focus:ring-brand-600/15";
@@ -638,6 +671,19 @@ export default function OwnerConsole({ loaderData }: Route.ComponentProps) {
                       </p>
                     </div>
                     <div className="flex shrink-0 gap-1.5">
+                      {/* Approve = jump to the Create-tenant form with
+                          org_name + request_id prefilled. Status only
+                          flips to 'approved' once provisioning succeeds,
+                          so a half-done attempt is safely resumable. */}
+                      <Link
+                        to={{
+                          search: `?approve=${r.id}`,
+                          hash: "#create-tenant",
+                        }}
+                        className="rounded-md bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700"
+                      >
+                        Approve
+                      </Link>
                       <Form method="post" className="contents">
                         <input
                           type="hidden"
@@ -649,15 +695,6 @@ export default function OwnerConsole({ loaderData }: Route.ComponentProps) {
                           name="request_id"
                           value={r.id}
                         />
-                        <button
-                          type="submit"
-                          name="decision"
-                          value="approve"
-                          disabled={busy}
-                          className="rounded-md bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
-                        >
-                          Approve
-                        </button>
                         <button
                           type="submit"
                           name="decision"
@@ -689,8 +726,10 @@ export default function OwnerConsole({ loaderData }: Route.ComponentProps) {
               })}
             </ul>
             <p className="border-t border-stone-100 bg-stone-50/60 px-5 py-2 text-[11px] text-stone-500">
-              Approving doesn’t provision the tenant — use Create
-              tenant below with their organisation details.
+              Approve fills the Create-tenant form on the right with
+              the organisation name. The request is only marked
+              approved once provisioning succeeds, so a half-done
+              attempt stays in this list and can be retried.
             </p>
           </section>
         )}
@@ -819,7 +858,8 @@ export default function OwnerConsole({ loaderData }: Route.ComponentProps) {
           {/* Create + maintain */}
           <div className="order-1 space-y-5 lg:col-span-5">
             <section
-              className={`${card} p-5`}
+              id="create-tenant"
+              className={`${card} p-5 scroll-mt-6`}
               style={{ animationDelay: ".04s" }}
             >
               <div className="flex items-baseline justify-between gap-2">
@@ -840,13 +880,57 @@ export default function OwnerConsole({ loaderData }: Route.ComponentProps) {
                   &lt;sub&gt;.{rootDomain}/admin
                 </span>
               </p>
-              <Form method="post" className="mt-4 grid gap-3 sm:grid-cols-2">
+              {approveRequest && (
+                <div className="mt-4 rounded-lg border border-emerald-200 bg-emerald-50/70 px-3 py-2.5 text-xs leading-relaxed text-emerald-900">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="font-semibold">
+                        Approving request from{" "}
+                        <span className="font-mono">
+                          {approveRequest.organization_name}
+                        </span>
+                      </p>
+                      <p className="mt-0.5 text-emerald-800/80">
+                        {approveRequest.name} ·{" "}
+                        <a
+                          href={`tel:${approveRequest.mobile.replace(/\s+/g, "")}`}
+                          className="font-mono underline-offset-2 hover:underline"
+                        >
+                          {approveRequest.mobile}
+                        </a>
+                      </p>
+                    </div>
+                    <Link
+                      to={{ search: "", hash: "" }}
+                      className="shrink-0 rounded-md border border-emerald-200 bg-white px-2 py-1 text-[11px] font-medium text-emerald-800 hover:bg-emerald-50"
+                    >
+                      Cancel
+                    </Link>
+                  </div>
+                </div>
+              )}
+              {/* `key` remounts the form when the approved request
+                  changes, so the controlled defaultValue actually
+                  re-seeds the input. */}
+              <Form
+                method="post"
+                className="mt-4 grid gap-3 sm:grid-cols-2"
+                key={approveRequest?.id ?? "blank"}
+              >
                 <input type="hidden" name="intent" value="create_tenant" />
+                {approveRequest && (
+                  <input
+                    type="hidden"
+                    name="request_id"
+                    value={approveRequest.id}
+                  />
+                )}
                 <label className="space-y-1">
                   <span className={lbl}>Organization name</span>
                   <input
                     name="org_name"
                     required
+                    defaultValue={approveRequest?.organization_name ?? ""}
                     className={field}
                     placeholder="SSF Pantharangadi Sector"
                   />
