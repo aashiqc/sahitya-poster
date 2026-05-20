@@ -2268,6 +2268,50 @@ const STANDINGS_STUDIO_SAMPLE: { name: string; points: number }[] = [
   { name: "Valanchery", points: 82 },
 ];
 
+// How long a studio toast stays before it auto-clears. Long enough to
+// read a short sentence; short enough not to linger over the editor.
+const TOAST_DISMISS_MS = 3500;
+
+/** Fixed-bottom toast for studio action results. Auto-dismisses after
+ *  TOAST_DISMISS_MS; re-fires on every new submission because the
+ *  action data is a fresh object identity each time. Types are loose
+ *  (`unknown`) so the same component handles every action return in
+ *  this route without copying the full union. */
+function StudioToast({ data }: { data: unknown }) {
+  const [shown, setShown] = useState<
+    { kind: "err" | "ok"; text: string } | null
+  >(null);
+  useEffect(() => {
+    if (!data || typeof data !== "object") return;
+    const d = data as Record<string, unknown>;
+    const err = typeof d.error === "string" ? d.error : null;
+    const msg =
+      d.ok === true && typeof d.message === "string" ? d.message : null;
+    if (!err && !msg) return;
+    setShown(err ? { kind: "err", text: err } : { kind: "ok", text: msg! });
+    const t = window.setTimeout(() => setShown(null), TOAST_DISMISS_MS);
+    return () => window.clearTimeout(t);
+  }, [data]);
+  if (!shown) return null;
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      className="pointer-events-none fixed inset-x-0 bottom-4 z-50 flex justify-center px-4"
+    >
+      <p
+        className={`pointer-events-auto max-w-md rounded-lg px-4 py-2.5 text-sm font-medium shadow-lg ring-1 transition-opacity ${
+          shown.kind === "err"
+            ? "bg-red-600 text-white ring-red-900/20"
+            : "bg-emerald-600 text-white ring-emerald-900/20"
+        }`}
+      >
+        {shown.kind === "err" ? shown.text : `✓ ${shown.text}`}
+      </p>
+    </div>
+  );
+}
+
 // One unified panel: gallery (hide / star / upload / delete) + a live
 // drag-edit canvas + per-block size/colour/B/I controls + Save layout.
 // Mirrors the result poster's TemplateStudioView so the two studios
@@ -2401,15 +2445,6 @@ function StandingsTemplateStudio({
       return next;
     });
 
-  const err =
-    actionData && "error" in actionData
-      ? (actionData.error as string)
-      : null;
-  const msg =
-    actionData && "ok" in actionData && "message" in actionData
-      ? (actionData.message as string)
-      : null;
-
   const lbl =
     "block text-[10px] font-semibold uppercase tracking-wider text-stone-500";
 
@@ -2447,23 +2482,7 @@ function StandingsTemplateStudio({
 
   return (
     <div className="space-y-3">
-      {(err || msg) && (
-        <div
-          role="status"
-          aria-live="polite"
-          className="pointer-events-none fixed inset-x-0 bottom-4 z-50 flex justify-center px-4"
-        >
-          <p
-            className={`pointer-events-auto max-w-md rounded-lg px-4 py-2.5 text-sm font-medium shadow-lg ring-1 ${
-              err
-                ? "bg-red-600 text-white ring-red-900/20"
-                : "bg-emerald-600 text-white ring-emerald-900/20"
-            }`}
-          >
-            {err ? err : `✓ ${msg}`}
-          </p>
-        </div>
-      )}
+      <StudioToast data={actionData} />
 
       {/* Gallery — click a thumbnail to open it in the editor below */}
       <section className="overflow-hidden rounded-xl border border-stone-200 bg-white">
@@ -4380,15 +4399,6 @@ function TemplateStudioView({
     "w-full rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm text-stone-900 placeholder:text-stone-400 transition focus:outline-none focus:border-brand-600 focus:ring-2 focus:ring-brand-600/25";
   const lbl =
     "block text-[10px] font-semibold uppercase tracking-wider text-stone-500";
-  const err =
-    actionData && "error" in actionData
-      ? (actionData.error as string)
-      : null;
-  const msg =
-    actionData && "ok" in actionData && "message" in actionData
-      ? (actionData.message as string)
-      : null;
-
 
   const SetDefaultForm = ({
     c,
@@ -4431,23 +4441,7 @@ function TemplateStudioView({
         </p>
       </div>
 
-      {(err || msg) && (
-        <div
-          role="status"
-          aria-live="polite"
-          className="pointer-events-none fixed inset-x-0 bottom-4 z-50 flex justify-center px-4"
-        >
-          <p
-            className={`pointer-events-auto max-w-md rounded-lg px-4 py-2.5 text-sm font-medium shadow-lg ring-1 ${
-              err
-                ? "bg-red-600 text-white ring-red-900/20"
-                : "bg-emerald-600 text-white ring-emerald-900/20"
-            }`}
-          >
-            {err ? err : `✓ ${msg}`}
-          </p>
-        </div>
-      )}
+      <StudioToast data={actionData} />
 
       {/* Shared wording & fonts — open; applies to every template */}
       <section className="rounded-xl border border-stone-200 bg-white p-4">

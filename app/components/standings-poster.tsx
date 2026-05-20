@@ -261,6 +261,31 @@ export const STANDINGS_TEMPLATE_NAMES = [
   "Navy (general)",
 ] as const;
 
+// Baked baseline for the two general standings templates, captured
+// verbatim from the SSF Cheerpingal Unit's saved `events.standings_layout`.
+// Layered UNDER each tenant's resolved overrides via `withDefaultOv` so
+// a freshly-onboarded tenant gets accurate positions out of the box;
+// the admin can still drag any block to override per-element.
+// Keyed by built-in template index (matches the stringified `key`
+// produced by `eventStandingsTemplateList` for built-ins).
+// Custom uploads get no default — they use the meta block in
+// `CUSTOM_DEFAULT_STEMPLATE` instead.
+const GENERAL_DEFAULT_STANDINGS_LAYOUT: PosterLayoutMap = {
+  // 3 — Peach (general-01)
+  "3": {
+    orgName: { x: 144, y: 836 },
+    date: { x: 118, y: 992 },
+    place: { x: 332, y: 991 },
+    winners: { x: 82, y: 3, gap: 10 },
+  },
+  // 4 — Navy (general-02)
+  "4": {
+    orgName: { x: 590, y: 837 },
+    date: { x: 566, y: 999 },
+    place: { x: 778, y: 993 },
+  },
+};
+
 // Neutral starting layout for a tenant-uploaded custom standings
 // background — admin can fine-tune via the layout editor later.
 const CUSTOM_DEFAULT_STEMPLATE: STemplate = {
@@ -386,16 +411,29 @@ export const StandingsPosterCanvas = ({
   stageRef?: React.MutableRefObject<Konva.Stage | null>;
   displayWidth?: number;
 }) => {
+  const builtinIdx =
+    (((templateIndex | 0) % STANDINGS_TEMPLATES.length) +
+      STANDINGS_TEMPLATES.length) %
+    STANDINGS_TEMPLATES.length;
   const tpl: STemplate = customSrc
     ? { ...CUSTOM_DEFAULT_STEMPLATE, src: customSrc }
-    : STANDINGS_TEMPLATES[
-        (((templateIndex | 0) % STANDINGS_TEMPLATES.length) +
-          STANDINGS_TEMPLATES.length) %
-          STANDINGS_TEMPLATES.length
-      ];
+    : STANDINGS_TEMPLATES[builtinIdx];
   const LAYOUT = tpl.layout;
   const RANK_STYLE = tpl.rankStyle;
   const OVERLAY_FONT = fontFamily || BODY_FONT;
+  // Baked Cheerpingal-derived baseline (only for built-in general
+  // templates — customs get no default).
+  const def = customSrc
+    ? undefined
+    : GENERAL_DEFAULT_STANDINGS_LAYOUT[String(builtinIdx)];
+  // Resolve each block's effective override: tenant value wins per
+  // property, the baked default fills every gap, and `undefined` is
+  // returned only when both are absent.
+  const afterNOv = withDefaultOv(def?.afterN, standingsOverrides?.afterN);
+  const orgNameOv = withDefaultOv(def?.orgName, standingsOverrides?.orgName);
+  const dateOv = withDefaultOv(def?.date, standingsOverrides?.date);
+  const placeOv = withDefaultOv(def?.place, standingsOverrides?.place);
+  const winnersOv = withDefaultOv(def?.winners, standingsOverrides?.winners);
   const [mounted, setMounted] = useState(false);
   useEffect(() => {
     let active = true;
@@ -473,7 +511,7 @@ export const StandingsPosterCanvas = ({
                 centered in the gap between the two cursive words.
                 Draggable in the layout editor. */}
             {(() => {
-              const ov = standingsOverrides?.afterN;
+              const ov = afterNOv;
               if (!isVisible(ov, editable)) return null;
               return (
                 <DraggableEl
@@ -510,7 +548,7 @@ export const StandingsPosterCanvas = ({
                 horizontally so admins can tune the name→points spacing
                 without redoing every row. */}
             {(() => {
-              const ov = standingsOverrides?.winners;
+              const ov = winnersOv;
               if (!isVisible(ov, editable)) return null;
               const gap = ov?.gap ?? 0;
               const pointsRightInside =
@@ -574,7 +612,7 @@ export const StandingsPosterCanvas = ({
             {tpl.meta && (
               <>
                 {meta?.orgName?.trim() && (() => {
-                  const ov = standingsOverrides?.orgName;
+                  const ov = orgNameOv;
                   if (!isVisible(ov, editable)) return null;
                   return (
                     <DraggableEl
@@ -601,7 +639,7 @@ export const StandingsPosterCanvas = ({
                   );
                 })()}
                 {meta?.posterDate?.trim() && (() => {
-                  const ov = standingsOverrides?.date;
+                  const ov = dateOv;
                   if (!isVisible(ov, editable)) return null;
                   return (
                     <DraggableEl
@@ -628,7 +666,7 @@ export const StandingsPosterCanvas = ({
                   );
                 })()}
                 {meta?.posterPlace?.trim() && (() => {
-                  const ov = standingsOverrides?.place;
+                  const ov = placeOv;
                   if (!isVisible(ov, editable)) return null;
                   return (
                     <DraggableEl
