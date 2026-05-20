@@ -848,7 +848,7 @@ export default function OwnerConsole({ loaderData }: Route.ComponentProps) {
                     name="org_name"
                     required
                     className={field}
-                    placeholder="SSF Valanchery Sector"
+                    placeholder="SSF Pantharangadi Sector"
                   />
                 </label>
                 <label className="space-y-1">
@@ -870,7 +870,7 @@ export default function OwnerConsole({ loaderData }: Route.ComponentProps) {
                     name="subdomain"
                     required
                     className={`${field} font-mono`}
-                    placeholder="valanchery"
+                    placeholder="pantharangadi"
                     pattern="[a-z0-9-]+"
                   />
                 </label>
@@ -950,7 +950,7 @@ export default function OwnerConsole({ loaderData }: Route.ComponentProps) {
                     name="subdomain"
                     required
                     className={`${field} font-mono`}
-                    placeholder="valanchery"
+                    placeholder="pantharangadi"
                   />
                 </label>
                 <button

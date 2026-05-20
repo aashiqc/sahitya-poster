@@ -699,7 +699,7 @@ function ApexLanding({ rootDomain }: { rootDomain: string }) {
                   minLength={2}
                   maxLength={200}
                   autoComplete="organization"
-                  placeholder="e.g. SSF Anithara Unit"
+                  placeholder="e.g. SSF Pantharangadi Sector"
                   className={inputCls}
                 />
               </label>

@@ -3347,7 +3347,7 @@ function TemplateStudioView({
                   setMeta((m) => ({ ...m, name: e.target.value }))
                 }
                 className={field}
-                placeholder="SSF Cheerpingal Unit · Sahityotsav"
+                placeholder="SSF Pantharangadi Sector · Sahityotsav"
               />
             </label>
             <label className="space-y-1">
