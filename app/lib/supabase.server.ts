@@ -18,9 +18,22 @@ export function createSupabaseServerClient(request: Request) {
           .filter((c): c is { name: string; value: string } => c.value !== undefined);
       },
       setAll(cookiesToSet) {
-        cookiesToSet.forEach(({ name, value, options }) =>
-          headers.append("Set-Cookie", serializeCookieHeader(name, value, options)),
-        );
+        // Scope auth cookies to the whole zone (.sahityotsav.live) when
+        // the request hits any production host under ROOT_DOMAIN — apex
+        // or any subdomain. That lets an admin sign in on the apex and
+        // be carried across to their sector subdomain without a second
+        // login, and keeps the owner console signed-in consistently.
+        // Local dev / *.workers.dev are left host-only so localhost
+        // cookies still work.
+        const host = new URL(request.url).hostname;
+        const underRoot =
+          host === ROOT_DOMAIN || host.endsWith(`.${ROOT_DOMAIN}`);
+        cookiesToSet.forEach(({ name, value, options }) => {
+          const opts = underRoot
+            ? { ...options, domain: `.${ROOT_DOMAIN}` }
+            : options;
+          headers.append("Set-Cookie", serializeCookieHeader(name, value, opts));
+        });
       },
     },
   });

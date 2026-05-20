@@ -1,18 +1,48 @@
 import { Form, data, redirect, useActionData, useNavigation } from "react-router";
 import type { Route } from "./+types/admin.login";
-import { createSupabaseServerClient } from "~/lib/supabase.server";
+import type { SupabaseClient } from "@supabase/supabase-js";
+import { createSupabaseServerClient, resolveTenant } from "~/lib/supabase.server";
+import { ROOT_DOMAIN } from "~/lib/constants";
 
 export function meta() {
   return [{ title: "Admin sign in · Sahityotsav" }];
 }
 
-// In local dev there is no tenant subdomain, so the tenant rides in a
-// ?tenant= query param. Carry it through the post-login redirect so a
-// non-default sector's admin doesn't land on the wrong tenant (→ 403).
-// Harmless in production (no such param; plain /admin).
-function adminDest(request: Request): string {
-  const t = new URL(request.url).searchParams.get("tenant");
-  return t ? `/admin?tenant=${encodeURIComponent(t)}` : "/admin";
+const NO_SECTOR = "__no_sector__";
+
+/** Where to send the admin after a successful sign-in.
+ *
+ *  On a tenant subdomain → just /admin on the same host (existing
+ *  behaviour, plus the dev `?tenant=` carry-through).
+ *
+ *  On the apex / a reserved host → look up the user's organisation and
+ *  302 to their own sector's admin (cross-host absolute URL). Auth
+ *  cookies are now zone-scoped (Domain=.sahityotsav.live) so the
+ *  session travels with the redirect. If the user has no profile row
+ *  yet, signal NO_SECTOR so the caller can show a friendly error
+ *  instead of redirecting them in circles. */
+async function postLoginRedirect(
+  request: Request,
+  supabase: SupabaseClient,
+): Promise<string> {
+  const sub = resolveTenant(request);
+  if (sub) {
+    const t = new URL(request.url).searchParams.get("tenant");
+    return t ? `/admin?tenant=${encodeURIComponent(t)}` : "/admin";
+  }
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return "/admin/login";
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("organizations(subdomain)")
+    .eq("user_id", user.id)
+    .maybeSingle();
+  const orgSub = (
+    profile?.organizations as { subdomain?: string } | null
+  )?.subdomain;
+  return orgSub ? `https://${orgSub}.${ROOT_DOMAIN}/admin` : NO_SECTOR;
 }
 
 export async function loader({ request }: Route.LoaderArgs) {
@@ -21,7 +51,11 @@ export async function loader({ request }: Route.LoaderArgs) {
     data: { user },
   } = await supabase.auth.getUser();
   if (user) {
-    return redirect(adminDest(request), { headers: Object.fromEntries(headers) });
+    const dest = await postLoginRedirect(request, supabase);
+    if (dest !== NO_SECTOR)
+      return redirect(dest, { headers: Object.fromEntries(headers) });
+    // Signed in but no sector — fall through to render the form with
+    // an error so the page is informative instead of a redirect loop.
   }
   return data(null, { headers: Object.fromEntries(headers) });
 }
@@ -51,7 +85,14 @@ export async function action({ request }: Route.ActionArgs): Promise<Response | 
 
   const { error } = await supabase.auth.signInWithPassword({ email, password });
   if (error) return { error: error.message };
-  return redirect(adminDest(request), { headers: Object.fromEntries(headers) });
+  const dest = await postLoginRedirect(request, supabase);
+  if (dest === NO_SECTOR) {
+    return {
+      error:
+        "Your account isn’t linked to a sector yet. Ask the owner to invite you.",
+    };
+  }
+  return redirect(dest, { headers: Object.fromEntries(headers) });
 }
 
 export default function AdminLogin() {

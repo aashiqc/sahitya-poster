@@ -41,10 +41,13 @@ import {
 import type Konva from "konva";
 import type { Route } from "./+types/admin";
 import {
+  createSupabaseServerClient,
   loadTenantEvent,
   requireAdmin,
+  resolveTenant,
   siteUrlFromRequest,
 } from "~/lib/supabase.server";
+import { ROOT_DOMAIN } from "~/lib/constants";
 import {
   POSTER_FONTS_EN,
   POSTER_FONTS_ML,
@@ -231,6 +234,38 @@ function categorySlug(s: string): string {
 // Loader
 // ============================================================================
 export async function loader({ request }: Route.LoaderArgs) {
+  // Apex / reserved host (`sahityotsav.live/admin`, `www.../admin`, …):
+  // there is no tenant on this host, so loadTenantEvent would 404. Send
+  // the visitor where they actually need to go — to their own sector's
+  // admin dashboard once signed in, or to login otherwise.
+  if (!resolveTenant(request)) {
+    const { supabase, headers } = createSupabaseServerClient(request);
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) {
+      return redirect("/admin/login", {
+        headers: Object.fromEntries(headers),
+      });
+    }
+    const { data: profile } = await supabase
+      .from("profiles")
+      .select("organizations(subdomain)")
+      .eq("user_id", user.id)
+      .maybeSingle();
+    const orgSub = (
+      profile?.organizations as { subdomain?: string } | null
+    )?.subdomain;
+    if (!orgSub) {
+      throw new Response(
+        "Your account isn’t linked to a sector. Ask the owner to invite you.",
+        { status: 403, headers: Object.fromEntries(headers) },
+      );
+    }
+    return redirect(`https://${orgSub}.${ROOT_DOMAIN}/admin`, {
+      headers: Object.fromEntries(headers),
+    });
+  }
   const { supabase, headers, user, profile } = await requireAdmin(request);
   const event = await loadTenantEvent(request, supabase);
   // Defense in depth: RLS already isolates orgs, but make the
@@ -405,6 +440,12 @@ export async function loader({ request }: Route.LoaderArgs) {
 // Action
 // ============================================================================
 export async function action({ request }: Route.ActionArgs) {
+  // Forms post to the same host they were rendered on; nothing should
+  // POST to the apex's /admin. If something does, bounce back to the
+  // loader, which then routes the visitor to their sector or to login.
+  if (!resolveTenant(request)) {
+    return redirect("/admin");
+  }
   const { supabase, headers, user, profile } = await requireAdmin(request);
   const event = await loadTenantEvent(request, supabase);
   if (profile.organization_id !== event.organization_id) {

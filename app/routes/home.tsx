@@ -4,8 +4,10 @@ import type { Route } from "./+types/home";
 import {
   createSupabaseServerClient,
   loadTenantEvent,
+  resolveTenant,
   siteUrlFromRequest,
 } from "~/lib/supabase.server";
+import { ROOT_DOMAIN } from "~/lib/constants";
 import type Konva from "konva";
 import {
   PosterCanvas,
@@ -34,10 +36,43 @@ import {
 } from "lucide-react";
 
 export function meta({ data }: Route.MetaArgs) {
-  const ev = (data as { event?: { name?: string; name_ml?: string; organizations?: { name?: string } | null } } | undefined)?.event;
+  const d = data as
+    | {
+        mode?: "apex" | "tenant";
+        event?: {
+          name?: string;
+          name_ml?: string;
+          organizations?: { name?: string } | null;
+        };
+        siteUrl?: string;
+      }
+    | undefined;
+  const base = d?.siteUrl ?? "";
+  if (d?.mode === "apex") {
+    const title = "Sahityotsav · Live results from every sector";
+    const description =
+      "Browse live Sahityotsav results sector by sector. Each SSF sector publishes its own winners as they're announced.";
+    const image = `${base}/sahityotsav-logo.png`;
+    return [
+      { title },
+      { name: "description", content: description },
+      { tagName: "link", rel: "canonical", href: base },
+      { property: "og:title", content: title },
+      { property: "og:description", content: description },
+      { property: "og:type", content: "website" },
+      { property: "og:url", content: base },
+      { property: "og:site_name", content: "Sahityotsav" },
+      { property: "og:locale", content: "en_IN" },
+      { property: "og:image", content: image },
+      { name: "twitter:card", content: "summary_large_image" },
+      { name: "twitter:title", content: title },
+      { name: "twitter:description", content: description },
+      { name: "twitter:image", content: image },
+    ];
+  }
+  const ev = d?.event;
   const brand =
     ev?.organizations?.name ?? ev?.name ?? ev?.name_ml ?? "Sahityotsav";
-  const base = (data as { siteUrl?: string } | undefined)?.siteUrl ?? "";
   const title = `${brand} · Results`;
   const description = `Live results from ${brand} — browse winners by category as they're announced.`;
   const image = `${base}/sahityotsav-logo.png`;
@@ -62,11 +97,53 @@ export function meta({ data }: Route.MetaArgs) {
 
 export async function loader({ request }: Route.LoaderArgs) {
   const { supabase, headers } = createSupabaseServerClient(request);
-  const event = await loadTenantEvent(request, supabase);
   const siteUrl = siteUrlFromRequest(request);
+
+  // Apex / reserved host (`sahityotsav.live`, `www`, `app`, `api`) →
+  // a friendly landing with a directory of live sectors + a CTA to
+  // register a new organisation, instead of the 404 unknown-sector
+  // page (which is correct for genuine unknown subdomains only).
+  if (!resolveTenant(request)) {
+    const { data: orgs } = await supabase
+      .from("organizations")
+      .select(
+        "name, subdomain, org_level, events!inner(status, is_current)",
+      )
+      .eq("events.is_current", true)
+      .eq("events.status", "published")
+      .not("subdomain", "is", null)
+      .order("name", { ascending: true });
+    type Sector = {
+      name: string;
+      subdomain: string;
+      org_level: string | null;
+    };
+    const sectors: Sector[] = (orgs ?? []).map((o) => ({
+      name: (o as { name: string }).name,
+      subdomain: (o as { subdomain: string }).subdomain,
+      org_level: (o as { org_level?: string | null }).org_level ?? null,
+    }));
+    return data(
+      {
+        mode: "apex" as const,
+        siteUrl,
+        rootDomain: ROOT_DOMAIN,
+        sectors,
+        contactEmail: "owner@sahityotsav.live",
+      },
+      {
+        headers: {
+          ...Object.fromEntries(headers),
+          "Cache-Control": "public, max-age=60, s-maxage=300",
+        },
+      },
+    );
+  }
+
+  const event = await loadTenantEvent(request, supabase);
   if (event.status !== "published") {
     return data(
-      { event, published: false as const, siteUrl },
+      { mode: "tenant" as const, event, published: false as const, siteUrl },
       { headers: { ...Object.fromEntries(headers), "Cache-Control": "no-store" } },
     );
   }
@@ -180,6 +257,7 @@ export async function loader({ request }: Route.LoaderArgs) {
 
   return data(
     {
+      mode: "tenant" as const,
       event,
       published: true as const,
       siteUrl,
@@ -284,6 +362,12 @@ function posterProgramName(
 // ─────────────────────────────────────────────────────────────────────
 
 export default function Home({ loaderData }: Route.ComponentProps) {
+  // Apex / reserved host → friendly landing instead of the unknown-
+  // tenant 404. Bailed out BEFORE any hooks so the apex tree never
+  // pays for the public-chat machinery.
+  if (loaderData.mode === "apex") {
+    return <ApexLanding {...loaderData} />;
+  }
   // Live auto-refresh: silently re-runs the loader so newly published
   // results surface without a manual reload. Called before any early
   // return so hook order stays stable if `published` flips false→true.
@@ -469,6 +553,143 @@ function useLiveRefresh(intervalMs = 60_000) {
 // SSF wordmark — always rendered in the brand Cooper Black letterform.
 function Ssf({ className = "" }: { className?: string }) {
   return <span className={`ssf-mark ${className}`}>SSF</span>;
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Apex landing — shown on sahityotsav.live (and reserved hosts) when
+// there's no tenant to resolve. Directory of live sectors + a clear
+// "Contact admin to register" CTA, so first-time visitors aren't met
+// by a 404. Designed lean and static-feeling; no chat/poster runtime.
+// ─────────────────────────────────────────────────────────────────────
+function ApexLanding({
+  sectors,
+  rootDomain,
+  contactEmail,
+}: {
+  sectors: { name: string; subdomain: string; org_level: string | null }[];
+  rootDomain: string;
+  contactEmail: string;
+}) {
+  const mailto =
+    `mailto:${contactEmail}?subject=${encodeURIComponent("Sahityotsav · sector registration")}` +
+    `&body=${encodeURIComponent(
+      "Hi,\n\nI'd like to set up Sahityotsav results for our organisation.\n\nName of organisation:\nLevel (unit / sector / division / district):\nContact person + number:\n\nThanks.",
+    )}`;
+  return (
+    <main className="relative min-h-dvh bg-paper text-ink-900">
+      <WaveBackground />
+      <div className="relative mx-auto max-w-5xl px-5 pb-24 pt-12 sm:pt-20">
+        {/* Hero */}
+        <header className="text-center">
+          <p className="text-[11px] font-bold uppercase tracking-[0.3em] text-brand-700">
+            <Ssf /> · Sahityotsav
+          </p>
+          <h1 className="mt-3 font-display text-4xl leading-[1.05] tracking-tight sm:text-5xl">
+            Live results from every sector.
+          </h1>
+          <p className="mx-auto mt-4 max-w-xl text-sm leading-relaxed text-ink-700 sm:text-base">
+            Each SSF sector that runs Sahityotsav has its own live address.
+            Pick yours below — winners stream in as the results are
+            announced.
+          </p>
+          <div className="mt-6 flex flex-wrap items-center justify-center gap-3">
+            <a
+              href={mailto}
+              className="inline-flex items-center gap-2 rounded-full bg-brand-700 px-5 py-2.5 text-sm font-semibold text-paper shadow-sm hover:bg-brand-800"
+            >
+              Register your sector →
+            </a>
+            <Link
+              to="/admin"
+              className="inline-flex items-center gap-2 rounded-full border border-ink-200 px-5 py-2.5 text-sm font-medium text-ink-800 hover:bg-paper-2"
+            >
+              Sector admin sign in
+            </Link>
+          </div>
+        </header>
+
+        {/* Live sectors */}
+        <section className="mt-14">
+          <div className="flex items-baseline justify-between gap-3">
+            <h2 className="font-display text-xl tracking-tight sm:text-2xl">
+              Live sectors
+            </h2>
+            <span className="text-[11px] uppercase tracking-wider text-ink-500">
+              {sectors.length} live
+            </span>
+          </div>
+          {sectors.length === 0 ? (
+            <p className="mt-4 rounded-xl border border-dashed border-ink-200 bg-paper-2/60 px-5 py-8 text-center text-sm text-ink-600">
+              No sectors are live right now — check back during festival
+              season, or{" "}
+              <a
+                href={mailto}
+                className="font-medium text-brand-700 underline-offset-2 hover:underline"
+              >
+                register your sector
+              </a>
+              .
+            </p>
+          ) : (
+            <ul className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              {sectors.map((s) => (
+                <li key={s.subdomain}>
+                  <a
+                    href={`https://${s.subdomain}.${rootDomain}`}
+                    className="group block rounded-xl border border-ink-200 bg-paper px-4 py-3.5 shadow-sm transition hover:border-brand-300 hover:bg-paper-2"
+                  >
+                    <div className="flex items-baseline justify-between gap-3">
+                      <span className="truncate text-sm font-semibold text-ink-900">
+                        {s.name}
+                      </span>
+                      {s.org_level && (
+                        <span className="shrink-0 rounded-full bg-yellow/40 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-ink-800">
+                          {s.org_level}
+                        </span>
+                      )}
+                    </div>
+                    <span className="mt-1 block truncate font-mono text-[11px] text-ink-500 group-hover:text-brand-700">
+                      {s.subdomain}.{rootDomain}
+                    </span>
+                  </a>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+
+        {/* Register CTA */}
+        <section className="mt-14 rounded-2xl border border-ink-200 bg-paper-2/60 p-6 sm:p-8">
+          <div className="flex flex-col items-start gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="max-w-xl">
+              <h2 className="font-display text-xl tracking-tight sm:text-2xl">
+                Run Sahityotsav at your sector?
+              </h2>
+              <p className="mt-2 text-sm leading-relaxed text-ink-700">
+                Contact the admin to get your own live results address —
+                <span className="font-mono text-ink-900">
+                  {" "}
+                  your-sector.{rootDomain}
+                </span>{" "}
+                — with an admin account, your program list and ready-made
+                result posters.
+              </p>
+            </div>
+            <a
+              href={mailto}
+              className="inline-flex shrink-0 items-center gap-2 rounded-full bg-ink-900 px-5 py-2.5 text-sm font-semibold text-paper hover:bg-ink-800"
+            >
+              Email {contactEmail}
+            </a>
+          </div>
+        </section>
+
+        <footer className="mt-16 text-center text-[11px] text-ink-500">
+          © Sahityotsav · Samastha Kerala Islamic Sahithya Sangam
+        </footer>
+      </div>
+    </main>
+  );
 }
 
 // Flowing layered-wave background — a clean warm base with three
