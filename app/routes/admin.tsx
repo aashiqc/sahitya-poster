@@ -76,6 +76,7 @@ import {
   pickStandingsTemplate,
   shareStandings,
   usableStandingsTemplates,
+  type StandingsLayoutEl,
   type StandingsTemplateChoice,
 } from "~/components/standings-poster";
 
@@ -462,6 +463,9 @@ export async function loader({ request, context }: Route.LoaderArgs) {
       disabledStandingsTemplates:
         ((event as { disabled_standings_templates?: string[] | null })
           .disabled_standings_templates ?? []) as string[],
+      standingsLayout:
+        ((event as { standings_layout?: PosterLayoutMap | null })
+          .standings_layout ?? null) as PosterLayoutMap | null,
     },
     { headers: Object.fromEntries(headers) },
   );
@@ -1487,6 +1491,7 @@ export default function Admin({ loaderData }: Route.ComponentProps) {
     standingsTemplateId,
     customStandingsTemplates,
     disabledStandingsTemplates,
+    standingsLayout,
   } = loaderData;
   const orgName = (profile.organizations as { name?: string } | null)?.name ?? "";
   const eventName = event.name_ml ?? event.name;
@@ -1757,6 +1762,7 @@ export default function Admin({ loaderData }: Route.ComponentProps) {
               defaultTemplateId={standingsTemplateId}
               customStandingsTemplates={customStandingsTemplates}
               disabledStandingsTemplates={disabledStandingsTemplates}
+              standingsLayout={standingsLayout}
               subdomain={posterMeta.subdomain}
               orgName={posterMeta.orgName}
               posterDate={posterMeta.posterDate}
@@ -1960,12 +1966,14 @@ function StandingsShareCard({
   customSrc,
   meta,
   fontFamily,
+  standingsOverrides,
 }: {
   snapshot: StandingsSnapshot;
   templateIndex: number;
   customSrc?: string;
   meta?: { orgName?: string; posterDate?: string; posterPlace?: string };
   fontFamily?: string;
+  standingsOverrides?: TemplateOverride;
 }) {
   const stageRef = useRef<Konva.Stage | null>(null);
   const [busy, setBusy] = useState<null | "download" | "share">(null);
@@ -2005,6 +2013,7 @@ function StandingsShareCard({
           customSrc={customSrc}
           meta={meta}
           fontFamily={fontFamily}
+          standingsOverrides={standingsOverrides}
           stageRef={stageRef}
         />
       </div>
@@ -2248,19 +2257,47 @@ function ImportResultsView({
 // to the leaderboard. (Live drag-edit of overlay positions is a
 // follow-up — defaults are already tuned to the legacy Pantharangadi
 // positions.)
-function StandingsTemplatesManager({
+// Sample data shown in the drag-edit preview. Five rows is enough to
+// reveal podium colours + the long tail so admins can judge spacing
+// without uploading real standings.
+const STANDINGS_STUDIO_SAMPLE: { name: string; points: number }[] = [
+  { name: "Pantharangadi", points: 142 },
+  { name: "Cheerpingal", points: 128 },
+  { name: "Anithara", points: 114 },
+  { name: "Vidyanagar", points: 96 },
+  { name: "Valanchery", points: 82 },
+];
+
+// One unified panel: gallery (hide / star / upload / delete) + a live
+// drag-edit canvas + per-block size/colour/B/I controls + Save layout.
+// Mirrors the result poster's TemplateStudioView so the two studios
+// feel like one product.
+function StandingsTemplateStudio({
   subdomain,
   customStandingsTemplates,
   disabledStandingsTemplates,
   defaultTemplate,
   defaultTemplateId,
+  standingsLayout,
+  orgName,
+  posterDate,
+  posterPlace,
+  fontEn,
+  fontMl,
 }: {
   subdomain: string;
   customStandingsTemplates: CustomTpl[];
   disabledStandingsTemplates: string[];
   defaultTemplate: number;
   defaultTemplateId: string | null;
+  standingsLayout: PosterLayoutMap | null;
+  orgName: string;
+  posterDate: string | null;
+  posterPlace: string | null;
+  fontEn: string | null;
+  fontMl: string | null;
 }) {
+  const actionData = useActionData<typeof action>();
   const navigation = useNavigation();
   const busy = navigation.state !== "idle";
   const choices = useMemo(
@@ -2284,6 +2321,83 @@ function StandingsTemplatesManager({
     );
   const [tplFileName, setTplFileName] = useState("");
 
+  // Which template is open in the editor — decoupled from the public
+  // default, so admins can lay out any template without changing what
+  // the public sees.
+  const [editKey, setEditKey] = useState(defaultKey);
+  const cur =
+    choices.find((c) => c.key === editKey) ?? choices[0] ?? null;
+  const tplKey = cur?.key ?? "0";
+  const isEditingDefault = tplKey === defaultKey;
+  // Built-in indices 0–2 are legacy Pantharangadi artwork with org
+  // name + date + place baked in — only the after-N number is drawn,
+  // so we hide the meta block controls for those.
+  const supportsMeta =
+    cur?.builtinIndex === null ||
+    (cur?.builtinIndex ?? -1) >= 3;
+
+  const [layoutMap, setLayoutMap] = useState<PosterLayoutMap>(
+    standingsLayout ?? {},
+  );
+  const ov: TemplateOverride = layoutMap[tplKey] ?? {};
+  const patchEl = (
+    el: StandingsLayoutEl,
+    patch: ElOverride,
+  ): void =>
+    setLayoutMap((m) => {
+      const tpl: TemplateOverride = m[tplKey] ?? {};
+      const cur: ElOverride = tpl[el] ?? {};
+      return { ...m, [tplKey]: { ...tpl, [el]: { ...cur, ...patch } } };
+    });
+  // DraggableEl emits the wider LayoutEl union; narrow to the four
+  // standings blocks before patching so the override key stays valid.
+  const moveEl = (el: LayoutEl, x: number, y: number) => {
+    if (
+      el !== "afterN" &&
+      el !== "orgName" &&
+      el !== "date" &&
+      el !== "place"
+    )
+      return;
+    patchEl(el, { x, y });
+  };
+  const sizeEl = (el: StandingsLayoutEl, d: number) => {
+    const cur: ElOverride = layoutMap[tplKey]?.[el] ?? {};
+    patchEl(el, {
+      s: Math.min(1.8, Math.max(0.5, (cur.s ?? 1) + d)),
+    });
+  };
+  const colorEl = (el: StandingsLayoutEl, color: string) =>
+    patchEl(el, { color });
+  const autoColor = (el: StandingsLayoutEl) =>
+    patchEl(el, { color: undefined });
+  const toggleBold = (el: StandingsLayoutEl, defBold: boolean) =>
+    patchEl(el, {
+      bold: !(layoutMap[tplKey]?.[el]?.bold ?? defBold),
+    });
+  const toggleItalic = (el: StandingsLayoutEl) =>
+    patchEl(el, {
+      italic: !(layoutMap[tplKey]?.[el]?.italic ?? false),
+    });
+  const resetTpl = () =>
+    setLayoutMap((m) => {
+      const next = { ...m };
+      delete next[tplKey];
+      return next;
+    });
+
+  const err =
+    actionData && "error" in actionData
+      ? (actionData.error as string)
+      : null;
+  const msg =
+    actionData && "ok" in actionData && "message" in actionData
+      ? (actionData.message as string)
+      : null;
+
+  const lbl =
+    "block text-[10px] font-semibold uppercase tracking-wider text-stone-500";
+
   // Template artwork preview path — for built-ins we know the static
   // path; for customs it's the uploaded URL.
   const previewSrc = (c: StandingsTemplateChoice): string =>
@@ -2291,197 +2405,478 @@ function StandingsTemplatesManager({
       ? STANDINGS_TEMPLATES_SRCS[c.builtinIndex] ?? ""
       : (c.src ?? "");
 
+  // Block definitions for the styling rail. afterN is on every
+  // template; the meta trio is only drawn when supportsMeta.
+  const allBlocks: [
+    StandingsLayoutEl,
+    string,
+    string,
+    boolean,
+    boolean,
+  ][] = [
+    ["afterN", "After-N count", "The big number above the table", true, true],
+    ["orgName", "Display / event name", "Sahityotsav org line", true, supportsMeta],
+    ["date", "Date", "Event date line", false, supportsMeta],
+    ["place", "Place / venue", "Venue line", false, supportsMeta],
+  ];
+  const blocks = allBlocks.filter(([, , , , show]) => show);
+
   return (
-    <section className="overflow-hidden rounded-xl border border-stone-200 bg-white">
-      <div className="flex items-baseline justify-between border-b border-stone-200 px-5 py-3">
-        <div>
-          <h2 className="text-sm font-semibold tracking-tight text-stone-900">
-            Standings poster templates
-          </h2>
-          <p className="mt-0.5 text-[11px] text-stone-500">
-            Pick one as the default; hide any you don't want; upload your
-            own — each snapshot can still override below.
+    <div className="space-y-3">
+      {(err || msg) && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="pointer-events-none fixed inset-x-0 bottom-4 z-50 flex justify-center px-4"
+        >
+          <p
+            className={`pointer-events-auto max-w-md rounded-lg px-4 py-2.5 text-sm font-medium shadow-lg ring-1 ${
+              err
+                ? "bg-red-600 text-white ring-red-900/20"
+                : "bg-emerald-600 text-white ring-emerald-900/20"
+            }`}
+          >
+            {err ? err : `✓ ${msg}`}
           </p>
         </div>
-        <span className="text-[11px] text-stone-400">
-          {choices.length} available
-        </span>
-      </div>
-      <div className="-mx-1 flex gap-3 overflow-x-auto px-4 py-3">
-        {choices.map((c) => {
-          const isDefault = c.key === defaultKey;
-          const isDisabled = disabledSet.has(c.key);
-          const isCustom = c.builtinIndex === null;
-          return (
-            <div
-              key={c.key}
-              className={`w-44 shrink-0 overflow-hidden rounded-lg border bg-white transition ${
-                isDefault
-                  ? "border-brand-600 ring-2 ring-brand-600/25"
-                  : "border-stone-200 hover:border-stone-300"
-              } ${isDisabled ? "opacity-40 grayscale" : ""}`}
-            >
-              <div className="relative aspect-[4/5] bg-stone-100">
-                {previewSrc(c) ? (
-                  // Static-image thumbnail (no Konva) keeps this strip
-                  // cheap even with many templates.
-                  // eslint-disable-next-line jsx-a11y/img-redundant-alt
-                  <img
-                    src={previewSrc(c)}
-                    alt={c.name}
-                    className="size-full object-cover"
-                  />
-                ) : (
-                  <div className="grid h-full place-items-center text-[10px] text-stone-400">
-                    No preview
-                  </div>
-                )}
-                {isDisabled && (
-                  <span className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded bg-stone-900/80 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-white">
-                    Hidden
+      )}
+
+      {/* Gallery — click a thumbnail to open it in the editor below */}
+      <section className="overflow-hidden rounded-xl border border-stone-200 bg-white">
+        <div className="flex items-baseline justify-between border-b border-stone-200 px-5 py-3">
+          <div>
+            <h2 className="text-sm font-semibold tracking-tight text-stone-900">
+              Standings poster templates
+              <span className="ml-1.5 text-[11px] font-normal text-stone-400">
+                {choices.length}
+              </span>
+            </h2>
+            <p className="mt-0.5 text-[11px] text-stone-500">
+              Click to edit · ★ default · 👁 hide from posters
+            </p>
+          </div>
+          <span className="text-[11px] text-stone-400">
+            Each snapshot can still override below
+          </span>
+        </div>
+        <div className="-mx-1 flex gap-3 overflow-x-auto px-4 py-3">
+          {choices.map((c) => {
+            const isDefault = c.key === defaultKey;
+            const isDisabled = disabledSet.has(c.key);
+            const isCustom = c.builtinIndex === null;
+            const active = c.key === editKey;
+            return (
+              <div
+                key={c.key}
+                className={`w-44 shrink-0 overflow-hidden rounded-lg border bg-white transition ${
+                  active
+                    ? "border-brand-600 ring-2 ring-brand-600/25"
+                    : "border-stone-200 hover:border-stone-300"
+                }`}
+              >
+                <button
+                  type="button"
+                  onClick={() => setEditKey(c.key)}
+                  aria-pressed={active}
+                  title={`Edit ${c.name}`}
+                  className={`relative block aspect-[4/5] w-full cursor-pointer bg-stone-100 ${
+                    isDisabled ? "opacity-40 grayscale" : ""
+                  }`}
+                >
+                  {previewSrc(c) ? (
+                    // Static-image thumbnail (no Konva) keeps this strip
+                    // cheap even with many templates.
+                    // eslint-disable-next-line jsx-a11y/img-redundant-alt
+                    <img
+                      src={previewSrc(c)}
+                      alt={c.name}
+                      className="size-full object-cover"
+                    />
+                  ) : (
+                    <div className="grid h-full place-items-center text-[10px] text-stone-400">
+                      No preview
+                    </div>
+                  )}
+                  {isDisabled && (
+                    <span className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded bg-stone-900/80 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-white">
+                      Hidden
+                    </span>
+                  )}
+                </button>
+                <div className="flex items-center gap-1 px-2 py-1.5">
+                  <span className="min-w-0 flex-1 truncate text-[11px] font-medium text-stone-700">
+                    {c.name}
                   </span>
-                )}
+                  <Form method="post" className="contents">
+                    <input
+                      type="hidden"
+                      name="intent"
+                      value="toggle_standings_template_disabled"
+                    />
+                    <input type="hidden" name="template_id" value={c.key} />
+                    <button
+                      type="submit"
+                      disabled={busy}
+                      title={isDisabled ? "Enable" : "Hide"}
+                      aria-label={isDisabled ? "Enable" : "Hide"}
+                      className="grid size-6 shrink-0 place-items-center rounded text-stone-400 transition hover:bg-stone-100 hover:text-stone-700 disabled:opacity-50"
+                    >
+                      {isDisabled ? (
+                        <EyeOff className="size-3.5" />
+                      ) : (
+                        <Eye className="size-3.5" />
+                      )}
+                    </button>
+                  </Form>
+                  {isDefault ? (
+                    <span
+                      title="Public default"
+                      className="inline-flex shrink-0 items-center gap-1 text-[10px] font-semibold text-brand-700"
+                    >
+                      <Star className="size-3 fill-brand-600 text-brand-600" />
+                      Default
+                    </span>
+                  ) : (
+                    <Form method="post" className="contents">
+                      <input
+                        type="hidden"
+                        name="intent"
+                        value="set_default_standings_template"
+                      />
+                      <input
+                        type="hidden"
+                        name="standings_template"
+                        value={builtinPosOf(c.key)}
+                      />
+                      <input
+                        type="hidden"
+                        name="standings_template_id"
+                        value={c.builtinIndex === null ? c.key : ""}
+                      />
+                      <button
+                        type="submit"
+                        disabled={busy}
+                        title="Set as default"
+                        className="grid size-6 shrink-0 place-items-center rounded text-stone-400 transition hover:bg-stone-100 hover:text-brand-700 disabled:opacity-50"
+                      >
+                        <Star className="size-3.5" />
+                      </button>
+                    </Form>
+                  )}
+                  {isCustom && (
+                    <Form method="post" className="contents">
+                      <input
+                        type="hidden"
+                        name="intent"
+                        value="delete_standings_template"
+                      />
+                      <input
+                        type="hidden"
+                        name="template_id"
+                        value={c.key}
+                      />
+                      <button
+                        type="submit"
+                        title="Delete template"
+                        aria-label="Delete template"
+                        onClick={(e) => {
+                          if (!confirm(`Delete "${c.name}"?`))
+                            e.preventDefault();
+                        }}
+                        className="grid size-6 shrink-0 place-items-center rounded text-stone-400 transition hover:bg-red-50 hover:text-red-700"
+                      >
+                        <X className="size-3.5" />
+                      </button>
+                    </Form>
+                  )}
+                </div>
               </div>
-              <div className="flex items-center gap-1 px-2 py-1.5">
-                <span className="min-w-0 flex-1 truncate text-[11px] font-medium text-stone-700">
-                  {c.name}
+            );
+          })}
+
+          {/* Upload tile */}
+          <Form
+            method="post"
+            encType="multipart/form-data"
+            className="flex w-44 shrink-0 flex-col gap-1.5 rounded-lg border border-dashed border-stone-300 bg-stone-50/60 p-2"
+          >
+            <input
+              type="hidden"
+              name="intent"
+              value="upload_standings_template"
+            />
+            <div className="flex items-center gap-1.5 text-[11px] font-semibold text-stone-600">
+              <Upload className="size-3.5 text-stone-400" />
+              Add template
+            </div>
+            <input
+              name="template_name"
+              required
+              placeholder="Name"
+              className="w-full rounded-md border border-stone-300 bg-white px-2 py-1 text-xs text-stone-900 placeholder:text-stone-400 transition focus:outline-none focus:border-brand-600 focus:ring-2 focus:ring-brand-600/25"
+            />
+            <label className="flex cursor-pointer items-center gap-1.5 rounded-md border border-stone-300 bg-white px-2 py-1 text-xs font-medium text-stone-700 transition hover:bg-stone-50">
+              <span className="min-w-0 truncate">
+                {tplFileName || "Choose image…"}
+              </span>
+              <input
+                type="file"
+                name="template_file"
+                accept="image/png,image/jpeg,image/webp"
+                required
+                className="sr-only"
+                onChange={(e) =>
+                  setTplFileName(e.target.files?.[0]?.name ?? "")
+                }
+              />
+            </label>
+            <button
+              type="submit"
+              disabled={busy}
+              className="rounded-md bg-stone-900 px-2 py-1 text-xs font-medium text-white hover:bg-stone-800 disabled:opacity-50"
+            >
+              {busy ? "Uploading…" : "Upload"}
+            </button>
+            <p className="text-[10px] leading-snug text-stone-400">
+              PNG/JPG/WebP · 4:5 · &lt;4 MB
+            </p>
+          </Form>
+        </div>
+      </section>
+
+      {/* Editor — poster preview on the left, block controls on the
+          right. Drag any block directly on the preview. */}
+      {cur && (
+        <section className="rounded-xl border border-stone-200 bg-white p-4">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-stone-100 pb-2.5">
+            <p className="truncate text-sm font-semibold text-stone-900">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-stone-400">
+                Editing{" "}
+              </span>
+              {cur.name}
+            </p>
+            <div className="flex flex-wrap items-center gap-2">
+              {isEditingDefault ? (
+                <span className="inline-flex items-center gap-1.5 rounded-md bg-brand-50 px-3 py-1.5 text-xs font-semibold text-brand-700">
+                  <Star className="size-3.5 fill-brand-600 text-brand-600" />
+                  Public default
                 </span>
+              ) : (
                 <Form method="post" className="contents">
                   <input
                     type="hidden"
                     name="intent"
-                    value="toggle_standings_template_disabled"
+                    value="set_default_standings_template"
                   />
-                  <input type="hidden" name="template_id" value={c.key} />
+                  <input
+                    type="hidden"
+                    name="standings_template"
+                    value={builtinPosOf(cur.key)}
+                  />
+                  <input
+                    type="hidden"
+                    name="standings_template_id"
+                    value={cur.builtinIndex === null ? cur.key : ""}
+                  />
                   <button
                     type="submit"
                     disabled={busy}
-                    title={isDisabled ? "Enable" : "Hide"}
-                    aria-label={isDisabled ? "Enable" : "Hide"}
-                    className="grid size-6 shrink-0 place-items-center rounded text-stone-400 transition hover:bg-stone-100 hover:text-stone-700 disabled:opacity-50"
+                    className="inline-flex items-center gap-1.5 rounded-md border border-stone-300 px-3 py-1.5 text-xs font-medium text-stone-700 transition hover:bg-stone-50 disabled:opacity-50"
                   >
-                    {isDisabled ? (
-                      <EyeOff className="size-3.5" />
-                    ) : (
-                      <Eye className="size-3.5" />
-                    )}
+                    <Star className="size-3.5" />
+                    Set as default
                   </button>
                 </Form>
-                {isDefault ? (
-                  <span
-                    title="Public default"
-                    className="inline-flex shrink-0 items-center gap-1 text-[10px] font-semibold text-brand-700"
-                  >
-                    <Star className="size-3 fill-brand-600 text-brand-600" />
-                    Default
-                  </span>
-                ) : (
-                  <Form method="post" className="contents">
-                    <input
-                      type="hidden"
-                      name="intent"
-                      value="set_default_standings_template"
-                    />
-                    <input
-                      type="hidden"
-                      name="standings_template"
-                      value={builtinPosOf(c.key)}
-                    />
-                    <input
-                      type="hidden"
-                      name="standings_template_id"
-                      value={c.builtinIndex === null ? c.key : ""}
-                    />
-                    <button
-                      type="submit"
-                      disabled={busy}
-                      title="Set as default"
-                      className="grid size-6 shrink-0 place-items-center rounded text-stone-400 transition hover:bg-stone-100 hover:text-brand-700 disabled:opacity-50"
-                    >
-                      <Star className="size-3.5" />
-                    </button>
-                  </Form>
-                )}
-                {isCustom && (
-                  <Form method="post" className="contents">
-                    <input
-                      type="hidden"
-                      name="intent"
-                      value="delete_standings_template"
-                    />
-                    <input
-                      type="hidden"
-                      name="template_id"
-                      value={c.key}
-                    />
-                    <button
-                      type="submit"
-                      title="Delete template"
-                      aria-label="Delete template"
-                      onClick={(e) => {
-                        if (!confirm(`Delete "${c.name}"?`))
-                          e.preventDefault();
-                      }}
-                      className="grid size-6 shrink-0 place-items-center rounded text-stone-400 transition hover:bg-red-50 hover:text-red-700"
-                    >
-                      <X className="size-3.5" />
-                    </button>
-                  </Form>
-                )}
-              </div>
+              )}
+              <button
+                type="button"
+                onClick={resetTpl}
+                className="rounded-md border border-stone-300 px-3 py-1.5 text-xs font-medium text-stone-700 transition hover:bg-stone-50"
+              >
+                Reset
+              </button>
+              <Form method="post" className="contents">
+                <input
+                  type="hidden"
+                  name="intent"
+                  value="save_standings_layout"
+                />
+                <input
+                  type="hidden"
+                  name="standings_layout"
+                  value={JSON.stringify(layoutMap)}
+                />
+                <button
+                  type="submit"
+                  disabled={busy}
+                  className="rounded-md bg-stone-900 px-4 py-1.5 text-xs font-semibold text-white hover:bg-stone-800 disabled:opacity-50"
+                >
+                  {busy ? "Saving…" : "Save layout"}
+                </button>
+              </Form>
             </div>
-          );
-        })}
-
-        {/* Upload tile */}
-        <Form
-          method="post"
-          encType="multipart/form-data"
-          className="flex w-44 shrink-0 flex-col gap-1.5 rounded-lg border border-dashed border-stone-300 bg-stone-50/60 p-2"
-        >
-          <input
-            type="hidden"
-            name="intent"
-            value="upload_standings_template"
-          />
-          <div className="flex items-center gap-1.5 text-[11px] font-semibold text-stone-600">
-            <Upload className="size-3.5 text-stone-400" />
-            Add template
           </div>
-          <input
-            name="template_name"
-            required
-            placeholder="Name"
-            className="w-full rounded-md border border-stone-300 bg-white px-2 py-1 text-xs text-stone-900 placeholder:text-stone-400 transition focus:outline-none focus:border-brand-600 focus:ring-2 focus:ring-brand-600/25"
-          />
-          <label className="flex cursor-pointer items-center gap-1.5 rounded-md border border-stone-300 bg-white px-2 py-1 text-xs font-medium text-stone-700 transition hover:bg-stone-50">
-            <span className="min-w-0 truncate">
-              {tplFileName || "Choose image…"}
-            </span>
-            <input
-              type="file"
-              name="template_file"
-              accept="image/png,image/jpeg,image/webp"
-              required
-              className="sr-only"
-              onChange={(e) =>
-                setTplFileName(e.target.files?.[0]?.name ?? "")
-              }
-            />
-          </label>
-          <button
-            type="submit"
-            disabled={busy}
-            className="rounded-md bg-stone-900 px-2 py-1 text-xs font-medium text-white hover:bg-stone-800 disabled:opacity-50"
-          >
-            {busy ? "Uploading…" : "Upload"}
-          </button>
-          <p className="text-[10px] leading-snug text-stone-400">
-            PNG/JPG/WebP · 4:5 · &lt;4 MB
-          </p>
-        </Form>
-      </div>
-    </section>
+
+          <div className="mt-3 grid gap-4 lg:grid-cols-[minmax(0,400px)_minmax(0,1fr)]">
+            <div className="lg:sticky lg:top-4 lg:self-start">
+              <div className="overflow-hidden rounded-xl border border-stone-200 bg-stone-100 p-2">
+                <StandingsPosterCanvas
+                  key={`edit-${tplKey}`}
+                  data={{ afterN: 12, rows: STANDINGS_STUDIO_SAMPLE }}
+                  templateIndex={cur.builtinIndex ?? 0}
+                  customSrc={cur.src ?? undefined}
+                  meta={{
+                    orgName: orgName || "SSF Pantharangadi Sector",
+                    posterDate: posterDate ?? undefined,
+                    posterPlace: posterPlace ?? undefined,
+                  }}
+                  fontFamily={posterFontStack(fontEn, fontMl)}
+                  standingsOverrides={ov}
+                  editable
+                  onMove={moveEl}
+                />
+              </div>
+              <p className="mt-1.5 text-center text-[11px] text-stone-400">
+                Drag any block directly on the preview
+              </p>
+            </div>
+
+            <div className="space-y-2">
+              <span className={lbl}>Blocks · position, size &amp; style</span>
+              {!supportsMeta && (
+                <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] leading-snug text-amber-800">
+                  This legacy template has the org name, date and place
+                  baked into the artwork — only the after-N number is
+                  editable here. Upload a custom template or switch to
+                  the general templates to position those blocks.
+                </p>
+              )}
+              {blocks.map(([el, label, desc, defBold]) => {
+                const cur = ov[el];
+                const pct = Math.round((cur?.s ?? 1) * 100);
+                const colorVal = cur?.color ?? "#111111";
+                const hasColor = !!cur?.color;
+                const isBold = cur?.bold ?? defBold;
+                const isItalic = !!cur?.italic;
+                return (
+                  <div
+                    key={el}
+                    className="flex items-center justify-between gap-3 rounded-lg border border-stone-200 px-3 py-2"
+                  >
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-medium text-stone-800">
+                        {label}
+                      </p>
+                      <p className="truncate text-[11px] text-stone-400">
+                        {desc}
+                      </p>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-1.5">
+                      <label
+                        title={
+                          hasColor
+                            ? `${label} text color`
+                            : `${label} · using template color`
+                        }
+                        className="relative grid size-7 cursor-pointer place-items-center rounded-md border border-stone-300"
+                      >
+                        <span
+                          className="size-4 rounded-sm ring-1 ring-inset ring-black/10"
+                          style={{ backgroundColor: colorVal }}
+                        />
+                        <input
+                          type="color"
+                          value={colorVal}
+                          onChange={(e) => colorEl(el, e.target.value)}
+                          className="absolute inset-0 cursor-pointer opacity-0"
+                        />
+                      </label>
+                      <button
+                        type="button"
+                        aria-pressed={isBold}
+                        onClick={() => toggleBold(el, defBold)}
+                        title="Bold"
+                        className={`grid size-7 place-items-center rounded-md border text-sm font-bold transition ${
+                          isBold
+                            ? "border-brand-600 bg-brand-50 text-brand-700"
+                            : "border-stone-300 text-stone-600 hover:bg-stone-50"
+                        }`}
+                      >
+                        B
+                      </button>
+                      <button
+                        type="button"
+                        aria-pressed={isItalic}
+                        onClick={() => toggleItalic(el)}
+                        title="Italic"
+                        className={`grid size-7 place-items-center rounded-md border font-serif text-sm italic transition ${
+                          isItalic
+                            ? "border-brand-600 bg-brand-50 text-brand-700"
+                            : "border-stone-300 text-stone-600 hover:bg-stone-50"
+                        }`}
+                      >
+                        I
+                      </button>
+                      {hasColor && (
+                        <button
+                          type="button"
+                          onClick={() => autoColor(el)}
+                          title="Reset to template color"
+                          aria-label={`Reset ${label} to template color`}
+                          className="grid size-7 place-items-center rounded-md border border-stone-300 text-stone-500 transition hover:bg-stone-50"
+                        >
+                          <svg
+                            viewBox="0 0 24 24"
+                            className="size-3.5"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="2.5"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          >
+                            <path d="M3 12a9 9 0 1 0 3-6.7" />
+                            <path d="M3 4v5h5" />
+                          </svg>
+                        </button>
+                      )}
+                      <span className="mx-0.5 h-6 w-px bg-stone-200" />
+                      <span
+                        className={`w-10 text-right text-xs tabular-nums ${
+                          pct === 100
+                            ? "text-stone-400"
+                            : "font-semibold text-brand-700"
+                        }`}
+                      >
+                        {pct}%
+                      </span>
+                      <div className="flex items-center overflow-hidden rounded-md border border-stone-300">
+                        <button
+                          type="button"
+                          aria-label={`Shrink ${label}`}
+                          onClick={() => sizeEl(el, -0.05)}
+                          className="grid size-7 place-items-center text-stone-600 transition hover:bg-stone-100"
+                        >
+                          −
+                        </button>
+                        <span className="h-7 w-px bg-stone-300" />
+                        <button
+                          type="button"
+                          aria-label={`Enlarge ${label}`}
+                          onClick={() => sizeEl(el, 0.05)}
+                          className="grid size-7 place-items-center text-stone-600 transition hover:bg-stone-100"
+                        >
+                          ＋
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </section>
+      )}
+    </div>
   );
 }
 
@@ -2527,6 +2922,7 @@ function StandingsLeaderboard({
   subdomain,
   customStandingsTemplates,
   disabledStandingsTemplates,
+  standingsLayout,
   defaultTemplate,
   defaultTemplateId,
   orgName,
@@ -2539,6 +2935,7 @@ function StandingsLeaderboard({
   subdomain: string;
   customStandingsTemplates: CustomTpl[];
   disabledStandingsTemplates: string[];
+  standingsLayout: PosterLayoutMap | null;
   defaultTemplate: number;
   defaultTemplateId: string | null;
   orgName: string;
@@ -2575,7 +2972,6 @@ function StandingsLeaderboard({
   );
   const [selIdx, setSelIdx] = useState(0);
   const [query, setQuery] = useState("");
-  const [posterOpen, setPosterOpen] = useState(false);
 
   if (sorted.length === 0) {
     return (
@@ -2605,8 +3001,20 @@ function StandingsLeaderboard({
   const pick = (i: number) => {
     setSelIdx(i);
     setQuery("");
-    setPosterOpen(false);
   };
+
+  // Template chosen for THIS snapshot — used by the persistent
+  // side-by-side poster preview on the right column.
+  const chosen =
+    pickStandingsTemplate(
+      templateChoices,
+      sel.template ?? defaultTemplate,
+      sel.templateId ?? defaultTemplateId,
+      0,
+    ) ?? templateChoices[0];
+  const chosenOverrides = chosen
+    ? standingsLayout?.[chosen.key]
+    : undefined;
 
   return (
     <section className="overflow-hidden rounded-xl border border-stone-200 bg-white">
@@ -2653,193 +3061,133 @@ function StandingsLeaderboard({
         })}
       </div>
 
-      {/* Toolbar: context + search */}
-      <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-3">
-        <p className="text-xs text-stone-500">
-          After{" "}
-          <span className="font-semibold tabular-nums text-stone-800">
-            {sel.afterN}
-          </span>{" "}
-          result{sel.afterN === 1 ? "" : "s"} ·{" "}
-          <span className="tabular-nums">{rows.length}</span> teams
-        </p>
-        <div className="relative">
-          <Search
-            className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-stone-400"
-            aria-hidden
-          />
-          <input
-            type="text"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Find a team…"
-            aria-label="Find a team"
-            className="w-52 rounded-full border border-stone-300 bg-white py-1.5 pl-8 pr-7 text-xs text-stone-900 placeholder:text-stone-400 transition focus:border-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-600/25"
-          />
-          {query && (
-            <button
-              type="button"
-              onClick={() => setQuery("")}
-              aria-label="Clear search"
-              className="absolute right-2 top-1/2 grid size-4 -translate-y-1/2 place-items-center rounded-full text-stone-400 transition hover:bg-stone-100 hover:text-stone-600"
-            >
-              <X className="size-3" />
-            </button>
-          )}
-        </div>
-      </div>
-
-      {/* Leaderboard */}
-      <div className="border-t border-stone-100">
-        <div className="flex items-center gap-3 px-5 py-2 text-[10px] font-semibold uppercase tracking-wider text-stone-400">
-          <span className="w-9">Rank</span>
-          <span className="flex-1">Team</span>
-          <span className="w-20 text-right">Points</span>
-        </div>
-        {visible.length === 0 ? (
-          <p className="px-5 py-10 text-center text-sm text-stone-500">
-            No team matches “{query.trim()}”.
-          </p>
-        ) : (
-          <ol className="divide-y divide-stone-100">
-            {visible.map((r) => {
-              const tier = r.rank <= 3 ? PODIUM_TIER[r.rank - 1] : null;
-              const pct = Math.max(
-                4,
-                Math.round((r.points / maxPoints) * 100),
-              );
-              return (
-                <li
-                  key={`${r.rank}-${r.team_name}`}
-                  className={`flex items-center gap-3 px-5 py-2.5 transition ${
-                    tier ? tier.soft : "hover:bg-stone-50"
-                  }`}
-                >
-                  <span className="w-9">
-                    {tier ? (
-                      <span
-                        className="grid size-7 place-items-center rounded-full text-[11px] font-bold text-white"
-                        style={{ backgroundColor: tier.bg }}
-                      >
-                        {r.rank}
-                      </span>
-                    ) : (
-                      <span className="grid size-7 place-items-center text-sm font-semibold tabular-nums text-stone-400">
-                        {r.rank}
-                      </span>
-                    )}
-                  </span>
-                  <div className="min-w-0 flex-1">
-                    <p
-                      className={`truncate text-sm ${
-                        tier
-                          ? "font-semibold text-stone-900"
-                          : "font-medium text-stone-700"
-                      }`}
-                    >
-                      {highlightMatch(r.team_name, q)}
-                    </p>
-                    <div className="mt-1.5 h-1 w-full overflow-hidden rounded-full bg-stone-200/70">
-                      <div
-                        className="h-full rounded-full"
-                        style={{
-                          width: `${pct}%`,
-                          backgroundColor: tier ? tier.bg : "#A8A29E",
-                        }}
-                      />
-                    </div>
-                  </div>
-                  <span className="w-20 shrink-0 text-right">
-                    <span
-                      className={`tabular-nums ${
-                        tier
-                          ? "text-base font-bold text-stone-900"
-                          : "text-sm font-semibold text-stone-700"
-                      }`}
-                    >
-                      {r.points}
-                    </span>
-                    <span className="ml-1 text-[10px] font-semibold uppercase tracking-wide text-stone-400">
-                      pts
-                    </span>
-                  </span>
-                </li>
-              );
-            })}
-          </ol>
-        )}
-      </div>
-
-      {/* Footer: per-checkpoint template, poster and delete */}
-      <div className="border-t border-stone-200 bg-stone-50/60 px-5 py-3">
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-3">
-          <div className="flex flex-wrap items-center gap-1.5">
-            <span className="mr-1 text-[11px] font-semibold uppercase tracking-wider text-stone-500">
-              Template
-            </span>
-            {templateChoices.map((c) => {
-              const active =
-                sel.templateId
-                  ? c.key === sel.templateId
-                  : c.builtinIndex !== null &&
-                    c.builtinIndex === sel.template;
-              return (
-                <Form method="post" key={c.key}>
-                  <input
-                    type="hidden"
-                    name="intent"
-                    value="set_snapshot_template"
-                  />
-                  <input type="hidden" name="after_n" value={sel.afterN} />
-                  <input
-                    type="hidden"
-                    name="template"
-                    value={c.builtinIndex ?? 0}
-                  />
-                  <input
-                    type="hidden"
-                    name="template_id"
-                    value={c.builtinIndex === null ? c.key : ""}
-                  />
-                  <button
-                    type="submit"
-                    disabled={busy}
-                    className={`rounded-md border px-2.5 py-1 text-xs font-medium transition disabled:opacity-50 ${
-                      active
-                        ? "border-stone-900 bg-stone-900 text-white"
-                        : "border-stone-300 bg-white text-stone-700 hover:bg-stone-100"
-                    }`}
-                  >
-                    {active ? "✓ " : ""}
-                    {c.name}
-                  </button>
-                </Form>
-              );
-            })}
-          </div>
-
-          <div className="ml-auto flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setPosterOpen((v) => !v)}
-              aria-expanded={posterOpen}
-              className="inline-flex items-center gap-1.5 rounded-md border border-stone-300 bg-white px-3 py-1.5 text-xs font-medium text-stone-700 transition hover:bg-stone-100"
-            >
-              <Images className="size-3.5" aria-hidden />
-              {posterOpen ? "Hide poster" : "Poster & share"}
-              <ChevronRight
-                className={`size-3.5 text-stone-400 transition-transform ${
-                  posterOpen ? "rotate-90" : ""
-                }`}
+      {/* Laptop-first 2-column body: leaderboard on the left, persistent
+          poster preview + per-checkpoint template strip on the right.
+          On narrow screens it collapses to a single column. */}
+      <div className="grid lg:grid-cols-12">
+        {/* LEFT — toolbar + leaderboard list + delete */}
+        <div className="lg:col-span-7 lg:border-r lg:border-stone-100">
+          <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-3">
+            <p className="text-xs text-stone-500">
+              After{" "}
+              <span className="font-semibold tabular-nums text-stone-800">
+                {sel.afterN}
+              </span>{" "}
+              result{sel.afterN === 1 ? "" : "s"} ·{" "}
+              <span className="tabular-nums">{rows.length}</span> teams
+            </p>
+            <div className="relative">
+              <Search
+                className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-stone-400"
                 aria-hidden
               />
-            </button>
-            <Form method="post">
               <input
-                type="hidden"
-                name="intent"
-                value="delete_standings"
+                type="text"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Find a team…"
+                aria-label="Find a team"
+                className="w-52 rounded-full border border-stone-300 bg-white py-1.5 pl-8 pr-7 text-xs text-stone-900 placeholder:text-stone-400 transition focus:border-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-600/25"
               />
+              {query && (
+                <button
+                  type="button"
+                  onClick={() => setQuery("")}
+                  aria-label="Clear search"
+                  className="absolute right-2 top-1/2 grid size-4 -translate-y-1/2 place-items-center rounded-full text-stone-400 transition hover:bg-stone-100 hover:text-stone-600"
+                >
+                  <X className="size-3" />
+                </button>
+              )}
+            </div>
+          </div>
+
+          <div className="border-t border-stone-100">
+            <div className="flex items-center gap-3 px-5 py-2 text-[10px] font-semibold uppercase tracking-wider text-stone-400">
+              <span className="w-9">Rank</span>
+              <span className="flex-1">Team</span>
+              <span className="w-20 text-right">Points</span>
+            </div>
+            {visible.length === 0 ? (
+              <p className="px-5 py-10 text-center text-sm text-stone-500">
+                No team matches “{query.trim()}”.
+              </p>
+            ) : (
+              <ol className="divide-y divide-stone-100">
+                {visible.map((r) => {
+                  const tier =
+                    r.rank <= 3 ? PODIUM_TIER[r.rank - 1] : null;
+                  const pct = Math.max(
+                    4,
+                    Math.round((r.points / maxPoints) * 100),
+                  );
+                  return (
+                    <li
+                      key={`${r.rank}-${r.team_name}`}
+                      className={`flex items-center gap-3 px-5 py-2.5 transition ${
+                        tier ? tier.soft : "hover:bg-stone-50"
+                      }`}
+                    >
+                      <span className="w-9">
+                        {tier ? (
+                          <span
+                            className="grid size-7 place-items-center rounded-full text-[11px] font-bold text-white"
+                            style={{ backgroundColor: tier.bg }}
+                          >
+                            {r.rank}
+                          </span>
+                        ) : (
+                          <span className="grid size-7 place-items-center text-sm font-semibold tabular-nums text-stone-400">
+                            {r.rank}
+                          </span>
+                        )}
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <p
+                          className={`truncate text-sm ${
+                            tier
+                              ? "font-semibold text-stone-900"
+                              : "font-medium text-stone-700"
+                          }`}
+                        >
+                          {highlightMatch(r.team_name, q)}
+                        </p>
+                        <div className="mt-1.5 h-1 w-full overflow-hidden rounded-full bg-stone-200/70">
+                          <div
+                            className="h-full rounded-full"
+                            style={{
+                              width: `${pct}%`,
+                              backgroundColor: tier ? tier.bg : "#A8A29E",
+                            }}
+                          />
+                        </div>
+                      </div>
+                      <span className="w-20 shrink-0 text-right">
+                        <span
+                          className={`tabular-nums ${
+                            tier
+                              ? "text-base font-bold text-stone-900"
+                              : "text-sm font-semibold text-stone-700"
+                          }`}
+                        >
+                          {r.points}
+                        </span>
+                        <span className="ml-1 text-[10px] font-semibold uppercase tracking-wide text-stone-400">
+                          pts
+                        </span>
+                      </span>
+                    </li>
+                  );
+                })}
+              </ol>
+            )}
+          </div>
+
+          {/* Left-column footer: snapshot-level destructive action lives
+              with the data it deletes. */}
+          <div className="flex items-center justify-end border-t border-stone-100 bg-stone-50/60 px-5 py-3">
+            <Form method="post">
+              <input type="hidden" name="intent" value="delete_standings" />
               <input type="hidden" name="after_n" value={sel.afterN} />
               <button
                 type="submit"
@@ -2855,37 +3203,95 @@ function StandingsLeaderboard({
                 className="inline-flex items-center gap-1.5 rounded-md border border-red-200 bg-white px-3 py-1.5 text-xs font-medium text-red-600 transition hover:bg-red-50 disabled:opacity-50"
               >
                 <X className="size-3.5" aria-hidden />
-                Delete
+                Delete snapshot
               </button>
             </Form>
           </div>
         </div>
 
-        {posterOpen && (() => {
-          const chosen =
-            pickStandingsTemplate(
-              templateChoices,
-              sel.template ?? defaultTemplate,
-              sel.templateId ?? defaultTemplateId,
-              0,
-            ) ?? templateChoices[0];
-          return (
-            <div className="mt-1 overflow-hidden rounded-lg border border-stone-200 bg-white">
+        {/* RIGHT — sticky poster + per-snapshot template strip */}
+        <aside className="border-t border-stone-100 lg:col-span-5 lg:border-t-0">
+          <div className="lg:sticky lg:top-4 lg:max-h-[calc(100vh-2rem)] lg:overflow-y-auto">
+            <div className="flex items-baseline justify-between gap-2 border-b border-stone-100 bg-stone-50/60 px-4 py-2.5">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-stone-500">
+                Poster preview
+              </span>
+              <span className="text-[11px] text-stone-400">
+                After {sel.afterN}
+              </span>
+            </div>
+
+            {chosen ? (
               <StandingsShareCard
-                key={`poster-${sel.afterN}-${chosen?.key}`}
+                key={`poster-${sel.afterN}-${chosen.key}`}
                 snapshot={sel}
-                templateIndex={chosen?.builtinIndex ?? 0}
-                customSrc={chosen?.src ?? undefined}
+                templateIndex={chosen.builtinIndex ?? 0}
+                customSrc={chosen.src ?? undefined}
                 meta={{
                   orgName,
                   posterDate: posterDate ?? undefined,
                   posterPlace: posterPlace ?? undefined,
                 }}
                 fontFamily={posterFontStack(fontEn, fontMl)}
+                standingsOverrides={chosenOverrides}
               />
+            ) : (
+              <p className="px-5 py-10 text-center text-sm text-stone-500">
+                No standings template available.
+              </p>
+            )}
+
+            <div className="border-t border-stone-100 bg-stone-50/60 px-4 py-3">
+              <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-stone-500">
+                Template for this snapshot
+              </p>
+              <div className="flex flex-wrap gap-1.5">
+                {templateChoices.map((c) => {
+                  const active = sel.templateId
+                    ? c.key === sel.templateId
+                    : c.builtinIndex !== null &&
+                      c.builtinIndex === sel.template;
+                  return (
+                    <Form method="post" key={c.key}>
+                      <input
+                        type="hidden"
+                        name="intent"
+                        value="set_snapshot_template"
+                      />
+                      <input
+                        type="hidden"
+                        name="after_n"
+                        value={sel.afterN}
+                      />
+                      <input
+                        type="hidden"
+                        name="template"
+                        value={c.builtinIndex ?? 0}
+                      />
+                      <input
+                        type="hidden"
+                        name="template_id"
+                        value={c.builtinIndex === null ? c.key : ""}
+                      />
+                      <button
+                        type="submit"
+                        disabled={busy}
+                        className={`rounded-md border px-2.5 py-1 text-xs font-medium transition disabled:opacity-50 ${
+                          active
+                            ? "border-stone-900 bg-stone-900 text-white"
+                            : "border-stone-300 bg-white text-stone-700 hover:bg-stone-100"
+                        }`}
+                      >
+                        {active ? "✓ " : ""}
+                        {c.name}
+                      </button>
+                    </Form>
+                  );
+                })}
+              </div>
             </div>
-          );
-        })()}
+          </div>
+        </aside>
       </div>
     </section>
   );
@@ -2897,6 +3303,7 @@ function StandingsView({
   defaultTemplateId,
   customStandingsTemplates,
   disabledStandingsTemplates,
+  standingsLayout,
   subdomain,
   orgName,
   posterDate,
@@ -2910,6 +3317,7 @@ function StandingsView({
   defaultTemplateId: string | null;
   customStandingsTemplates: CustomTpl[];
   disabledStandingsTemplates: string[];
+  standingsLayout: PosterLayoutMap | null;
   subdomain: string;
   orgName: string;
   posterDate: string | null;
@@ -2952,7 +3360,7 @@ function StandingsView({
   };
 
   return (
-    <div className="space-y-6 max-w-3xl">
+    <div className="space-y-6">
       {/* Final standings poster — a finished image with real data,
           uploaded as-is (no template). It leads the public chat with
           a celebration the moment it's published. */}
@@ -3138,21 +3546,30 @@ function StandingsView({
         </Form>
       </section>
 
-      <StandingsTemplatesManager
+      {/* Drag-edit studio: gallery + live preview + per-block size/
+          colour/B/I controls. Saving persists into events.standings_layout. */}
+      <StandingsTemplateStudio
         subdomain={subdomain}
         customStandingsTemplates={customStandingsTemplates}
         disabledStandingsTemplates={disabledStandingsTemplates}
         defaultTemplate={defaultTemplate}
         defaultTemplateId={defaultTemplateId}
+        standingsLayout={standingsLayout}
+        orgName={orgName}
+        posterDate={posterDate}
+        posterPlace={posterPlace}
+        fontEn={fontEn}
+        fontMl={fontMl}
       />
 
-      {/* Interactive leaderboard — checkpoint switcher, search, podium,
-          and an on-demand poster, in one panel. */}
+      {/* Laptop-first split: leaderboard left, on-demand poster right
+          (collapses to a single column on small screens). */}
       <StandingsLeaderboard
         snapshots={snapshots}
         subdomain={subdomain}
         customStandingsTemplates={customStandingsTemplates}
         disabledStandingsTemplates={disabledStandingsTemplates}
+        standingsLayout={standingsLayout}
         defaultTemplate={defaultTemplate}
         defaultTemplateId={defaultTemplateId}
         orgName={orgName}

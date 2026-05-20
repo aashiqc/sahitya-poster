@@ -427,6 +427,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
     standings_template_id?: string | null;
     custom_standings_templates?: CustomTpl[] | null;
     disabled_standings_templates?: string[] | null;
+    standings_layout?: PosterLayoutMap | null;
     poster_lang?: string | null;
     poster_name?: string | null;
     poster_font_en?: string | null;
@@ -456,6 +457,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
     )
       ? evRel.disabled_standings_templates
       : [],
+    standingsLayout: evRel.standings_layout ?? null,
     lang: evRel.poster_lang === "ml" ? "ml" : "en",
     fontEn: evRel.poster_font_en ?? null,
     fontMl: evRel.poster_font_ml ?? null,
@@ -780,6 +782,7 @@ type PosterMeta = {
   standingsDefaultTemplateId: string | null;
   customStandingsTemplates: CustomTpl[];
   disabledStandingsTemplates: string[];
+  standingsLayout: PosterLayoutMap | null;
   lang: PosterLang;
   fontEn: string | null;
   fontMl: string | null;

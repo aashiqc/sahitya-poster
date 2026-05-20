@@ -46,7 +46,10 @@ export type LayoutEl =
   | "level"
   | "program"
   | "winners"
-  | "resultNo";
+  | "resultNo"
+  // standings-only — coexists in the same draggable union so the
+  // standings poster can reuse DraggableEl / ElOverride / merge helpers
+  | "afterN";
 /** Tolerates pre-split keys still present in layouts saved before the
  *  blocks became independent: "content" (level+program) and "meta"
  *  (org name + date + place). */
@@ -68,12 +71,12 @@ export type PosterLayoutMap = Record<string, TemplateOverride>;
 
 /** Resolve a text element's effective fill — the admin's per-element
  *  color override, else the template's baked tone. */
-function ovColor(ov: ElOverride | undefined, fallback: string): string {
+export function ovColor(ov: ElOverride | undefined, fallback: string): string {
   return ov?.color || fallback;
 }
 /** Konva fontStyle from the element's bold/italic overrides. `defBold`
  *  is the element's natural weight when the admin hasn't set one. */
-function ovFontStyle(ov: ElOverride | undefined, defBold: boolean): string {
+export function ovFontStyle(ov: ElOverride | undefined, defBold: boolean): string {
   const bold = ov?.bold ?? defBold;
   const italic = ov?.italic ?? false;
   return (
@@ -124,7 +127,7 @@ function shiftY(
  *  override: the tenant's value wins per property, the default fills
  *  every gap. Legacy `content`/`meta`-only layouts are unaffected
  *  because they're resolved into `resolved` before this runs. */
-function withDefaultOv(
+export function withDefaultOv(
   def: ElOverride | undefined,
   resolved: ElOverride | undefined,
 ): ElOverride | undefined {
@@ -639,7 +642,7 @@ function formatResultNo(s: string): string {
 // Draggable, scalable wrapper for a poster element. Position via x/y,
 // SIZE via Group scale (so all child text scales together). In editable
 // mode the group is draggable and reports its new native coords.
-function DraggableEl({
+export function DraggableEl({
   el,
   baseX,
   baseY,

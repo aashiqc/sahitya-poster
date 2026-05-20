@@ -2,11 +2,28 @@ import { useEffect, useRef, useState } from "react";
 import type Konva from "konva";
 import { Stage, Layer, Image as KImage, Text, Rect, Group } from "react-konva";
 import {
+  DraggableEl,
   PosterSkeleton,
+  ovColor,
+  ovFontStyle,
   usePosterImage,
+  withDefaultOv,
   type CustomTpl,
+  type ElOverride,
+  type LayoutEl,
+  type TemplateOverride,
+  type PosterLayoutMap,
 } from "./poster-canvas";
 import { TEMPLATE_SUBDOMAIN } from "~/lib/constants";
+
+/** Standings layout overrides — same shape as the result-poster
+ *  PosterLayoutMap (keyed by template key), but the elements that
+ *  matter for the standings poster are the four overlay blocks. */
+export type StandingsLayoutEl = Extract<
+  LayoutEl,
+  "orgName" | "afterN" | "date" | "place"
+>;
+export type StandingsLayoutMap = PosterLayoutMap;
 
 // ─────────────────────────────────────────────────────────────────────
 // Standings poster — overlays the "after N" number and the team/points
@@ -336,6 +353,9 @@ export const StandingsPosterCanvas = ({
   customSrc,
   meta,
   fontFamily,
+  standingsOverrides,
+  editable = false,
+  onMove,
   stageRef,
   displayWidth,
 }: {
@@ -355,6 +375,12 @@ export const StandingsPosterCanvas = ({
   /** Poster font stack to use for all overlay text. Falls back to the
    *  body font when omitted. */
   fontFamily?: string;
+  /** Saved per-element overrides for THIS template (x/y/s/color/bold/
+   *  italic). Resolved on top of the template's defaults. */
+  standingsOverrides?: TemplateOverride;
+  /** Drag-to-position mode (admin layout editor). */
+  editable?: boolean;
+  onMove?: (el: LayoutEl, x: number, y: number) => void;
   stageRef?: React.MutableRefObject<Konva.Stage | null>;
   displayWidth?: number;
 }) => {
@@ -412,8 +438,10 @@ export const StandingsPosterCanvas = ({
       style={{
         aspectRatio: "4 / 5",
         overflow: "hidden",
-        pointerEvents: "none",
-        touchAction: "pan-y",
+        // Read-only posters must NOT swallow taps (parent handles tap
+        // to zoom). The editor needs pointer events for dragging.
+        pointerEvents: editable ? "auto" : "none",
+        touchAction: editable ? "none" : "pan-y",
       }}
     >
       {!ready && <PosterSkeleton slow={slow} />}
@@ -439,21 +467,36 @@ export const StandingsPosterCanvas = ({
               />
             )}
 
-            {/* "after [N] Team Point" — only the N is overlaid, centered
-                in the gap between the two cursive words */}
-            <Text
-              x={LAYOUT.afterX}
-              y={LAYOUT.afterY}
-              width={LAYOUT.afterW}
-              height={LAYOUT.afterH}
-              align="center"
-              verticalAlign="middle"
-              text={String(data.afterN).padStart(2, "0")}
-              fontFamily={COUNT_FONT}
-              fontSize={LAYOUT.afterSize}
-              fontStyle="bold"
-              fill={LAYOUT.afterColor}
-            />
+            {/* "after [N] Team Point" — only the N is overlaid,
+                centered in the gap between the two cursive words.
+                Draggable in the layout editor. */}
+            {(() => {
+              const ov = standingsOverrides?.afterN;
+              return (
+                <DraggableEl
+                  el="afterN"
+                  baseX={LAYOUT.afterX}
+                  baseY={LAYOUT.afterY}
+                  ov={ov}
+                  editable={editable}
+                  onMove={onMove}
+                >
+                  <Text
+                    x={0}
+                    y={0}
+                    width={LAYOUT.afterW}
+                    height={LAYOUT.afterH}
+                    align="center"
+                    verticalAlign="middle"
+                    text={String(data.afterN).padStart(2, "0")}
+                    fontFamily={COUNT_FONT}
+                    fontSize={LAYOUT.afterSize}
+                    fontStyle={ovFontStyle(ov, true)}
+                    fill={ovColor(ov, LAYOUT.afterColor)}
+                  />
+                </DraggableEl>
+              );
+            })()}
 
             {/* Team table — top 3 emphasised strictly in priority order,
                 everyone else in normal text. Each row is vertically
@@ -501,46 +544,86 @@ export const StandingsPosterCanvas = ({
 
             {/* Tenant overlay — only on general/custom templates. The
                 legacy Pantharangadi templates bake the org name + date
-                + place into the artwork, so nothing is drawn for them. */}
+                + place into the artwork, so nothing is drawn for them.
+                Each block is its own DraggableEl so the admin layout
+                editor can move/restyle them independently. */}
             {tpl.meta && (
               <>
-                {meta?.orgName?.trim() && (
-                  <Text
-                    x={tpl.meta.orgName.x}
-                    y={tpl.meta.orgName.y}
-                    width={tpl.meta.orgName.w}
-                    align={tpl.meta.align ?? "left"}
-                    text={meta.orgName.trim()}
-                    fontFamily={OVERLAY_FONT}
-                    fontSize={tpl.meta.orgName.size ?? 36}
-                    fontStyle="bold"
-                    fill={tpl.meta.color}
-                  />
-                )}
-                {meta?.posterDate?.trim() && (
-                  <Text
-                    x={tpl.meta.date.x}
-                    y={tpl.meta.date.y}
-                    width={tpl.meta.date.w}
-                    align={tpl.meta.align ?? "left"}
-                    text={meta.posterDate.trim()}
-                    fontFamily={OVERLAY_FONT}
-                    fontSize={tpl.meta.date.size ?? 24}
-                    fill={tpl.meta.color}
-                  />
-                )}
-                {meta?.posterPlace?.trim() && (
-                  <Text
-                    x={tpl.meta.place.x}
-                    y={tpl.meta.place.y}
-                    width={tpl.meta.place.w}
-                    align={tpl.meta.align ?? "left"}
-                    text={meta.posterPlace.trim()}
-                    fontFamily={OVERLAY_FONT}
-                    fontSize={tpl.meta.place.size ?? 24}
-                    fill={tpl.meta.color}
-                  />
-                )}
+                {meta?.orgName?.trim() && (() => {
+                  const ov = standingsOverrides?.orgName;
+                  return (
+                    <DraggableEl
+                      el="orgName"
+                      baseX={tpl.meta.orgName.x}
+                      baseY={tpl.meta.orgName.y}
+                      ov={ov}
+                      editable={editable}
+                      onMove={onMove}
+                    >
+                      <Text
+                        x={0}
+                        y={0}
+                        width={tpl.meta.orgName.w}
+                        align={tpl.meta.align ?? "left"}
+                        text={meta.orgName.trim()}
+                        fontFamily={OVERLAY_FONT}
+                        fontSize={tpl.meta.orgName.size ?? 36}
+                        fontStyle={ovFontStyle(ov, true)}
+                        fill={ovColor(ov, tpl.meta.color)}
+                      />
+                    </DraggableEl>
+                  );
+                })()}
+                {meta?.posterDate?.trim() && (() => {
+                  const ov = standingsOverrides?.date;
+                  return (
+                    <DraggableEl
+                      el="date"
+                      baseX={tpl.meta.date.x}
+                      baseY={tpl.meta.date.y}
+                      ov={ov}
+                      editable={editable}
+                      onMove={onMove}
+                    >
+                      <Text
+                        x={0}
+                        y={0}
+                        width={tpl.meta.date.w}
+                        align={tpl.meta.align ?? "left"}
+                        text={meta.posterDate.trim()}
+                        fontFamily={OVERLAY_FONT}
+                        fontSize={tpl.meta.date.size ?? 24}
+                        fontStyle={ovFontStyle(ov, false)}
+                        fill={ovColor(ov, tpl.meta.color)}
+                      />
+                    </DraggableEl>
+                  );
+                })()}
+                {meta?.posterPlace?.trim() && (() => {
+                  const ov = standingsOverrides?.place;
+                  return (
+                    <DraggableEl
+                      el="place"
+                      baseX={tpl.meta.place.x}
+                      baseY={tpl.meta.place.y}
+                      ov={ov}
+                      editable={editable}
+                      onMove={onMove}
+                    >
+                      <Text
+                        x={0}
+                        y={0}
+                        width={tpl.meta.place.w}
+                        align={tpl.meta.align ?? "left"}
+                        text={meta.posterPlace.trim()}
+                        fontFamily={OVERLAY_FONT}
+                        fontSize={tpl.meta.place.size ?? 24}
+                        fontStyle={ovFontStyle(ov, false)}
+                        fill={ovColor(ov, tpl.meta.color)}
+                      />
+                    </DraggableEl>
+                  );
+                })()}
               </>
             )}
           </Layer>

@@ -9,7 +9,11 @@ import {
   shareStandings,
   usableStandingsTemplates,
 } from "./standings-poster";
-import { posterFontStack, type CustomTpl } from "./poster-canvas";
+import {
+  posterFontStack,
+  type CustomTpl,
+  type PosterLayoutMap,
+} from "./poster-canvas";
 
 export type StandingsSnapshot = {
   afterN: number;
@@ -31,6 +35,7 @@ export type StandingsPosterMeta = {
   standingsDefaultTemplateId: string | null;
   customStandingsTemplates: CustomTpl[];
   disabledStandingsTemplates: string[];
+  standingsLayout: PosterLayoutMap | null;
 };
 
 export function StandingsSheet({
@@ -200,6 +205,11 @@ export function StandingsSheet({
                         posterMeta.fontEn,
                         posterMeta.fontMl,
                       )}
+                      standingsOverrides={
+                        chosen
+                          ? posterMeta.standingsLayout?.[chosen.key]
+                          : undefined
+                      }
                       stageRef={stageRef}
                     />
                   );
