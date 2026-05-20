@@ -480,20 +480,19 @@ export default function Home({ loaderData }: Route.ComponentProps) {
       <WaveBackground />
 
       {/* ── Header — mobile-first, sector-led, newsroom-quiet.
-          Everything stays on a single row from the smallest phone
-          upward. To keep the sector / unit / division name at its
-          natural size on narrow screens, the right cluster collapses:
-          the Live pill becomes a pulse dot (no text) below sm, and
-          the Standings button drops its label to leave just the
-          trophy icon. Both labels return on sm and above. */}
+          On mobile the layout is two rows: brand + sector on top,
+          Live + Standings on a full-width second row with
+          `justify-between` so the pulse pill anchors to the left
+          edge and the Standings CTA to the right. At sm and above
+          everything collapses back to a single row with the cluster
+          inline on the right. */}
       <header className="sticky top-0 z-20">
         <div className="relative bg-ink-900/95 text-paper backdrop-blur-md supports-[backdrop-filter]:bg-ink-900/90">
-          <div className="mx-auto flex max-w-2xl md:max-w-3xl lg:max-w-4xl items-center gap-3 px-4 sm:px-5 py-2.5 sm:py-3">
+          <div className="mx-auto flex max-w-2xl md:max-w-3xl lg:max-w-4xl flex-wrap items-center gap-x-3 gap-y-2 px-4 sm:px-5 py-2.5 sm:py-3">
             {/* Brand + sector — never truncated or shrunken. min-w-0
-                lets the title block participate in flex shrinking only
-                so it doesn't push the row past 100vw; the inner text
-                still wraps freely if a sector name is exceptionally
-                long, rather than being clipped. */}
+                lets the title participate in flex shrinking only so
+                the row never spills past 100vw; the sector text wraps
+                freely if a tenant picks an exceptionally long name. */}
             <div className="flex min-w-0 items-center gap-3 sm:gap-3.5">
               <span
                 aria-hidden
@@ -515,11 +514,10 @@ export default function Home({ loaderData }: Route.ComponentProps) {
               </div>
             </div>
 
-            <div className="ml-auto flex shrink-0 items-center gap-2 sm:gap-2.5">
+            <div className="flex w-full items-center justify-between gap-2 sm:ml-auto sm:w-auto sm:justify-end sm:gap-2.5">
               <span
                 aria-label="Live"
-                title="Live"
-                className="inline-flex items-center gap-1.5 rounded-full bg-paper/[0.06] ring-1 ring-inset ring-paper/10 px-2 py-1 sm:px-2.5 text-[10px] font-bold uppercase tracking-[0.14em] text-yellow/95"
+                className="inline-flex items-center gap-1.5 rounded-full bg-paper/[0.06] ring-1 ring-inset ring-paper/10 px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.14em] text-yellow/95"
               >
                 <span className="relative flex size-1.5">
                   <span
@@ -528,21 +526,20 @@ export default function Home({ loaderData }: Route.ComponentProps) {
                   />
                   <span className="relative inline-flex size-1.5 rounded-full bg-yellow" />
                 </span>
-                <span className="hidden sm:inline">Live</span>
+                Live
               </span>
 
               <button
                 type="button"
                 onClick={() => setStandingsOpen(true)}
-                aria-label="Open team standings"
-                className="group inline-flex items-center gap-1.5 rounded-full bg-paper text-ink-900 px-2.5 py-1.5 sm:px-3.5 sm:py-2 text-[11px] sm:text-xs font-bold uppercase tracking-[0.08em] shadow-[0_6px_14px_-8px_rgba(11,9,10,0.55)] transition-all duration-200 active:scale-[0.97] hover:-translate-y-px hover:shadow-[0_8px_18px_-8px_rgba(11,9,10,0.55)]"
+                className="group inline-flex items-center gap-1.5 rounded-full bg-paper text-ink-900 px-3 py-1.5 sm:px-3.5 sm:py-2 text-[11px] sm:text-xs font-bold uppercase tracking-[0.08em] shadow-[0_6px_14px_-8px_rgba(11,9,10,0.55)] transition-all duration-200 active:scale-[0.97] hover:-translate-y-px hover:shadow-[0_8px_18px_-8px_rgba(11,9,10,0.55)]"
               >
                 <Trophy
-                  className="size-4 transition-transform duration-200 group-hover:-rotate-12"
+                  className="size-3.5 sm:size-4 transition-transform duration-200 group-hover:-rotate-12"
                   strokeWidth={2.5}
                   aria-hidden
                 />
-                <span className="hidden sm:inline">Standings</span>
+                Standings
               </button>
             </div>
           </div>
