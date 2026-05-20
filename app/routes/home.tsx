@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import {
   Form,
   Link,
@@ -479,75 +480,65 @@ export default function Home({ loaderData }: Route.ComponentProps) {
       {/* Flowing layered waves — clean warm base + parallax wave bands */}
       <WaveBackground />
 
-      {/* ── Header — mobile-first, sector-led, newsroom-quiet.
-          On mobile the layout is two rows: brand + sector on top,
-          Live + Standings on a full-width second row with
-          `justify-between` so the pulse pill anchors to the left
-          edge and the Standings CTA to the right. At sm and above
-          everything collapses back to a single row with the cluster
-          inline on the right. */}
+      {/* ── Header — compact, mobile-first, sector-led ── */}
       <header className="sticky top-0 z-20">
-        <div className="relative bg-ink-900 text-paper">
-          <div className="mx-auto flex max-w-2xl md:max-w-3xl lg:max-w-4xl flex-wrap items-center gap-x-3 gap-y-2 px-4 sm:px-5 py-2.5 sm:py-3">
-            {/* Brand + sector — never truncated or shrunken. min-w-0
-                lets the title participate in flex shrinking only so
-                the row never spills past 100vw; the sector text wraps
-                freely if a tenant picks an exceptionally long name. */}
-            <div className="flex min-w-0 items-center gap-3 sm:gap-3.5">
-              <span
-                aria-hidden
-                className="ssf-mark shrink-0 text-paper text-[1.6rem] leading-none"
-              >
-                SSF
-              </span>
-              <span
-                aria-hidden
-                className="h-8 w-px shrink-0 bg-gradient-to-b from-transparent via-yellow/45 to-transparent"
-              />
-              <div className="leading-tight">
-                <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-paper/55">
-                  Sahityotsav
-                </p>
-                <p className="font-opensans text-sm sm:text-[15px] font-bold uppercase tracking-[0.14em] text-yellow">
-                  {sector}
-                </p>
-              </div>
-            </div>
-
-            <div className="flex w-full items-center justify-between gap-2 sm:ml-auto sm:w-auto sm:justify-end sm:gap-2.5">
-              <span
-                aria-label="Live"
-                className="inline-flex items-center gap-1.5 rounded-full bg-paper/[0.06] ring-1 ring-inset ring-paper/10 px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.14em] text-yellow/95"
-              >
-                <span className="relative flex size-1.5">
-                  <span
-                    aria-hidden
-                    className="absolute inline-flex size-full animate-ping rounded-full bg-yellow/60"
-                  />
-                  <span className="relative inline-flex size-1.5 rounded-full bg-yellow" />
+        <div className="relative bg-gradient-to-b from-[#23110F] via-[#160C0D] to-[#0B090A] text-white backdrop-blur-xl shadow-[0_12px_34px_-14px_rgba(11,9,10,0.75)]">
+          <div
+            aria-hidden
+            className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-yellow/70 to-transparent"
+          />
+          <div className="mx-auto max-w-2xl md:max-w-3xl lg:max-w-4xl px-4 sm:px-5">
+            {/* Row 1 — brand + primary action */}
+            <div className="flex items-center justify-between gap-3 pt-3 pb-2">
+              <div className="flex min-w-0 items-center gap-2.5 sm:gap-3">
+                <span className="ssf-mark shrink-0 text-white text-[1.6rem] leading-none drop-shadow-[0_2px_8px_rgba(0,0,0,0.45)]">
+                  SSF
                 </span>
-                Live
-              </span>
+                <span aria-hidden className="h-7 w-px shrink-0 bg-white/20" />
+                <img
+                  src="/sahityotsav-logo.png"
+                  alt={eventName ?? "Sahityotsav"}
+                  className="h-[18px] w-auto min-w-0 select-none"
+                  draggable={false}
+                />
+              </div>
 
               <button
                 type="button"
                 onClick={() => setStandingsOpen(true)}
-                className="group inline-flex items-center gap-1.5 rounded-full bg-paper text-ink-900 px-3 py-1.5 sm:px-3.5 sm:py-2 text-[11px] sm:text-xs font-bold uppercase tracking-[0.08em] shadow-[0_6px_14px_-8px_rgba(11,9,10,0.55)] transition-all duration-200 active:scale-[0.97] hover:-translate-y-px hover:shadow-[0_8px_18px_-8px_rgba(11,9,10,0.55)]"
+                className="font-opensans group shrink-0 inline-flex items-center gap-1.5 rounded-full bg-white text-black px-3.5 py-2 text-xs font-bold tracking-wide uppercase shadow-[0_4px_14px_-4px_rgba(0,0,0,0.5)] transition-all duration-200 active:scale-[0.96] hover:shadow-[0_6px_18px_-4px_rgba(0,0,0,0.6)]"
               >
                 <Trophy
-                  className="size-3.5 sm:size-4 transition-transform duration-200 group-hover:-rotate-12"
+                  className="size-4 transition-transform duration-200 group-hover:-rotate-12"
                   strokeWidth={2.5}
                   aria-hidden
                 />
                 Standings
               </button>
             </div>
+
+            {/* Row 2 — sector (full width, prominent) + live heartbeat.
+                On its own line so it never collides with the button. */}
+            <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 pb-2.5 border-t border-white/10 pt-2">
+              <span className="font-opensans text-[13px] font-bold uppercase tracking-[0.16em] text-yellow">
+                {sector}
+              </span>
+              <span className="inline-flex shrink-0 items-center gap-1.5 text-[11px]">
+                <span className="relative flex size-2">
+                  <span className="absolute inline-flex size-full animate-ping rounded-full bg-yellow/70" />
+                  <span className="relative inline-flex size-2 rounded-full bg-yellow" />
+                </span>
+                <span className="font-bold tracking-[0.14em] uppercase text-yellow/90">
+                  Live
+                </span>
+              </span>
+            </div>
           </div>
 
-          {/* Hairline brand accent — replaces the chunky 3 px gradient bar */}
+          {/* Decorative full-bleed brand edge */}
           <div
             aria-hidden
-            className="h-px w-full bg-gradient-to-r from-transparent via-yellow/55 to-transparent"
+            className="h-[3px] w-full bg-gradient-to-r from-red via-yellow to-red opacity-90"
           />
         </div>
       </header>
@@ -1465,30 +1456,69 @@ function FinalPosterBubble({ url }: { url: string }) {
       </div>
 
       {zoom && (
-        <div
-          role="dialog"
-          aria-modal="true"
-          aria-label="Final standings poster"
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4"
-          onClick={() => setZoom(false)}
-        >
-          <img
-            src={url}
-            alt="Final team standings"
-            className="max-h-[92vh] max-w-full w-auto rounded-xl shadow-2xl"
-            onClick={(e) => e.stopPropagation()}
-          />
-          <button
-            type="button"
-            onClick={() => setZoom(false)}
-            aria-label="Close"
-            className="absolute top-4 right-4 size-10 grid place-items-center rounded-full bg-white/15 text-white hover:bg-white/25 transition-colors"
-          >
-            <X aria-hidden className="size-5" strokeWidth={2} />
-          </button>
-        </div>
+        <FinalPosterZoomModal url={url} onClose={() => setZoom(false)} />
       )}
     </div>
+  );
+}
+
+/** Fullscreen zoom for the published final-standings image. Mirrors
+ *  PosterZoomModal: portals to <body> (so a transformed/animated
+ *  ancestor like the chat bubble can't trap our `fixed inset-0`),
+ *  locks body scroll, dismisses on backdrop tap / Escape / Close. */
+function FinalPosterZoomModal({
+  url,
+  onClose,
+}: {
+  url: string;
+  onClose: () => void;
+}) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  useEffect(() => {
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = prev;
+    };
+  }, []);
+
+  if (typeof document === "undefined") return null;
+  return createPortal(
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label="Final standings poster"
+      className="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-center justify-center p-4"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
+      <button
+        type="button"
+        onClick={onClose}
+        aria-label="Close"
+        className="absolute top-3 right-3 size-10 grid place-items-center rounded-full bg-white/10 hover:bg-white/20 text-white"
+      >
+        <X className="size-5" aria-hidden />
+      </button>
+      <img
+        src={url}
+        alt="Final team standings"
+        className="max-h-[92vh] max-w-full w-auto shadow-2xl"
+        // Stop the click on the image from bubbling to the backdrop
+        // and dismissing the modal — backdrop tap still closes.
+        onClick={(e) => e.stopPropagation()}
+        draggable={false}
+      />
+    </div>,
+    document.body,
   );
 }
 
