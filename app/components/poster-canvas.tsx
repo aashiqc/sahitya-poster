@@ -64,6 +64,14 @@ export type ElOverride = {
   /** Explicit weight / slant. Unset → the element's natural default. */
   bold?: boolean;
   italic?: boolean;
+  /** Hide this element from the rendered poster. The layout editor
+   *  still draws it (dimmed) so the admin can find and unhide it. */
+  hidden?: boolean;
+  /** Secondary numeric tuning, element-specific meaning. Currently used
+   *  by the standings table's `winners` block as a horizontal shift of
+   *  the points column (positive = wider gap between team name and
+   *  points; negative = tighter). */
+  gap?: number;
 };
 export type TemplateOverride = Partial<Record<StoredLayoutEl, ElOverride>>;
 /** Whole-event layout map: { [templateKey]: { el: {x,y,s,…} } }. */
@@ -140,7 +148,23 @@ export function withDefaultOv(
     color: resolved.color ?? def.color,
     bold: resolved.bold ?? def.bold,
     italic: resolved.italic ?? def.italic,
+    hidden: resolved.hidden ?? def.hidden,
+    gap: resolved.gap ?? def.gap,
   };
+}
+
+/** Render-time visibility check — public posters drop a hidden block;
+ *  the editor keeps it (dimmed) so the admin can still grab it. */
+export function isVisible(
+  ov: ElOverride | undefined,
+  editable: boolean,
+): boolean {
+  return !ov?.hidden || editable;
+}
+/** Opacity to apply to a draggable group when the block is hidden but
+ *  still rendered (editor only). */
+export function dimIfHidden(ov: ElOverride | undefined): number {
+  return ov?.hidden ? 0.25 : 1;
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -649,6 +673,7 @@ export function DraggableEl({
   ov,
   editable,
   onMove,
+  opacity = 1,
   children,
 }: {
   el: LayoutEl;
@@ -657,6 +682,9 @@ export function DraggableEl({
   ov?: ElOverride;
   editable?: boolean;
   onMove?: (el: LayoutEl, x: number, y: number) => void;
+  /** Render-time opacity (1 = opaque). Used to dim a `hidden` block in
+   *  the editor so the admin can still find it. */
+  opacity?: number;
   children: ReactNode;
 }) {
   const x = ov?.x ?? baseX;
@@ -668,6 +696,7 @@ export function DraggableEl({
       y={y}
       scaleX={s}
       scaleY={s}
+      opacity={opacity}
       draggable={!!editable}
       listening={!!editable}
       onDragEnd={(e) =>
@@ -863,119 +892,139 @@ export const PosterCanvas = ({
           )}
 
           {/* Admin overlay (general/custom templates): org name, date
-              and place — each its own independently movable block */}
-          {layout.meta && data.orgName?.trim() && (
-            <DraggableEl
-              el="orgName"
-              baseX={layout.defaults?.orgName?.x ?? layout.meta.x}
-              baseY={
-                layout.defaults?.orgName?.y ??
-                layout.meta.y + META_NAME_DY
-              }
-              ov={orgNameOv}
-              editable={editable}
-              onMove={onMove}
-            >
-              <MetaLine
-                text={data.orgName.trim()}
-                size={META_NAME_SIZE}
-                defBold
-                layout={layout}
-                data={data}
+              and place — each its own independently movable block. The
+              `isVisible` gate drops the block on public posters when
+              hidden; the editor keeps it dimmed. */}
+          {layout.meta &&
+            data.orgName?.trim() &&
+            isVisible(orgNameOv, editable) && (
+              <DraggableEl
+                el="orgName"
+                baseX={layout.defaults?.orgName?.x ?? layout.meta.x}
+                baseY={
+                  layout.defaults?.orgName?.y ??
+                  layout.meta.y + META_NAME_DY
+                }
                 ov={orgNameOv}
-              />
-            </DraggableEl>
-          )}
-          {layout.meta && data.posterDate?.trim() && (
-            <DraggableEl
-              el="date"
-              baseX={layout.defaults?.date?.x ?? layout.meta.x}
-              baseY={
-                layout.defaults?.date?.y ?? layout.meta.y + META_DATE_DY
-              }
-              ov={dateOv}
-              editable={editable}
-              onMove={onMove}
-            >
-              <MetaLine
-                text={data.posterDate.trim()}
-                size={META_LINE_SIZE}
-                defBold={false}
-                layout={layout}
-                data={data}
+                editable={editable}
+                onMove={onMove}
+                opacity={dimIfHidden(orgNameOv)}
+              >
+                <MetaLine
+                  text={data.orgName.trim()}
+                  size={META_NAME_SIZE}
+                  defBold
+                  layout={layout}
+                  data={data}
+                  ov={orgNameOv}
+                />
+              </DraggableEl>
+            )}
+          {layout.meta &&
+            data.posterDate?.trim() &&
+            isVisible(dateOv, editable) && (
+              <DraggableEl
+                el="date"
+                baseX={layout.defaults?.date?.x ?? layout.meta.x}
+                baseY={
+                  layout.defaults?.date?.y ?? layout.meta.y + META_DATE_DY
+                }
                 ov={dateOv}
-              />
-            </DraggableEl>
-          )}
-          {layout.meta && data.posterPlace?.trim() && (
-            <DraggableEl
-              el="place"
-              baseX={layout.defaults?.place?.x ?? layout.meta.x}
-              baseY={
-                layout.defaults?.place?.y ??
-                layout.meta.y + META_PLACE_DY
-              }
-              ov={placeOv}
-              editable={editable}
-              onMove={onMove}
-            >
-              <MetaLine
-                text={data.posterPlace.trim()}
-                size={META_LINE_SIZE}
-                defBold={false}
-                layout={layout}
-                data={data}
+                editable={editable}
+                onMove={onMove}
+                opacity={dimIfHidden(dateOv)}
+              >
+                <MetaLine
+                  text={data.posterDate.trim()}
+                  size={META_LINE_SIZE}
+                  defBold={false}
+                  layout={layout}
+                  data={data}
+                  ov={dateOv}
+                />
+              </DraggableEl>
+            )}
+          {layout.meta &&
+            data.posterPlace?.trim() &&
+            isVisible(placeOv, editable) && (
+              <DraggableEl
+                el="place"
+                baseX={layout.defaults?.place?.x ?? layout.meta.x}
+                baseY={
+                  layout.defaults?.place?.y ??
+                  layout.meta.y + META_PLACE_DY
+                }
                 ov={placeOv}
-              />
-            </DraggableEl>
-          )}
+                editable={editable}
+                onMove={onMove}
+                opacity={dimIfHidden(placeOv)}
+              >
+                <MetaLine
+                  text={data.posterPlace.trim()}
+                  size={META_LINE_SIZE}
+                  defBold={false}
+                  layout={layout}
+                  data={data}
+                  ov={placeOv}
+                />
+              </DraggableEl>
+            )}
 
           {/* Category / level — independently positioned & styled */}
-          <DraggableEl
-            el="level"
-            baseX={layout.defaults?.level?.x ?? layout.contentX}
-            baseY={layout.defaults?.level?.y ?? layout.contentY}
-            ov={levelOv}
-            editable={editable}
-            onMove={onMove}
-          >
-            <LevelText data={data} layout={layout} ov={levelOv} />
-          </DraggableEl>
+          {isVisible(levelOv, editable) && (
+            <DraggableEl
+              el="level"
+              baseX={layout.defaults?.level?.x ?? layout.contentX}
+              baseY={layout.defaults?.level?.y ?? layout.contentY}
+              ov={levelOv}
+              editable={editable}
+              onMove={onMove}
+              opacity={dimIfHidden(levelOv)}
+            >
+              <LevelText data={data} layout={layout} ov={levelOv} />
+            </DraggableEl>
+          )}
 
           {/* Program name — its own block, moved & styled separately */}
-          <DraggableEl
-            el="program"
-            baseX={layout.defaults?.program?.x ?? layout.contentX}
-            baseY={
-              layout.defaults?.program?.y ??
-              layout.contentY + PROGRAM_DY
-            }
-            ov={programOv}
-            editable={editable}
-            onMove={onMove}
-          >
-            <ProgramText data={data} layout={layout} ov={programOv} />
-          </DraggableEl>
+          {isVisible(programOv, editable) && (
+            <DraggableEl
+              el="program"
+              baseX={layout.defaults?.program?.x ?? layout.contentX}
+              baseY={
+                layout.defaults?.program?.y ??
+                layout.contentY + PROGRAM_DY
+              }
+              ov={programOv}
+              editable={editable}
+              onMove={onMove}
+              opacity={dimIfHidden(programOv)}
+            >
+              <ProgramText data={data} layout={layout} ov={programOv} />
+            </DraggableEl>
+          )}
 
           {/* Winners list */}
-          <DraggableEl
-            el="winners"
-            baseX={layout.defaults?.winners?.x ?? layout.contentX}
-            baseY={layout.defaults?.winners?.y ?? winnersStartY(layout)}
-            ov={winnersOv}
-            editable={editable}
-            onMove={onMove}
-          >
-            <WinnersList
-              winners={data.winners}
-              layout={layout}
-              font={font}
+          {isVisible(winnersOv, editable) && (
+            <DraggableEl
+              el="winners"
+              baseX={layout.defaults?.winners?.x ?? layout.contentX}
+              baseY={layout.defaults?.winners?.y ?? winnersStartY(layout)}
               ov={winnersOv}
-            />
-          </DraggableEl>
+              editable={editable}
+              onMove={onMove}
+              opacity={dimIfHidden(winnersOv)}
+            >
+              <WinnersList
+                winners={data.winners}
+                layout={layout}
+                font={font}
+                ov={winnersOv}
+              />
+            </DraggableEl>
+          )}
 
           {/* Result number — large, centered under the "Result" script */}
-          {data.resultNo && (
+          {data.resultNo && isVisible(resultNoOv, editable) && (
             <DraggableEl
               el="resultNo"
               baseX={layout.resultNo.x}
@@ -983,6 +1032,7 @@ export const PosterCanvas = ({
               ov={resultNoOv}
               editable={editable}
               onMove={onMove}
+              opacity={dimIfHidden(resultNoOv)}
             >
               <Text
                 x={0}

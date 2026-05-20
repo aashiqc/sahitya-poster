@@ -4,6 +4,8 @@ import { Stage, Layer, Image as KImage, Text, Rect, Group } from "react-konva";
 import {
   DraggableEl,
   PosterSkeleton,
+  dimIfHidden,
+  isVisible,
   ovColor,
   ovFontStyle,
   usePosterImage,
@@ -21,7 +23,7 @@ import { TEMPLATE_SUBDOMAIN } from "~/lib/constants";
  *  matter for the standings poster are the four overlay blocks. */
 export type StandingsLayoutEl = Extract<
   LayoutEl,
-  "orgName" | "afterN" | "date" | "place"
+  "orgName" | "afterN" | "date" | "place" | "winners"
 >;
 export type StandingsLayoutMap = PosterLayoutMap;
 
@@ -472,6 +474,7 @@ export const StandingsPosterCanvas = ({
                 Draggable in the layout editor. */}
             {(() => {
               const ov = standingsOverrides?.afterN;
+              if (!isVisible(ov, editable)) return null;
               return (
                 <DraggableEl
                   el="afterN"
@@ -480,6 +483,7 @@ export const StandingsPosterCanvas = ({
                   ov={ov}
                   editable={editable}
                   onMove={onMove}
+                  opacity={dimIfHidden(ov)}
                 >
                   <Text
                     x={0}
@@ -500,47 +504,67 @@ export const StandingsPosterCanvas = ({
 
             {/* Team table — top 3 emphasised strictly in priority order,
                 everyone else in normal text. Each row is vertically
-                centred on its baseline so mixed sizes stay aligned. */}
-            {rows.map((r, i) => {
-              const rank = i + 1;
-              const rk = RANK_STYLE[rank];
-              const size = rk ? rk.size : LAYOUT.baseNameSize;
-              const color = rk ? rk.color : LAYOUT.baseColor;
-              const centerY = LAYOUT.rowC0 + i * LAYOUT.rowPitch;
-              const y = centerY - size / 2;
+                centred on its baseline so mixed sizes stay aligned.
+                The whole table is one DraggableEl so it moves/scales
+                as a single block; `gap` shifts the points column
+                horizontally so admins can tune the name→points spacing
+                without redoing every row. */}
+            {(() => {
+              const ov = standingsOverrides?.winners;
+              if (!isVisible(ov, editable)) return null;
+              const gap = ov?.gap ?? 0;
+              const pointsRightInside =
+                LAYOUT.pointsRight - LAYOUT.listX + gap;
               const nameW =
-                LAYOUT.pointsRight -
-                LAYOUT.pointsBoxW -
-                LAYOUT.nameGap -
-                LAYOUT.listX;
+                pointsRightInside - LAYOUT.pointsBoxW - LAYOUT.nameGap;
               return (
-                <Group key={`${r.name}-${i}`}>
-                  <Text
-                    x={LAYOUT.listX}
-                    y={y}
-                    width={nameW}
-                    text={r.name}
-                    fontFamily={BODY_FONT}
-                    fontSize={size}
-                    fontStyle={rk ? "bold" : "normal"}
-                    fill={color}
-                    wrap="none"
-                    ellipsis
-                  />
-                  <Text
-                    x={LAYOUT.pointsRight - LAYOUT.pointsBoxW}
-                    y={y}
-                    width={LAYOUT.pointsBoxW}
-                    align="right"
-                    text={String(r.points)}
-                    fontFamily={BODY_FONT}
-                    fontSize={size}
-                    fontStyle="bold"
-                    fill={color}
-                  />
-                </Group>
+                <DraggableEl
+                  el="winners"
+                  baseX={LAYOUT.listX}
+                  baseY={0}
+                  ov={ov}
+                  editable={editable}
+                  onMove={onMove}
+                  opacity={dimIfHidden(ov)}
+                >
+                  {rows.map((r, i) => {
+                    const rank = i + 1;
+                    const rk = RANK_STYLE[rank];
+                    const size = rk ? rk.size : LAYOUT.baseNameSize;
+                    const color = rk ? rk.color : LAYOUT.baseColor;
+                    const centerY = LAYOUT.rowC0 + i * LAYOUT.rowPitch;
+                    const y = centerY - size / 2;
+                    return (
+                      <Group key={`${r.name}-${i}`}>
+                        <Text
+                          x={0}
+                          y={y}
+                          width={nameW}
+                          text={r.name}
+                          fontFamily={BODY_FONT}
+                          fontSize={size}
+                          fontStyle={rk ? "bold" : "normal"}
+                          fill={ovColor(ov, color)}
+                          wrap="none"
+                          ellipsis
+                        />
+                        <Text
+                          x={pointsRightInside - LAYOUT.pointsBoxW}
+                          y={y}
+                          width={LAYOUT.pointsBoxW}
+                          align="right"
+                          text={String(r.points)}
+                          fontFamily={BODY_FONT}
+                          fontSize={size}
+                          fontStyle="bold"
+                          fill={ovColor(ov, color)}
+                        />
+                      </Group>
+                    );
+                  })}
+                </DraggableEl>
               );
-            })}
+            })()}
 
             {/* Tenant overlay — only on general/custom templates. The
                 legacy Pantharangadi templates bake the org name + date
@@ -551,6 +575,7 @@ export const StandingsPosterCanvas = ({
               <>
                 {meta?.orgName?.trim() && (() => {
                   const ov = standingsOverrides?.orgName;
+                  if (!isVisible(ov, editable)) return null;
                   return (
                     <DraggableEl
                       el="orgName"
@@ -559,6 +584,7 @@ export const StandingsPosterCanvas = ({
                       ov={ov}
                       editable={editable}
                       onMove={onMove}
+                      opacity={dimIfHidden(ov)}
                     >
                       <Text
                         x={0}
@@ -576,6 +602,7 @@ export const StandingsPosterCanvas = ({
                 })()}
                 {meta?.posterDate?.trim() && (() => {
                   const ov = standingsOverrides?.date;
+                  if (!isVisible(ov, editable)) return null;
                   return (
                     <DraggableEl
                       el="date"
@@ -584,6 +611,7 @@ export const StandingsPosterCanvas = ({
                       ov={ov}
                       editable={editable}
                       onMove={onMove}
+                      opacity={dimIfHidden(ov)}
                     >
                       <Text
                         x={0}
@@ -601,6 +629,7 @@ export const StandingsPosterCanvas = ({
                 })()}
                 {meta?.posterPlace?.trim() && (() => {
                   const ov = standingsOverrides?.place;
+                  if (!isVisible(ov, editable)) return null;
                   return (
                     <DraggableEl
                       el="place"
@@ -609,6 +638,7 @@ export const StandingsPosterCanvas = ({
                       ov={ov}
                       editable={editable}
                       onMove={onMove}
+                      opacity={dimIfHidden(ov)}
                     >
                       <Text
                         x={0}

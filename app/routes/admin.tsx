@@ -2349,14 +2349,15 @@ function StandingsTemplateStudio({
       const cur: ElOverride = tpl[el] ?? {};
       return { ...m, [tplKey]: { ...tpl, [el]: { ...cur, ...patch } } };
     });
-  // DraggableEl emits the wider LayoutEl union; narrow to the four
+  // DraggableEl emits the wider LayoutEl union; narrow to the five
   // standings blocks before patching so the override key stays valid.
   const moveEl = (el: LayoutEl, x: number, y: number) => {
     if (
       el !== "afterN" &&
       el !== "orgName" &&
       el !== "date" &&
-      el !== "place"
+      el !== "place" &&
+      el !== "winners"
     )
       return;
     patchEl(el, { x, y });
@@ -2379,6 +2380,20 @@ function StandingsTemplateStudio({
     patchEl(el, {
       italic: !(layoutMap[tplKey]?.[el]?.italic ?? false),
     });
+  // Toggle a block's visibility — the public poster drops the block;
+  // the editor keeps a dim copy so the admin can still un-hide it.
+  const toggleHidden = (el: StandingsLayoutEl) =>
+    patchEl(el, {
+      hidden: !(layoutMap[tplKey]?.[el]?.hidden ?? false),
+    });
+  // Shift the points column on the standings table by `d` px (positive =
+  // wider gap between team names and the points column).
+  const gapEl = (el: StandingsLayoutEl, d: number) => {
+    const cur: ElOverride = layoutMap[tplKey]?.[el] ?? {};
+    patchEl(el, {
+      gap: Math.min(200, Math.max(-200, (cur.gap ?? 0) + d)),
+    });
+  };
   const resetTpl = () =>
     setLayoutMap((m) => {
       const next = { ...m };
@@ -2405,8 +2420,10 @@ function StandingsTemplateStudio({
       ? STANDINGS_TEMPLATES_SRCS[c.builtinIndex] ?? ""
       : (c.src ?? "");
 
-  // Block definitions for the styling rail. afterN is on every
-  // template; the meta trio is only drawn when supportsMeta.
+  // Block definitions for the styling rail. afterN + the team/points
+  // table are on every template; the meta trio is only drawn when
+  // supportsMeta. The boolean trailing flag controls visibility of the
+  // row given the current template.
   const allBlocks: [
     StandingsLayoutEl,
     string,
@@ -2415,6 +2432,13 @@ function StandingsTemplateStudio({
     boolean,
   ][] = [
     ["afterN", "After-N count", "The big number above the table", true, true],
+    [
+      "winners",
+      "Teams & points",
+      "The whole table — drag to move; tune the name → points gap",
+      true,
+      true,
+    ],
     ["orgName", "Display / event name", "Sahityotsav org line", true, supportsMeta],
     ["date", "Date", "Event date line", false, supportsMeta],
     ["place", "Place / venue", "Venue line", false, supportsMeta],
@@ -2758,20 +2782,54 @@ function StandingsTemplateStudio({
                 const hasColor = !!cur?.color;
                 const isBold = cur?.bold ?? defBold;
                 const isItalic = !!cur?.italic;
+                const isHidden = !!cur?.hidden;
+                const isTable = el === "winners";
+                const gap = cur?.gap ?? 0;
                 return (
                   <div
                     key={el}
-                    className="flex items-center justify-between gap-3 rounded-lg border border-stone-200 px-3 py-2"
+                    className={`flex items-center justify-between gap-3 rounded-lg border border-stone-200 px-3 py-2 transition ${
+                      isHidden ? "bg-stone-50 opacity-70" : ""
+                    }`}
                   >
                     <div className="min-w-0">
                       <p className="truncate text-sm font-medium text-stone-800">
                         {label}
+                        {isHidden && (
+                          <span className="ml-2 rounded bg-stone-200 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-stone-600">
+                            Hidden
+                          </span>
+                        )}
                       </p>
                       <p className="truncate text-[11px] text-stone-400">
                         {desc}
                       </p>
                     </div>
                     <div className="flex shrink-0 items-center gap-1.5">
+                      <button
+                        type="button"
+                        aria-pressed={isHidden}
+                        onClick={() => toggleHidden(el)}
+                        title={
+                          isHidden
+                            ? `Show ${label} on the poster`
+                            : `Hide ${label} from the poster`
+                        }
+                        aria-label={
+                          isHidden ? `Show ${label}` : `Hide ${label}`
+                        }
+                        className={`grid size-7 place-items-center rounded-md border transition ${
+                          isHidden
+                            ? "border-brand-600 bg-brand-50 text-brand-700"
+                            : "border-stone-300 text-stone-600 hover:bg-stone-50"
+                        }`}
+                      >
+                        {isHidden ? (
+                          <EyeOff className="size-3.5" />
+                        ) : (
+                          <Eye className="size-3.5" />
+                        )}
+                      </button>
                       <label
                         title={
                           hasColor
@@ -2817,6 +2875,42 @@ function StandingsTemplateStudio({
                       >
                         I
                       </button>
+                      {isTable && (
+                        <>
+                          <span className="mx-0.5 h-6 w-px bg-stone-200" />
+                          <span
+                            title="Points-column horizontal shift (px). Negative tightens the gap."
+                            className={`w-10 text-right text-[11px] tabular-nums ${
+                              gap === 0
+                                ? "text-stone-400"
+                                : "font-semibold text-brand-700"
+                            }`}
+                          >
+                            {gap > 0 ? `+${gap}` : gap}
+                          </span>
+                          <div className="flex items-center overflow-hidden rounded-md border border-stone-300">
+                            <button
+                              type="button"
+                              aria-label={`Narrow ${label} gap`}
+                              title="Narrow name → points gap"
+                              onClick={() => gapEl(el, -10)}
+                              className="grid size-7 place-items-center text-stone-600 transition hover:bg-stone-100"
+                            >
+                              ⇤
+                            </button>
+                            <span className="h-7 w-px bg-stone-300" />
+                            <button
+                              type="button"
+                              aria-label={`Widen ${label} gap`}
+                              title="Widen name → points gap"
+                              onClick={() => gapEl(el, 10)}
+                              className="grid size-7 place-items-center text-stone-600 transition hover:bg-stone-100"
+                            >
+                              ⇥
+                            </button>
+                          </div>
+                        </>
+                      )}
                       {hasColor && (
                         <button
                           type="button"
@@ -4239,6 +4333,13 @@ function TemplateStudioView({
     patchEl(el, {
       italic: !(layoutMap[tplKey]?.[el]?.italic ?? false),
     });
+  // Toggle a block's visibility. Public posters drop the block when
+  // hidden; the studio preview keeps it (dimmed) via DraggableEl's
+  // opacity prop so the admin can still find and un-hide it.
+  const toggleHidden = (el: LayoutEl) =>
+    patchEl(el, {
+      hidden: !(layoutMap[tplKey]?.[el]?.hidden ?? false),
+    });
   const resetTpl = () =>
     setLayoutMap((m) => {
       const next = { ...m };
@@ -4746,20 +4847,52 @@ function TemplateStudioView({
                 const hasColor = !!cur?.color;
                 const isBold = cur?.bold ?? defBold;
                 const isItalic = !!cur?.italic;
+                const isHidden = !!cur?.hidden;
                 return (
                   <div
                     key={el}
-                    className="flex items-center justify-between gap-3 rounded-lg border border-stone-200 px-3 py-2"
+                    className={`flex items-center justify-between gap-3 rounded-lg border border-stone-200 px-3 py-2 transition ${
+                      isHidden ? "bg-stone-50 opacity-70" : ""
+                    }`}
                   >
                     <div className="min-w-0">
                       <p className="truncate text-sm font-medium text-stone-800">
                         {label}
+                        {isHidden && (
+                          <span className="ml-2 rounded bg-stone-200 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-stone-600">
+                            Hidden
+                          </span>
+                        )}
                       </p>
                       <p className="truncate text-[11px] text-stone-400">
                         {desc}
                       </p>
                     </div>
                     <div className="flex shrink-0 items-center gap-1.5">
+                      <button
+                        type="button"
+                        aria-pressed={isHidden}
+                        onClick={() => toggleHidden(el)}
+                        title={
+                          isHidden
+                            ? `Show ${label} on the poster`
+                            : `Hide ${label} from the poster`
+                        }
+                        aria-label={
+                          isHidden ? `Show ${label}` : `Hide ${label}`
+                        }
+                        className={`grid size-7 place-items-center rounded-md border transition ${
+                          isHidden
+                            ? "border-brand-600 bg-brand-50 text-brand-700"
+                            : "border-stone-300 text-stone-600 hover:bg-stone-50"
+                        }`}
+                      >
+                        {isHidden ? (
+                          <EyeOff className="size-3.5" />
+                        ) : (
+                          <Eye className="size-3.5" />
+                        )}
+                      </button>
                       <label
                         title={
                           hasColor
