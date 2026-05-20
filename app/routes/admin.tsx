@@ -2000,7 +2000,7 @@ function StandingsShareCard({
 
   return (
     <div className="border-t border-stone-200 p-4">
-      <div className="mx-auto max-w-xs overflow-hidden rounded-lg ring-1 ring-stone-200">
+      <div className="mx-auto max-w-sm sm:max-w-md overflow-hidden rounded-lg ring-1 ring-stone-200">
         <StandingsPosterCanvas
           data={{
             afterN: snapshot.afterN,
@@ -2687,10 +2687,26 @@ function StandingsTemplateStudio({
         </div>
       </section>
 
-      {/* Editor — poster preview on the left, block controls on the
-          right. Drag any block directly on the preview. */}
+      {/* Mobile-only notice — the drag editor needs a wider workspace
+          than a phone gives. Admins on mobile still see the gallery
+          and can pick / hide / upload templates above. */}
       {cur && (
-        <section className="rounded-xl border border-stone-200 bg-white p-4">
+        <section className="rounded-xl border border-amber-200 bg-amber-50/60 p-4 text-sm leading-snug text-amber-900 lg:hidden">
+          <p className="font-semibold">Layout editing is desktop-only.</p>
+          <p className="mt-1 text-amber-800/90">
+            Open this page on a laptop or tablet to drag blocks and
+            tune positions. You can still sign in, share posters and
+            upload templates from this phone.
+          </p>
+        </section>
+      )}
+
+      {/* Editor — poster preview on the left, block controls on the
+          right. Drag any block directly on the preview. Hidden below
+          `lg` because the workspace doesn't fit comfortably on phones,
+          and admins on mobile are here to share posters, not lay out. */}
+      {cur && (
+        <section className="hidden lg:block rounded-xl border border-stone-200 bg-white p-4">
           <div className="flex flex-wrap items-center justify-between gap-2 border-b border-stone-100 pb-2.5">
             <p className="truncate text-sm font-semibold text-stone-900">
               <span className="text-[10px] font-bold uppercase tracking-wider text-stone-400">
@@ -4745,8 +4761,20 @@ function TemplateStudioView({
         </div>
       </section>
 
-      {/* Editor — poster on one side, styling on the other */}
-      <section className="rounded-xl border border-stone-200 bg-white p-4">
+      {/* Mobile-only notice — the drag editor doesn't fit on a phone.
+          Wording / fonts and the templates gallery above remain usable. */}
+      <section className="rounded-xl border border-amber-200 bg-amber-50/60 p-4 text-sm leading-snug text-amber-900 lg:hidden">
+        <p className="font-semibold">Layout editing is desktop-only.</p>
+        <p className="mt-1 text-amber-800/90">
+          Open this page on a laptop or tablet to drag blocks and tune
+          positions. You can still adjust wording, set the default,
+          hide templates and upload new ones from this phone.
+        </p>
+      </section>
+
+      {/* Editor — poster on one side, styling on the other. Hidden
+          below `lg` because the workspace needs the room. */}
+      <section className="hidden lg:block rounded-xl border border-stone-200 bg-white p-4">
         <div className="flex flex-wrap items-center justify-between gap-2 border-b border-stone-100 pb-2.5">
           <p className="truncate text-sm font-semibold text-stone-900">
             <span className="text-[10px] font-bold uppercase tracking-wider text-stone-400">
