@@ -25,6 +25,7 @@ import {
   Eye,
   EyeOff,
   ExternalLink,
+  FileText,
   LayoutGrid,
   Menu,
   RefreshCw,
@@ -1759,6 +1760,14 @@ export default function Admin({ loaderData }: Route.ComponentProps) {
               label="Import results"
               icon={<Upload className="size-4" />}
               to="/admin?view=import"
+            />
+            {/* Opens the print page in a new tab — admin chooses
+                "Save as PDF" in the browser's print dialog. */}
+            <NavItem
+              label="Export winners (PDF)"
+              icon={<FileText className="size-4" />}
+              href="/admin/winners"
+              external
             />
           </div>
           <div className="space-y-1">

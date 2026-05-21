@@ -8,6 +8,9 @@ export default [
   // ---------- Admin ----------
   route("admin", "routes/admin.tsx"),
   route("admin/login", "routes/admin.login.tsx"),
+  // Print-friendly winners export — opens in a new tab from the admin
+  // sidebar; the admin saves it as PDF via the browser's print dialog.
+  route("admin/winners", "routes/admin.winners.tsx"),
 
   // ---------- Owner console (host-gated to owner.<root>) ----------
   route("owner", "routes/owner.tsx"),
