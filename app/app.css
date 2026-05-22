@@ -26,6 +26,15 @@
   /* Clean professional sans — header chrome + welcome message. */
   --font-opensans: "Open Sans", ui-sans-serif, system-ui, sans-serif;
 
+  /* ─── Chat design system (Sahityotsav Chat) ──────────────────
+     Editorial serif + geometric sans + mono labels. The public
+     chat is scoped to these via the .font-* utilities below. */
+  --font-cormorant: "Cormorant Garamond", "Fraunces", Georgia, serif;
+  --font-manrope: "Manrope", "Plus Jakarta Sans", ui-sans-serif,
+    system-ui, sans-serif;
+  --font-jet: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo,
+    monospace;
+
   /* ─── Core palette ────────────────────────────────────────── */
   --color-yellow:    #FFCE05;
   --color-red:       #BF0603;
@@ -81,6 +90,17 @@
 
   --color-saffron-500: #BF0603;
   --color-saffron-600: #9C0503;
+
+  /* ─── Chat design system — warm cream surfaces + warm ink ─── */
+  --color-cream:      #F5F1E8;
+  --color-cream-2:    #ECE6D8;
+  --color-cream-3:    #FAF6EC;
+  --color-rule:       #DDD5C5;
+  --color-rule-soft:  #E8E1D0;
+  --color-ink-dim:    #5C544A;
+  --color-ink-mute:   #9C948A;
+  --color-plum-tint:  #F7EBE9;
+  --color-plum-wash:  #FCF6F5;
 }
 
 html, body {
@@ -116,6 +136,18 @@ h1:lang(ml), h2:lang(ml) {
   font-family: var(--font-opensans);
 }
 
+/* ─── Chat design-system type ─────────────────────────────────── */
+.font-cormorant {
+  font-family: var(--font-cormorant);
+  font-optical-sizing: auto;
+}
+.font-manrope {
+  font-family: var(--font-manrope);
+}
+.font-jet {
+  font-family: var(--font-jet);
+}
+
 /* ─────────────────────────────────────────────────────────────────
    App background — flowing layered waves. A clean warm base with
    three bottom-anchored wave bands scrolling horizontally at parallax
@@ -123,8 +155,8 @@ h1:lang(ml), h2:lang(ml) {
    translateX(-50%) loops seamlessly on the GPU (no JS/deps, ~60fps).
    ───────────────────────────────────────────────────────────────── */
 .app-backdrop {
-  background:
-    radial-gradient(125% 85% at 50% 0%, #FFF6E0 0%, #FBEDCF 50%, #F3E2C6 100%);
+  /* Warm ivory ground — matches the Sahityotsav Chat design token (--bg). */
+  background: #F5F1E8;
 }
 /* Subtle hand-feel grain laid over the cream gradient — keeps the page
    warm without making the wave bands the only visual layer above the
@@ -155,22 +187,24 @@ h1:lang(ml), h2:lang(ml) {
 }
 /* Slightly slower scroll + lower opacities so the chat content stays
    the focal layer; the waves are atmosphere, not subject. */
+/* Wave bands recoloured to the chat design palette — soft gold drifting
+   back to deep brand red at the front. */
 .app-wave--back {
   height: min(48vh, 480px);
-  opacity: 0.22;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 600 220' preserveAspectRatio='none'%3E%3Cpath fill='%23FFCE05' d='M0 112 C100 64 200 64 300 112 S500 160 600 112 L600 220 L0 220 Z'/%3E%3C/svg%3E");
+  opacity: 0.30;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 600 220' preserveAspectRatio='none'%3E%3Cpath fill='%23E7C56C' d='M0 112 C100 64 200 64 300 112 S500 160 600 112 L600 220 L0 220 Z'/%3E%3C/svg%3E");
   animation: wave-scroll 42s linear infinite;
 }
 .app-wave--mid {
   height: min(38vh, 380px);
-  opacity: 0.34;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 600 220' preserveAspectRatio='none'%3E%3Cpath fill='%23F0A52E' d='M0 118 C100 52 200 52 300 118 S500 184 600 118 L600 220 L0 220 Z'/%3E%3C/svg%3E");
+  opacity: 0.22;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 600 220' preserveAspectRatio='none'%3E%3Cpath fill='%23CF1C19' d='M0 118 C100 52 200 52 300 118 S500 184 600 118 L600 220 L0 220 Z'/%3E%3C/svg%3E");
   animation: wave-scroll 30s linear infinite;
 }
 .app-wave--front {
   height: min(28vh, 300px);
-  opacity: 0.48;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 600 220' preserveAspectRatio='none'%3E%3Cpath fill='%23C25A2A' d='M0 124 C90 74 210 74 300 124 S510 174 600 124 L600 220 L0 220 Z'/%3E%3C/svg%3E");
+  opacity: 0.30;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 600 220' preserveAspectRatio='none'%3E%3Cpath fill='%23BF0603' d='M0 124 C90 74 210 74 300 124 S510 174 600 124 L600 220 L0 220 Z'/%3E%3C/svg%3E");
   animation: wave-scroll 20s linear infinite;
 }
 
@@ -231,10 +265,118 @@ h1:lang(ml), h2:lang(ml) {
   pointer-events: none;
 }
 
+/* ─── Chat design-system motion ───────────────────────────────
+   Bot-avatar sparkle, header live pulse and the typing-dot bob.
+   Lifted from the Sahityotsav Chat design tokens. */
+@keyframes sparkle-spin {
+  0%   { transform: rotate(0deg) scale(1); }
+  50%  { transform: rotate(180deg) scale(1.08); }
+  100% { transform: rotate(360deg) scale(1); }
+}
+@keyframes live-pulse {
+  0%   { box-shadow: 0 0 0 0 rgba(191, 6, 3, 0.5); }
+  70%  { box-shadow: 0 0 0 9px rgba(191, 6, 3, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(191, 6, 3, 0); }
+}
+@keyframes bob-dot {
+  0%, 60%, 100% { opacity: 0.35; transform: translateY(0); }
+  30%           { opacity: 1;    transform: translateY(-3px); }
+}
+.animate-sparkle-spin { animation: sparkle-spin 8s ease-in-out infinite; }
+.animate-live-pulse   { animation: live-pulse 1.8s ease-out infinite; }
+.typing-dot           { animation: bob-dot 1.1s infinite ease-in-out; }
+.typing-dot:nth-child(2) { animation-delay: 0.16s; }
+.typing-dot:nth-child(3) { animation-delay: 0.32s; }
+
+/* ─── Celebration burst — particle burst when a result poster lands ──
+   28 pieces (dots, squares, 2px "lines") explode from one origin point,
+   arc up ~120px then fall ~320px past the viewport while spinning 540°.
+   Ported from the design's CelebrationBurst + burstUp keyframe. */
+@keyframes burst-up {
+  0%   { transform: translate3d(0, 0, 0) rotate(0deg); opacity: 0; }
+  10%  { opacity: 1; }
+  50%  {
+    transform: translate3d(var(--bx, 0), -120px, 0) rotate(180deg);
+  }
+  100% {
+    transform: translate3d(var(--bx, 0), 320px, 0) rotate(540deg);
+    opacity: 0;
+  }
+}
+.cb-piece {
+  position: absolute;
+  left: 50%;
+  top: 0;
+  width: var(--size, 6px);
+  height: var(--h, 6px);
+  background: var(--c);
+  border-radius: var(--r, 1px);
+  opacity: 0;
+  animation: burst-up var(--dur, 1.8s) cubic-bezier(0.2, 0.7, 0.3, 1)
+    var(--delay, 0s) forwards;
+}
+
+/* ─── Team-standings podium — cylinders rise from the base on a GPU
+   transform, the winner's icon pops, and the gold cylinder gleams. */
+@keyframes podium-rise {
+  from { transform: scaleY(0); }
+}
+@keyframes podium-pop {
+  0%   { opacity: 0; transform: scale(0.2) rotate(-22deg); }
+  65%  { opacity: 1; transform: scale(1.18) rotate(8deg); }
+  100% { opacity: 1; transform: scale(1) rotate(0); }
+}
+@keyframes podium-glint {
+  0%   { transform: translateX(-220%) skewX(-18deg); }
+  16%  { transform: translateX(330%) skewX(-18deg); }
+  100% { transform: translateX(330%) skewX(-18deg); }
+}
+.podium-bar {
+  transform-origin: 50% 100%;
+  will-change: transform;
+  animation: podium-rise 900ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.podium-crown {
+  transform-origin: 50% 85%;
+  will-change: transform, opacity;
+  animation: podium-pop 560ms cubic-bezier(0.34, 1.56, 0.5, 1) both;
+}
+/* Gold first-place cylinder — a slow gleam sweeps across, then rests. */
+.podium-shine {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  border-radius: inherit;
+  pointer-events: none;
+}
+.podium-shine::before {
+  content: "";
+  position: absolute;
+  top: -25%;
+  bottom: -25%;
+  width: 42%;
+  background: linear-gradient(
+    100deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.72) 50%,
+    transparent 100%
+  );
+  transform: translateX(-220%) skewX(-18deg);
+  will-change: transform;
+  animation: podium-glint 4s ease-in-out 1400ms infinite;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .animate-bubble-in,
   .app-wave,
-  .medal-sheen::after { animation: none !important; }
+  .medal-sheen::after,
+  .animate-sparkle-spin,
+  .animate-live-pulse,
+  .typing-dot,
+  .cb-piece,
+  .podium-bar,
+  .podium-crown,
+  .podium-shine::before { animation: none !important; }
 }
 
 /* Restrained, branded scrollbar */

@@ -1,4 +1,11 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type ReactNode,
+} from "react";
 import { createPortal } from "react-dom";
 import {
   Form,
@@ -43,6 +50,7 @@ import {
   Crown,
   Download,
   Medal,
+  RotateCcw,
   Share2,
   Sparkles,
   Trophy,
@@ -323,6 +331,8 @@ type Winner = {
   name_ml: string;
   name_en: string | null;
   unit_ml: string | null;
+  marks: number | null;
+  grade: string | null;
 };
 
 type Program = {
@@ -415,6 +425,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
     return <NotYetLive event={loaderData.event} />;
   }
   const { event, levels, standings, standingsHistory, siteUrl } = loaderData;
+  const { totalPublished, totalPrograms } = loaderData;
   const org = (event.organizations as { name?: string } | null)?.name;
   const eventName = event.name ?? event.name_ml;
   const finalPosterUrl =
@@ -476,71 +487,74 @@ export default function Home({ loaderData }: Route.ComponentProps) {
   };
 
   return (
-    <div className="relative min-h-dvh flex flex-col">
-      {/* Flowing layered waves — clean warm base + parallax wave bands */}
+    <div className="font-manrope relative flex min-h-dvh flex-col text-ink-900">
+      {/* Our existing flowing wave animation — kept as the page ground */}
       <WaveBackground />
 
-      {/* ── Header — compact, mobile-first, sector-led ── */}
-      <header className="sticky top-0 z-20">
-        <div className="relative bg-gradient-to-b from-[#23110F] via-[#160C0D] to-[#0B090A] text-white backdrop-blur-xl shadow-[0_12px_34px_-14px_rgba(11,9,10,0.75)]">
-          <div
-            aria-hidden
-            className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-yellow/70 to-transparent"
-          />
-          <div className="mx-auto max-w-2xl md:max-w-3xl lg:max-w-4xl px-4 sm:px-5">
-            {/* Row 1 — brand + primary action */}
-            <div className="flex items-center justify-between gap-3 pt-3 pb-2">
-              <div className="flex min-w-0 items-center gap-2.5 sm:gap-3">
-                <span className="ssf-mark shrink-0 text-white text-[1.6rem] leading-none drop-shadow-[0_2px_8px_rgba(0,0,0,0.45)]">
-                  SSF
-                </span>
-                <span aria-hidden className="h-7 w-px shrink-0 bg-white/20" />
+      {/* ── Header — editorial app bar (Sahityotsav Chat design) ── */}
+      <header className="sticky top-0 z-20 border-b border-rule-soft bg-white">
+        <div className="mx-auto max-w-2xl px-4 sm:px-5 md:max-w-3xl lg:max-w-4xl">
+          {/* Brand lockup + standings */}
+          <div className="flex items-center justify-between gap-3 pt-3 pb-1.5">
+            <div className="flex min-w-0 items-center gap-2.5">
+              <img
+                src="/sahityotsav-mark.png"
+                alt=""
+                aria-hidden
+                className="h-9 w-auto shrink-0 select-none"
+                draggable={false}
+              />
+              <span className="flex min-w-0 flex-col leading-none">
                 <img
                   src="/sahityotsav-logo.png"
-                  alt={eventName ?? "Sahityotsav"}
-                  className="h-[18px] w-auto min-w-0 select-none"
+                  alt="Sahityotsav"
+                  className="h-[20px] w-auto select-none"
                   draggable={false}
                 />
-              </div>
-
-              <button
-                type="button"
-                onClick={() => setStandingsOpen(true)}
-                className="font-opensans group shrink-0 inline-flex items-center gap-1.5 rounded-full bg-white text-black px-3.5 py-2 text-xs font-bold tracking-wide uppercase shadow-[0_4px_14px_-4px_rgba(0,0,0,0.5)] transition-all duration-200 active:scale-[0.96] hover:shadow-[0_6px_18px_-4px_rgba(0,0,0,0.6)]"
-              >
-                <Trophy
-                  className="size-4 transition-transform duration-200 group-hover:-rotate-12"
-                  strokeWidth={2.5}
-                  aria-hidden
-                />
-                Standings
-              </button>
-            </div>
-
-            {/* Row 2 — sector (full width, prominent) + live heartbeat.
-                On its own line so it never collides with the button. */}
-            <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 pb-2.5 border-t border-white/10 pt-2">
-              <span className="font-opensans text-[13px] font-bold uppercase tracking-[0.16em] text-yellow">
-                {sector}
-              </span>
-              <span className="inline-flex shrink-0 items-center gap-1.5 text-[11px]">
-                <span className="relative flex size-2">
-                  <span className="absolute inline-flex size-full animate-ping rounded-full bg-yellow/70" />
-                  <span className="relative inline-flex size-2 rounded-full bg-yellow" />
-                </span>
-                <span className="font-bold tracking-[0.14em] uppercase text-yellow/90">
-                  Live
+                <span className="font-jet mt-1.5 text-[8px] font-normal uppercase tracking-[0.3em] text-ink-mute">
+                  Live Results
                 </span>
               </span>
             </div>
+
+            <button
+              type="button"
+              onClick={() => setStandingsOpen(true)}
+              className="font-jet group inline-flex shrink-0 items-center gap-1.5 rounded-full border border-rule bg-cream px-3 py-2 text-[11px] font-bold uppercase tracking-[0.1em] text-ink-900 transition-all duration-200 hover:border-yellow hover:bg-yellow/20 active:scale-[0.96]"
+            >
+              <Trophy
+                className="size-3.5 transition-transform duration-200 group-hover:-rotate-12"
+                strokeWidth={2.25}
+                aria-hidden
+              />
+              Standings
+            </button>
           </div>
 
-          {/* Decorative full-bleed brand edge */}
-          <div
-            aria-hidden
-            className="h-[3px] w-full bg-gradient-to-r from-red via-yellow to-red opacity-90"
-          />
+          {/* Sector title + live status + count */}
+          <div className="flex items-center gap-2.5 pt-2 pb-3">
+            <h1 className="font-cormorant min-w-0 truncate text-[1.25rem] font-semibold leading-tight tracking-[-0.01em] text-ink-900 sm:text-[1.4rem]">
+              <Ssf className="text-[0.82em] text-red" />{" "}
+              {sector}
+            </h1>
+            <span className="font-jet inline-flex shrink-0 items-center gap-1.5 rounded-full bg-plum-tint px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.12em] text-red">
+              <span
+                aria-hidden
+                className="size-1.5 rounded-full bg-red animate-live-pulse"
+              />
+              Live
+            </span>
+            <span className="font-jet ml-auto shrink-0 text-[11px] font-bold tabular-nums tracking-[0.04em] text-ink-mute">
+              {totalPublished} / {totalPrograms}
+            </span>
+          </div>
         </div>
+
+        {/* Plum → gold brand rule */}
+        <div
+          aria-hidden
+          className="h-[2px] w-full bg-gradient-to-r from-red via-brand-400 to-yellow"
+        />
       </header>
 
       {standingsOpen && (
@@ -551,7 +565,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
         />
       )}
 
-      <main className="relative z-10 flex-1 w-full max-w-2xl md:max-w-3xl lg:max-w-4xl mx-auto px-3.5 sm:px-5 py-6 sm:py-8">
+      <main className="relative z-10 mx-auto w-full max-w-2xl flex-1 px-3.5 py-6 sm:px-5 sm:py-8 md:max-w-3xl lg:max-w-4xl">
         <ChatFlow
           levels={levels as Level[]}
           eventName={eventName ?? "Sahityotsav"}
@@ -787,7 +801,6 @@ type Bubble = {
   side: "bot" | "user";
   node: ReactNode;
   wide?: boolean;
-  tight?: boolean;
 };
 
 type PosterMeta = {
@@ -841,7 +854,6 @@ function ChatFlow({
             id: "final-poster",
             side: "bot" as const,
             wide: true,
-            tight: true,
             node: <FinalPosterBubble url={finalPosterUrl} />,
           },
         ]
@@ -858,6 +870,7 @@ function ChatFlow({
           {
             id: "standings",
             side: "bot" as const,
+            wide: true as const,
             node: (
               <StandingsBubble
                 standings={standings!}
@@ -872,6 +885,10 @@ function ChatFlow({
   const [bubbles, setBubbles] = useState<Bubble[]>(initial);
   const [typing, setTyping] = useState(false);
   const [atBottom, setAtBottom] = useState(true);
+  // Celebration burst — bumped on every result reveal; the changing
+  // key remounts <CelebrationBurst> so each call cuts a fresh burst.
+  const [burst, setBurst] = useState(0);
+  const fireBurst = () => setBurst((n) => n + 1);
   const endRef = useRef<HTMLDivElement | null>(null);
   const seqRef = useRef(0);
   const nextId = (prefix: string) => `${prefix}-${++seqRef.current}`;
@@ -994,16 +1011,17 @@ function ChatFlow({
       },
       { focus: true },
     );
-    const ranked =
-      program.result?.winners.filter((w) => w.position >= 1) ?? [];
-    withTyping(program.result ? 480 : 280, () => {
-      if (program.result && ranked.length >= 2) {
+    const result = program.result;
+    const ranked = result?.winners.filter((w) => w.position >= 1) ?? [];
+    withTyping(result ? 480 : 280, () => {
+      if (result && ranked.length >= 1) {
+        // A result with winners → the poster lands and a celebration
+        // burst fires across the screen (fireBurst, just below).
         push(
           {
             id: nextId("b"),
             side: "bot",
             wide: true,
-            tight: true,
             node: (
               <ResultBubble
                 eventName={eventName}
@@ -1011,17 +1029,16 @@ function ChatFlow({
                 posterMeta={posterMeta}
                 level={level}
                 program={program}
-                winners={program.result.winners}
-                resultNo={program.result.result_no}
+                winners={result.winners}
+                resultNo={result.result_no}
                 onAnotherInLevel={() => handleAnotherInLevel(level)}
-                onDifferentLevel={handleDifferentLevel}
               />
             ),
           },
           { focus: true },
         );
-      } else if (program.result) {
-        // <2 ranked winners: published but no poster — compact text card.
+        fireBurst();
+      } else if (result) {
         push(
           {
             id: nextId("b"),
@@ -1138,11 +1155,8 @@ function ChatFlow({
 
   // One-time party-popper when a final poster leads the chat. Gated on
   // a mount effect so it's client-only — SSR renders nothing, so there's
-  // no hydration mismatch from the randomised pieces.
-  //
-  // Fires once per unique final-poster URL per device — opening the
-  // page again after celebrating won't re-trigger it. A *new* final
-  // poster (different URL) cuts a fresh celebration.
+  // no hydration mismatch from the randomised pieces. Fires once per
+  // unique final-poster URL per device.
   const [celebrate, setCelebrate] = useState(false);
   useEffect(() => {
     if (!finalPosterUrl) return;
@@ -1165,8 +1179,11 @@ function ChatFlow({
       className="space-y-3.5 pb-2"
     >
       {celebrate && <Confetti onDone={() => setCelebrate(false)} />}
+      {burst > 0 && (
+        <CelebrationBurst key={burst} onDone={() => setBurst(0)} />
+      )}
       {bubbles.map((b) => (
-        <BubbleRow key={b.id} id={b.id} side={b.side} wide={b.wide} tight={b.tight}>
+        <BubbleRow key={b.id} id={b.id} side={b.side} wide={b.wide}>
           {b.node}
         </BubbleRow>
       ))}
@@ -1217,79 +1234,127 @@ function BubbleRow({
   id,
   side,
   wide = false,
-  tight = false,
   children,
 }: {
   id?: string;
   side: "bot" | "user";
   wide?: boolean;
-  tight?: boolean;
   children: ReactNode;
 }) {
   const isBot = side === "bot";
-  const widthCls = wide
-    ? "w-full md:max-w-[600px]"
-    : "max-w-[84%] sm:max-w-[76%]";
-  const padCls = tight ? "p-1.5" : isBot ? "px-4 py-3" : "px-4 py-2.5";
-  // Asymmetric radius gives the speech-bubble read without a fragile
-  // clip-path tail (the old tail broke at sub-pixel sizes on mobile).
-  const shellCls = isBot
-    ? "bubble-bot text-ink-900 rounded-[1.25rem] rounded-tl-md"
-    : "bubble-user text-white rounded-[1.25rem] rounded-tr-md";
-  // scroll-mt clears the sticky header when scrollIntoView lands on
-  // this bubble (focus scroll uses block: "start").
+  // Each content component carries its own surface (BotCard, WinnersPoster,
+  // UserPill…), so the row only does avatar + alignment. scroll-mt clears
+  // the sticky header when a focus-scroll lands on this bubble.
   return (
     <div
       data-bubble-id={id}
-      className={`animate-bubble-in scroll-mt-28 flex items-start gap-2 sm:gap-2.5 ${
+      className={`animate-bubble-in scroll-mt-36 flex items-start gap-2.5 ${
         isBot ? "justify-start" : "justify-end"
       }`}
     >
       {isBot && <BotAvatar />}
-      <div className={`relative ${widthCls} ${padCls} ${shellCls}`}>
-        {children}
-      </div>
-      {!isBot && <span aria-hidden className="w-1 shrink-0" />}
+      {isBot ? (
+        <div
+          className={`min-w-0 ${
+            wide ? "w-full md:max-w-[600px]" : "max-w-[85%]"
+          }`}
+        >
+          {children}
+        </div>
+      ) : (
+        <div className="flex min-w-0 max-w-[80%] justify-end">
+          <UserPill>{children}</UserPill>
+        </div>
+      )}
     </div>
   );
 }
 
+// The reader's echoed choice — a red bubble. The "tail" is the same
+// asymmetric squared corner the chat used before (no triangle).
+function UserPill({ children }: { children: ReactNode }) {
+  return (
+    <div className="font-manrope inline-block max-w-full rounded-[1.25rem] rounded-tr-md bg-red px-4 py-2.5 text-[13.5px] font-semibold leading-snug text-white shadow-[0_6px_14px_-8px_rgba(110,3,2,0.6)]">
+      {children}
+    </div>
+  );
+}
+
+// Bot avatar — a deep-red disc with a slowly rotating gold AI spark.
 function BotAvatar() {
-  // A deliberate red disk with a fine cream rim — feels stamped rather
-  // than glossy. The hairline ring + soft ambient shadow ground it
-  // against the bubble without competing with the brand stripe inside.
   return (
     <div
       aria-hidden
-      className="relative mt-0.5 shrink-0 size-8 sm:size-9 grid place-items-center rounded-full bg-gradient-to-br from-brand-500 to-brand-800 text-yellow ring-2 ring-paper shadow-[0_2px_8px_-4px_rgba(11,9,10,0.35)]"
+      className="relative mt-0.5 grid size-8 shrink-0 place-items-center rounded-full bg-red sm:size-9"
+      style={{
+        boxShadow:
+          "0 4px 14px -6px rgba(110,3,2,0.55), inset 0 0 0 1px rgba(207,28,25,0.55)",
+      }}
+    >
+      <svg
+        viewBox="0 0 36 36"
+        className="size-[68%] animate-sparkle-spin text-yellow"
+        fill="currentColor"
+      >
+        <path d="M20 6 C 20 12, 21 17, 30 18 C 21 19, 20 24, 20 30 C 20 24, 19 19, 10 18 C 19 17, 20 12, 20 6 Z" />
+        <path
+          d="M10.5 8 C 10.5 10, 10.9 10.5, 13 10.5 C 10.9 10.5, 10.5 11, 10.5 13 C 10.5 11, 10.1 10.5, 8 10.5 C 10.1 10.5, 10.5 10, 10.5 8 Z"
+          opacity="0.85"
+        />
+      </svg>
+    </div>
+  );
+}
+
+// Brand monogram — red disc, gold italic "S", gold spark dot.
+function Monogram({ size = 32 }: { size?: number }) {
+  return (
+    <span
+      aria-hidden
+      className="relative grid shrink-0 place-items-center rounded-full bg-red"
+      style={{
+        width: size,
+        height: size,
+        boxShadow:
+          "0 4px 14px -6px rgba(110,3,2,0.5), inset 0 0 0 1px rgba(207,28,25,0.5)",
+      }}
     >
       <span
-        aria-hidden
-        className="absolute inset-0 rounded-full ring-1 ring-inset ring-white/15"
+        className="font-cormorant font-semibold italic leading-none text-yellow"
+        style={{ fontSize: size * 0.56, marginTop: -size * 0.03 }}
+      >
+        S
+      </span>
+      <span
+        className="absolute rounded-full bg-yellow"
+        style={{
+          top: size * 0.17,
+          right: size * 0.17,
+          width: size * 0.15,
+          height: size * 0.15,
+        }}
       />
-      <Sparkles
-        className="relative size-[15px] sm:size-4"
-        strokeWidth={2.25}
-        aria-hidden
-      />
-    </div>
+    </span>
   );
 }
 
 function TypingDots() {
-  // Three small red dots riding a slow bounce stagger — softer hue
-  // and tighter spacing than before so the indicator reads as "still
-  // composing" rather than "loading something heavy".
   return (
-    <span
-      aria-label="Typing"
-      role="status"
-      className="inline-flex items-center gap-1.25 py-1.5 px-1"
-    >
-      <span className="size-[7px] rounded-full bg-red/55 animate-bounce [animation-delay:-0.32s]" />
-      <span className="size-[7px] rounded-full bg-red/70 animate-bounce [animation-delay:-0.16s]" />
-      <span className="size-[7px] rounded-full bg-red/85 animate-bounce" />
-    </span>
+    <div className="relative inline-block">
+      <div
+        role="status"
+        aria-label="Typing"
+        className="relative inline-flex items-center gap-1.5 rounded-[18px] rounded-tl-md border border-rule-soft bg-white px-[18px] py-3.5"
+        style={{
+          boxShadow:
+            "0 2px 0 rgba(20,16,10,0.03), 0 12px 28px -16px rgba(40,12,12,0.22)",
+        }}
+      >
+        <span className="typing-dot size-[7px] rounded-full bg-red/65" />
+        <span className="typing-dot size-[7px] rounded-full bg-red/65" />
+        <span className="typing-dot size-[7px] rounded-full bg-red/65" />
+      </div>
+    </div>
   );
 }
 
@@ -1297,29 +1362,224 @@ function TypingDots() {
 // Bot bubble contents
 // ─────────────────────────────────────────────────────────────────────
 
-function GreetingBubble({ sector }: { sector: string }) {
+// White editorial card used by every bot message. Optional eyebrow
+// (mono caps), title (bold sans) and body, plus free children.
+function BotCard({
+  eyebrow,
+  title,
+  body,
+  children,
+}: {
+  eyebrow?: ReactNode;
+  title?: ReactNode;
+  body?: ReactNode;
+  children?: ReactNode;
+}) {
   return (
-    <div>
-      <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-red/80">
-        Sahityotsav · Live Results
-      </p>
-      <p className="font-opensans text-xl sm:text-[1.6rem] font-semibold leading-snug text-ink-900 mt-1.5">
-        <span>Welcome to </span>
-        <Ssf className="text-red text-[1.1em] align-baseline mr-1.5" />
-        <span className="font-bold text-red">{sector}</span>
-      </p>
-      <p className="text-[13px] leading-relaxed text-ink-500 mt-2">
-        Pick a category below to see the winners — new results appear here the
-        moment they're announced.
-      </p>
+    <div className="relative">
+      <div
+        className="font-manrope relative rounded-[18px] rounded-tl-md border border-rule-soft bg-white px-4 py-3.5 text-ink-900 sm:px-[18px] sm:py-4"
+        style={{
+          boxShadow:
+            "0 2px 0 rgba(20,16,10,0.03), 0 12px 28px -16px rgba(40,12,12,0.22)",
+        }}
+      >
+        {eyebrow && (
+          <div className="font-jet mb-2.5 text-[10px] font-medium uppercase tracking-[0.16em] text-red">
+            {eyebrow}
+          </div>
+        )}
+        {title && (
+          <div className="text-[1.35rem] font-bold leading-[1.18] tracking-[-0.01em] text-ink-900">
+            {title}
+          </div>
+        )}
+        {body && (
+          <div
+            className={`text-[14px] leading-relaxed text-ink-dim ${
+              title ? "mt-2" : ""
+            }`}
+          >
+            {body}
+          </div>
+        )}
+        {children}
+      </div>
     </div>
   );
 }
 
-// Initial chat card — the current top three teams with points, plus a
-// way into the full poster + checkpoint history. Mirrors the bot
-// bubble visual language so it reads as the bot opening with the
-// headline standings.
+// Roman-numeral rank tiles, shared by the winners poster and the
+// standings card. Index 0 → 1st (gold), 1 → 2nd, 2 → 3rd.
+const RANK_TILE = [
+  "bg-yellow text-ink-900",
+  "bg-plum-tint text-red",
+  "bg-cream-2 text-ink-dim",
+] as const;
+const ROMAN = ["I", "II", "III", "IV", "V"] as const;
+
+function GreetingBubble({ sector }: { sector: string }) {
+  return (
+    <BotCard
+      eyebrow="Sahityotsav · Live Results"
+      title={
+        <>
+          Welcome to{" "}
+          <span className="font-cormorant font-semibold italic text-red">
+            {sector}
+          </span>
+        </>
+      }
+      body="Pick a category below to see the winners — new results appear here the moment they're announced."
+    />
+  );
+}
+
+// Animated count-up — eases a number from 0 to `to` once, on mount.
+function CountUp({
+  to,
+  durationMs = 950,
+  delayMs = 0,
+}: {
+  to: number;
+  durationMs?: number;
+  delayMs?: number;
+}) {
+  const [n, setN] = useState(0);
+  useEffect(() => {
+    if (
+      typeof window !== "undefined" &&
+      window.matchMedia?.("(prefers-reduced-motion: reduce)").matches
+    ) {
+      setN(to);
+      return;
+    }
+    let raf = 0;
+    let start = 0;
+    const step = (t: number) => {
+      if (!start) start = t;
+      const elapsed = t - start - delayMs;
+      if (elapsed < 0) {
+        raf = requestAnimationFrame(step);
+        return;
+      }
+      const p = Math.min(1, elapsed / durationMs);
+      setN(Math.round(to * (1 - Math.pow(1 - p, 3))));
+      if (p < 1) raf = requestAnimationFrame(step);
+    };
+    raf = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(raf);
+  }, [to, durationMs, delayMs]);
+  return <>{n}</>;
+}
+
+// One podium column — a light 3D cylinder that rises from the base,
+// the points counting up above it and a rank icon crowning it.
+// Index 0 → 1st (gold · crown), 1 → 2nd (medal), 2 → 3rd (award).
+const PODIUM_SKIN = [
+  {
+    // The 90° gradient gives each cylinder its rounded, lit surface.
+    body: "linear-gradient(90deg,#E4B03C 0%,#FFE890 34%,#F9D45F 60%,#D9A52C 100%)",
+    lid: "#FFEFB6",
+    icon: "#D99E00",
+  },
+  {
+    body: "linear-gradient(90deg,#D9786E 0%,#F8BFB7 34%,#ED9D94 61%,#C96A5F 100%)",
+    lid: "#FAD2CC",
+    icon: "#CB5248",
+  },
+  {
+    body: "linear-gradient(90deg,#D2965E 0%,#F6D5AB 34%,#EAB988 61%,#C58A48 100%)",
+    lid: "#F9DEC4",
+    icon: "#C2783C",
+  },
+] as const;
+
+const PODIUM_ICON = [Crown, Medal, Award] as const;
+
+function PodiumColumn({
+  points,
+  rank,
+  height,
+  delay,
+}: {
+  points: number;
+  rank: number;
+  height: number;
+  delay: number;
+}) {
+  const skin = PODIUM_SKIN[Math.min(rank, 2)];
+  const RankIcon = PODIUM_ICON[Math.min(rank, 2)];
+  const lid = 15; // cylinder cap ellipse height
+  return (
+    <div className="relative flex flex-1 basis-0 flex-col items-center justify-end">
+      {/* floor contact shadow — grounds the cylinder (no hard base line) */}
+      <span
+        aria-hidden
+        style={{
+          position: "absolute",
+          left: "-5%",
+          right: "-5%",
+          bottom: -8,
+          height: 19,
+          borderRadius: "50%",
+          background:
+            "radial-gradient(ellipse at 50% 50%, rgba(34,12,6,0.5) 0%, rgba(34,12,6,0.26) 42%, rgba(34,12,6,0) 75%)",
+        }}
+      />
+      {/* rank icon */}
+      <div className="flex h-7 items-end justify-center">
+        <RankIcon
+          className="podium-crown size-5"
+          style={{ color: skin.icon, animationDelay: `${delay + 640}ms` }}
+          strokeWidth={2}
+          aria-hidden
+        />
+      </div>
+
+      {/* points count-up — cleared well above the cylinder cap */}
+      <div className="mb-3 mt-1 flex items-baseline gap-0.5 leading-none">
+        <span className="font-manrope text-[18px] font-extrabold tabular-nums tracking-[-0.02em] text-ink-900">
+          <CountUp to={points} delayMs={delay} />
+        </span>
+        <span className="font-jet text-[7px] font-semibold uppercase tracking-[0.14em] text-ink-mute">
+          pts
+        </span>
+      </div>
+
+      {/* 3D cylinder bar */}
+      <div
+        className="podium-bar relative w-full"
+        style={{
+          height,
+          background: `linear-gradient(180deg,rgba(255,255,255,0.16) 0%,rgba(255,255,255,0) 15%,rgba(40,16,8,0) 64%,rgba(40,16,8,0.42) 100%), ${skin.body}`,
+          borderRadius: "5px 5px 50% 50% / 5px 5px 14px 14px",
+          animationDelay: `${delay}ms`,
+        }}
+      >
+        {/* lit elliptical cap — the top of the cylinder */}
+        <span
+          aria-hidden
+          style={{
+            position: "absolute",
+            left: 0,
+            right: 0,
+            top: -(lid / 2),
+            height: lid,
+            background: skin.lid,
+            borderRadius: "50%",
+            boxShadow: "inset 0 2px 3px rgba(255,255,255,0.65)",
+          }}
+        />
+        {/* gold winner — a slow gleam sweeps the cylinder */}
+        {rank === 0 && <span className="podium-shine" aria-hidden />}
+      </div>
+    </div>
+  );
+}
+
+// Opening chat card — the live top three as an animated 3D podium:
+// bars rise from the base, points count up, the winner is crowned.
 function StandingsBubble({
   standings,
   onOpenFull,
@@ -1328,92 +1588,78 @@ function StandingsBubble({
   onOpenFull: () => void;
 }) {
   const top = standings.rows.slice(0, 3);
-  // Each tier carries its own card background, ring colour, badge
-  // gradient, and a Lucide icon. The first place tile picks up a
-  // one-shot sheen animation (medal-sheen in app.css) so it reads as
-  // the celebrated row without being a confetti party.
-  const TIER = [
-    {
-      ring: "ring-yellow/55",
-      bg: "bg-[radial-gradient(120%_120%_at_100%_0%,#FFF8D6_0%,#FFFDF5_55%,#FFFFFF_100%)]",
-      badge: "bg-gradient-to-br from-[#FFD43E] to-[#B08D00] text-black",
-      Icon: Crown,
-      label: "1st",
-      sheen: true,
-    },
-    {
-      ring: "ring-ink-300/60",
-      bg: "bg-[radial-gradient(120%_120%_at_100%_0%,#F4F4F2_0%,#FBFBFA_55%,#FFFFFF_100%)]",
-      badge: "bg-gradient-to-br from-[#DAD9D6] to-[#94908B] text-ink-900",
-      Icon: Medal,
-      label: "2nd",
-      sheen: false,
-    },
-    {
-      ring: "ring-[#d8a26a]/55",
-      bg: "bg-[radial-gradient(120%_120%_at_100%_0%,#F8E5CF_0%,#FDF7EE_55%,#FFFFFF_100%)]",
-      badge: "bg-gradient-to-br from-[#CB8E55] to-[#7E4E1F] text-white",
-      Icon: Award,
-      label: "3rd",
-      sheen: false,
-    },
-  ] as const;
+  const maxPoints = Math.max(1, ...top.map((t) => t.points));
+  const barHeight = (pts: number) =>
+    Math.round(58 + (pts / maxPoints) * 70);
+
+  // Display order — 2nd · 1st · 3rd, so the winner stands centre.
+  const order =
+    top.length === 3
+      ? [
+          { row: top[1], rank: 1 },
+          { row: top[0], rank: 0 },
+          { row: top[2], rank: 2 },
+        ]
+      : top.map((row, i) => ({ row, rank: i }));
+  // Bars land 2nd → 3rd → 1st, so the champion settles last.
+  const riseDelay = [240, 40, 130];
+
   return (
-    <div>
-      <p className="inline-flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-[0.22em] text-red/80">
-        <Trophy className="size-3.5 text-red" strokeWidth={2.5} aria-hidden />
-        Team standings
-      </p>
-      <p className="text-[12px] leading-relaxed text-ink-500 mt-1">
+    <BotCard
+      eyebrow={
+        <span className="inline-flex items-center gap-1.5">
+          <Trophy className="size-3.5" strokeWidth={2.5} aria-hidden />
+          Team standings
+        </span>
+      }
+    >
+      <p className="text-[13px] leading-relaxed text-ink-dim">
         Current top three after{" "}
-        <span className="font-semibold text-ink-700">
+        <span className="font-semibold text-ink-900">
           {standings.afterN} {standings.afterN === 1 ? "result" : "results"}
         </span>
         .
       </p>
 
-      <ol className="mt-2.5 flex flex-col gap-1.5">
-        {top.map((t, i) => {
-          const tier = TIER[i] ?? TIER[2];
-          const Icon = tier.Icon;
-          return (
-            <li
-              key={`${t.name}-${i}`}
-              className={`relative overflow-hidden flex items-center gap-3 rounded-xl ${tier.bg} px-3 py-2.5 shadow-[0_1px_2px_rgba(11,9,10,0.04),0_8px_22px_-18px_rgba(11,9,10,0.45)] ring-1 ${tier.ring} ${tier.sheen ? "medal-sheen" : ""}`}
+      {/* Animated 3D podium */}
+      <div className="mt-3 pt-5">
+        <div className="flex items-end justify-center gap-2.5">
+          {order.map(({ row, rank }) => (
+            <PodiumColumn
+              key={`${rank}-${row.name}`}
+              points={row.points}
+              rank={rank}
+              height={barHeight(row.points)}
+              delay={riseDelay[rank] ?? 0}
+            />
+          ))}
+        </div>
+        {/* team names */}
+        <div className="flex justify-center gap-2.5 pt-3.5">
+          {order.map(({ row, rank }) => (
+            <p
+              key={`n-${rank}-${row.name}`}
+              className="line-clamp-2 flex-1 basis-0 text-center text-[11.5px] font-bold leading-tight text-ink-900"
             >
-              <span
-                className={`relative grid size-8 shrink-0 place-items-center rounded-full ${tier.badge} ring-1 ring-inset ring-white/40 shadow-[0_2px_6px_-2px_rgba(11,9,10,0.35)]`}
-              >
-                <Icon className="size-4" strokeWidth={2.25} aria-hidden />
-                <span className="sr-only">{tier.label} place</span>
-              </span>
-              <span className="min-w-0 flex-1 truncate text-sm font-semibold text-ink-900">
-                {t.name}
-              </span>
-              <span className="shrink-0 font-opensans text-sm font-bold tabular-nums text-ink-900">
-                {t.points}
-                <span className="ml-1 text-[10px] font-semibold uppercase tracking-wide text-ink-400">
-                  pts
-                </span>
-              </span>
-            </li>
-          );
-        })}
-      </ol>
+              {row.name}
+            </p>
+          ))}
+        </div>
+      </div>
 
       <button
         type="button"
         onClick={onOpenFull}
-        className="group mt-2.5 inline-flex items-center gap-1.5 rounded-full border border-black/15 bg-white px-4 py-2 text-xs font-semibold text-ink-800 shadow-sm transition-all duration-200 hover:-translate-y-px hover:border-yellow hover:bg-yellow/15 active:translate-y-0 active:scale-[0.97]"
+        className="group mt-3 inline-flex items-center gap-1.5 rounded-full bg-white px-4 py-2 text-[12px] font-semibold text-ink-900 ring-1 ring-inset ring-rule transition-all duration-200 hover:bg-yellow/15 hover:ring-yellow active:scale-[0.97]"
       >
         Full standings &amp; history
         <ChevronRight
-          className="size-3.5 text-ink-400 transition-transform duration-200 group-hover:translate-x-0.5 group-hover:text-red"
+          className="size-3.5 text-ink-mute transition-transform duration-200 group-hover:translate-x-0.5 group-hover:text-red"
           strokeWidth={2.5}
           aria-hidden
         />
       </button>
-    </div>
+    </BotCard>
   );
 }
 
@@ -1490,41 +1736,59 @@ function FinalPosterBubble({ url }: { url: string }) {
 
   return (
     <div>
-      <button
-        type="button"
-        onClick={() => setZoom(true)}
-        aria-label="View final standings poster full size"
-        style={{ touchAction: "manipulation" }}
-        className="block w-full overflow-hidden rounded-2xl focus:outline-none focus-visible:ring-2 focus-visible:ring-yellow"
+      <div
+        className="overflow-hidden rounded-[18px] rounded-tl-md border border-rule-soft bg-white"
+        style={{
+          boxShadow:
+            "0 4px 0 rgba(20,16,10,0.02), 0 22px 50px -22px rgba(40,12,12,0.3)",
+        }}
       >
-        <img
-          src={url}
-          alt="Final team standings"
-          className="block w-full h-auto select-none"
-          draggable={false}
-        />
-      </button>
-
-      <div className="mt-2 px-1 flex items-center gap-1.5">
-        <IconButton
-          label="Download final poster"
-          onClick={onDownload}
-          disabled={busy !== null}
-          tone="brand"
-        >
-          {busy === "download" ? <Spinner /> : <DownloadIcon />}
-        </IconButton>
-        <IconButton
-          label="Share final poster"
-          onClick={onShare}
-          disabled={busy !== null}
-          tone="brand"
-        >
-          {busy === "share" ? <Spinner /> : <ShareIcon />}
-        </IconButton>
-        <span className="ml-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-ink-400">
+        <div className="font-jet flex items-center gap-1.5 border-b border-rule-soft bg-plum-wash px-4 py-2 text-[10px] font-medium uppercase tracking-[0.16em] text-red">
+          <Trophy className="size-3.5" strokeWidth={2.5} aria-hidden />
           Final standings
-        </span>
+        </div>
+        <button
+          type="button"
+          onClick={() => setZoom(true)}
+          aria-label="View final standings poster full size"
+          style={{ touchAction: "manipulation" }}
+          className="block w-full focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-yellow"
+        >
+          <img
+            src={url}
+            alt="Final team standings"
+            className="block h-auto w-full select-none"
+            draggable={false}
+          />
+        </button>
+      </div>
+
+      <div className="mt-2.5 flex gap-2">
+        <PosterActionBtn
+          primary
+          disabled={busy !== null}
+          onClick={onShare}
+          icon={
+            busy === "share" ? (
+              <Spinner />
+            ) : (
+              <Share2 className="size-4" strokeWidth={2.5} aria-hidden />
+            )
+          }
+          label="Share"
+        />
+        <PosterActionBtn
+          disabled={busy !== null}
+          onClick={onDownload}
+          icon={
+            busy === "download" ? (
+              <Spinner />
+            ) : (
+              <Download className="size-4" strokeWidth={2.5} aria-hidden />
+            )
+          }
+          label="Save"
+        />
       </div>
 
       {zoom && (
@@ -1704,15 +1968,18 @@ function NewResultsBubble({
 }) {
   const shown = items.slice(0, 6);
   return (
-    <div>
-      <p className="inline-flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-[0.22em] text-red/80">
-        <span className="relative flex size-1.5">
-          <span className="absolute inline-flex size-full animate-ping rounded-full bg-red/70" />
-          <span className="relative inline-flex size-1.5 rounded-full bg-red" />
+    <BotCard
+      eyebrow={
+        <span className="inline-flex items-center gap-1.5">
+          <span className="relative flex size-1.5">
+            <span className="absolute inline-flex size-full animate-ping rounded-full bg-red/70" />
+            <span className="relative inline-flex size-1.5 rounded-full bg-red" />
+          </span>
+          Just announced
         </span>
-        Just announced
-      </p>
-      <p className="font-opensans text-[15px] font-semibold text-ink-900 mt-1.5">
+      }
+    >
+      <p className="text-[15px] font-bold text-ink-900">
         {items.length === 1
           ? "A new result is in"
           : `${items.length} new results are in`}
@@ -1723,29 +1990,84 @@ function NewResultsBubble({
             key={program.id}
             type="button"
             onClick={() => onView(level, program)}
-            className="group flex items-center justify-between gap-3 rounded-xl border border-black/10 bg-white px-3.5 py-2.5 text-left shadow-sm transition-all duration-200 hover:-translate-y-px hover:border-yellow hover:bg-yellow/10 active:translate-y-0 active:scale-[0.99]"
+            className="group flex items-center justify-between gap-3 rounded-[14px] border border-rule-soft bg-cream-3 px-3.5 py-2.5 text-left transition-all duration-200 hover:border-yellow hover:bg-yellow/15 active:scale-[0.99]"
           >
             <span className="min-w-0">
-              <span className="block truncate text-sm font-semibold text-ink-900">
+              <span className="block truncate text-[14px] font-bold text-ink-900">
                 {programLabel(program)}
               </span>
-              <span className="block truncate text-[11px] text-ink-500">
+              <span className="block truncate text-[11px] text-ink-dim">
                 {levelLabel(level)}
               </span>
             </span>
             <ChevronRight
-              className="size-4 shrink-0 text-ink-400 transition-transform duration-200 group-hover:translate-x-0.5 group-hover:text-red"
+              className="size-4 shrink-0 text-ink-mute transition-transform duration-200 group-hover:translate-x-0.5 group-hover:text-red"
               strokeWidth={2.5}
               aria-hidden
             />
           </button>
         ))}
         {items.length > shown.length && (
-          <span className="px-1 pt-0.5 text-[11px] text-ink-500">
+          <span className="px-1 pt-0.5 text-[11px] text-ink-dim">
             +{items.length - shown.length} more — pick a category to see all
           </span>
         )}
       </div>
+    </BotCard>
+  );
+}
+
+// ─── Chips — the category / program pickers ───────────────────────────
+function Chip({
+  label,
+  code,
+  muted = false,
+  onClick,
+}: {
+  label: ReactNode;
+  code?: string | null;
+  muted?: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`inline-flex max-w-full items-center gap-2 rounded-2xl bg-white px-3.5 py-2.5 text-left text-[14px] font-semibold leading-snug tracking-[-0.01em] text-ink-900 ring-1 ring-inset ring-rule transition-all duration-150 hover:bg-yellow/10 hover:ring-yellow active:scale-[0.97] ${
+        muted ? "opacity-65" : ""
+      }`}
+    >
+      <span
+        aria-hidden
+        className={`size-1.5 shrink-0 rounded-full ${
+          muted ? "bg-ink-mute" : "bg-red"
+        }`}
+      />
+      <span className="min-w-0">{label}</span>
+      {code && (
+        <span className="font-jet shrink-0 whitespace-nowrap rounded-full bg-plum-tint px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-[0.1em] text-red">
+          {code}
+        </span>
+      )}
+    </button>
+  );
+}
+
+function ChipGroup({
+  title,
+  children,
+}: {
+  title?: ReactNode;
+  children: ReactNode;
+}) {
+  return (
+    <div>
+      {title && (
+        <div className="mb-3.5 text-[15px] font-bold tracking-[-0.01em] text-ink-900">
+          {title}
+        </div>
+      )}
+      <div className="flex flex-wrap gap-2">{children}</div>
     </div>
   );
 }
@@ -1758,31 +2080,18 @@ function LevelPickerBubble({
   onPick: (l: Level) => void;
 }) {
   return (
-    <div>
-      <p className="text-sm font-medium text-ink-800">Which category?</p>
-      <div className="mt-3 flex flex-wrap gap-2">
+    <BotCard>
+      <ChipGroup title="Which category?">
         {levels.map((l) => (
-          <button
+          <Chip
             key={l.id}
-            type="button"
+            label={levelLabel(l)}
+            muted={l.published === 0}
             onClick={() => onPick(l)}
-            className="group inline-flex items-center gap-2 rounded-full border border-black/12 bg-white px-4 py-2.5 transition-all duration-200 hover:border-yellow hover:bg-yellow/10 hover:-translate-y-px hover:shadow-[0_6px_16px_-8px_rgba(11,9,10,0.25)] active:translate-y-0 active:scale-[0.97]"
-          >
-            <span
-              aria-hidden
-              className={`size-1.5 rounded-full ${
-                l.published > 0
-                  ? "bg-green-600 group-hover:bg-green-600"
-                  : "bg-ink-300"
-              }`}
-            />
-            <span className="text-sm font-semibold text-ink-900">
-              {levelLabel(l)}
-            </span>
-          </button>
+          />
         ))}
-      </div>
-    </div>
+      </ChipGroup>
+    </BotCard>
   );
 }
 
@@ -1799,71 +2108,51 @@ function ProgramPickerBubble({
   const pending = level.programs.filter((p) => !p.result);
 
   return (
-    <div>
-      <p className="text-sm text-ink-700">
-        Programs in{" "}
-        <span className="font-semibold text-ink-900">{levelLabel(level)}</span>
-        {ready.length > 0 && (
-          <span className="ml-2 inline-flex items-center gap-1 align-middle text-[10px] font-bold uppercase tracking-wide text-green-700">
-            <span className="size-1.5 rounded-full bg-green-600 animate-pulse" />
-            Live
-          </span>
-        )}
-      </p>
-
-      {ready.length > 0 ? (
-        <div className="mt-2.5 flex flex-col gap-1">
-          {ready.map((p) => (
-            <button
+    <BotCard>
+      <ChipGroup
+        title={
+          <>
+            Programs in{" "}
+            <span className="font-cormorant text-[1.1em] font-semibold italic text-red">
+              {levelLabel(level)}
+            </span>
+          </>
+        }
+      >
+        {ready.length > 0 ? (
+          ready.map((p) => (
+            <Chip
               key={p.id}
-              type="button"
+              label={programLabel(p)}
+              code={p.code}
               onClick={() => onPick(level, p)}
-              className="group flex items-center gap-2 rounded-xl border border-black/[0.08] bg-white px-3 py-2 text-left transition-all duration-200 active:scale-[0.99] hover:border-yellow hover:bg-yellow/[0.07] hover:shadow-[0_6px_14px_-12px_rgba(11,9,10,0.35)]"
-            >
-              <span className="min-w-0 flex-1 truncate text-sm font-semibold leading-snug text-ink-900">
-                {programLabel(p)}
-              </span>
-              <span className="shrink-0 font-mono text-[10px] font-semibold uppercase tracking-wider text-ink-400">
-                {p.code}
-              </span>
-              <span
-                aria-hidden
-                className="grid size-6 shrink-0 place-items-center rounded-full bg-black/[0.04] text-ink-500 transition-all duration-200 group-hover:bg-yellow group-hover:text-black"
-              >
-                <ChevronRight
-                  className="size-3.5 transition-transform duration-200 group-hover:translate-x-px"
-                  strokeWidth={2.75}
-                />
-              </span>
-            </button>
-          ))}
-        </div>
-      ) : (
-        <p className="text-xs text-ink-400 mt-2">
-          No results published yet in this category.
-        </p>
-      )}
+            />
+          ))
+        ) : (
+          <p className="text-[13px] text-ink-mute">
+            No results announced in this category yet.
+          </p>
+        )}
+      </ChipGroup>
 
       {pending.length > 0 && (
-        <details className="mt-3 group">
-          <summary className="inline-flex items-center gap-1 cursor-pointer text-[11px] text-ink-400 font-semibold tracking-wide uppercase hover:text-ink-700 transition-colors">
+        <details className="group mt-3.5">
+          <summary className="font-jet inline-flex cursor-pointer items-center gap-1 text-[11px] font-medium uppercase tracking-[0.1em] text-ink-mute transition-colors hover:text-ink-dim">
             <ChevronDown
               className="size-3 transition-transform duration-200 group-open:rotate-180"
               strokeWidth={3}
               aria-hidden
             />
-            Programs awaiting results
+            Awaiting results
           </summary>
-          <div className="mt-2.5 flex flex-wrap gap-1.5">
+          <div className="mt-2.5 flex flex-wrap gap-2">
             {pending.map((p) => (
-              <button
+              <Chip
                 key={p.id}
-                type="button"
+                label={programLabel(p)}
+                muted
                 onClick={() => onPick(level, p)}
-                className="rounded-full border border-dashed border-black/15 bg-paper-2 px-3 py-1 text-[11px] font-medium text-ink-500 transition-colors hover:border-solid hover:border-red/40 hover:text-red"
-              >
-                <span>{programLabel(p)}</span>
-              </button>
+              />
             ))}
           </div>
         </details>
@@ -1872,7 +2161,7 @@ function ProgramPickerBubble({
       <ChoiceRow>
         <ChoiceButton onClick={onDifferentLevel}>Different category</ChoiceButton>
       </ChoiceRow>
-    </div>
+    </BotCard>
   );
 }
 
@@ -1888,13 +2177,10 @@ function AwaitingBubble({
   onDifferentLevel: () => void;
 }) {
   return (
-    <div>
-      <p className="text-sm text-ink-800">
-        <span className="font-semibold text-ink-900">{programLabel(program)}</span>{" "}
-        isn't announced yet.
-      </p>
-      <p className="text-xs text-ink-500 mt-1">
-        Try another program — results come in fast.
+    <BotCard eyebrow="Not yet announced">
+      <p className="text-[14px] leading-relaxed text-ink-dim">
+        <span className="font-bold text-ink-900">{programLabel(program)}</span>{" "}
+        hasn't been announced yet — results come in fast, so try another.
       </p>
       <ChoiceRow>
         <ChoiceButton onClick={onAnotherInLevel}>
@@ -1902,7 +2188,7 @@ function AwaitingBubble({
         </ChoiceButton>
         <ChoiceButton onClick={onDifferentLevel}>Different category</ChoiceButton>
       </ChoiceRow>
-    </div>
+    </BotCard>
   );
 }
 
@@ -1925,40 +2211,43 @@ function ResultTextBubble({
   const ranked = [...winners]
     .filter((w) => w.position >= 1)
     .sort((a, b) => a.position - b.position);
-  const ordinal = ["1st", "2nd", "3rd", "4th"];
   return (
-    <div>
-      <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-red/80">
-        {levelLabel(level)}
-      </p>
-      <p className="text-base font-semibold text-ink-900 mt-1">
+    <BotCard eyebrow={levelLabel(level)}>
+      <p className="font-cormorant text-[1.3rem] font-semibold italic leading-tight text-ink-900">
         {programLabel(program)}
       </p>
       {ranked.length === 0 ? (
-        <p className="text-xs text-ink-500 mt-1.5">Result published.</p>
+        <p className="mt-1.5 text-[13px] text-ink-dim">Result published.</p>
       ) : (
-        <ul className="mt-2 space-y-1.5">
-          {ranked.map((w, i) => {
-            const unit = w.unit_ml;
-            return (
-              <li key={i} className="flex items-baseline gap-2 text-sm">
-                <span className="shrink-0 inline-flex w-9 justify-center rounded-full bg-red/10 py-0.5 text-[10px] font-bold text-red">
-                  {ordinal[Math.min(Math.max(w.position, 1), 4) - 1] ??
-                    w.position}
-                </span>
-                <span className="font-semibold text-ink-900">
+        <ol className="mt-2.5 flex flex-col gap-1.5">
+          {ranked.map((w, i) => (
+            <li
+              key={i}
+              className="flex items-center gap-3 rounded-[12px] border border-rule-soft bg-cream-3 px-3 py-2"
+            >
+              <span
+                className={`grid size-7 shrink-0 place-items-center rounded-[9px] font-cormorant text-[13px] font-bold italic ${
+                  RANK_TILE[Math.min(w.position - 1, 2)]
+                }`}
+              >
+                {ROMAN[Math.min(Math.max(w.position, 1), 5) - 1] ?? w.position}
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-[14px] font-bold text-ink-900">
                   {w.name_en ?? w.name_ml}
                 </span>
-                {unit && (
-                  <span className="text-xs text-ink-500">· {unit}</span>
+                {w.unit_ml && (
+                  <span className="block truncate text-[11px] text-ink-dim">
+                    {w.unit_ml}
+                  </span>
                 )}
-              </li>
-            );
-          })}
-        </ul>
+              </span>
+            </li>
+          ))}
+        </ol>
       )}
-      <p className="text-[11px] text-ink-400 mt-2.5">
-        Small program — no poster for this one; points are in the team
+      <p className="mt-2.5 text-[11px] leading-relaxed text-ink-mute">
+        A small program — no poster for this one; the points are in the team
         standings.
       </p>
       <ChoiceRow>
@@ -1967,7 +2256,215 @@ function ResultTextBubble({
         </ChoiceButton>
         <ChoiceButton onClick={onDifferentLevel}>Different category</ChoiceButton>
       </ChoiceRow>
+    </BotCard>
+  );
+}
+
+// Short, human date for the poster footer. Result bubbles only render
+// after a user interaction (client-side), so locale formatting here
+// can't trigger a hydration mismatch.
+function fmtStamp(iso: string | null): string | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toLocaleDateString("en-GB", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
+}
+
+// One slot in a poster action row — full-width, primary (dark) or plain.
+function PosterActionBtn({
+  icon,
+  label,
+  iconOnly = false,
+  primary = false,
+  disabled = false,
+  onClick,
+}: {
+  icon: ReactNode;
+  label: string;
+  iconOnly?: boolean;
+  primary?: boolean;
+  disabled?: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      aria-label={iconOnly ? label : undefined}
+      title={iconOnly ? label : undefined}
+      className={`inline-flex items-center justify-center gap-1.5 rounded-xl py-2.5 text-[12.5px] font-bold tracking-[-0.01em] transition-all duration-150 active:scale-[0.97] disabled:opacity-50 disabled:active:scale-100 ${
+        iconOnly ? "shrink-0 px-3" : "min-w-0 flex-1 px-2"
+      } ${
+        primary
+          ? "bg-ink-900 text-white shadow-[0_8px_18px_-10px_rgba(0,0,0,0.45)]"
+          : "border border-rule bg-white text-ink-900 hover:border-yellow"
+      }`}
+    >
+      {icon}
+      {!iconOnly && <span className="truncate">{label}</span>}
+    </button>
+  );
+}
+
+// The poster display section — a winners card in the chat design
+// system. Brand band, roman-numeral rank tiles and footer mirror the
+// festival poster; real winner data (name, unit, marks, grade) fills
+// it. The full Konva festival poster is one tap away.
+function WinnersPoster({
+  programName,
+  levelName,
+  code,
+  winners,
+  publishedAt,
+  zoomable = false,
+}: {
+  programName: string;
+  levelName: string;
+  code: string | null;
+  winners: Winner[];
+  publishedAt: string | null;
+  zoomable?: boolean;
+}) {
+  return (
+    <div
+      className="overflow-hidden rounded-[18px] rounded-tl-md border border-rule-soft bg-white"
+      style={{
+        boxShadow:
+          "0 4px 0 rgba(20,16,10,0.02), 0 22px 50px -22px rgba(40,12,12,0.3)",
+      }}
+    >
+      {/* Brand band */}
+      <div className="relative overflow-hidden bg-gradient-to-br from-brand-800 to-red px-4 py-4 text-white">
+        <span
+          aria-hidden
+          className="absolute -right-14 -top-14 size-36 rounded-full bg-yellow/10 blur-lg"
+        />
+        <div className="relative flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="font-jet text-[10px] font-medium uppercase tracking-[0.16em] text-yellow">
+              Result{code ? ` · ${code}` : ""}
+            </div>
+            <div className="font-cormorant mt-1.5 truncate text-[1.6rem] font-semibold italic leading-[1.1]">
+              {programName}
+            </div>
+            <div className="mt-1 truncate text-[11px] text-white/70">
+              {levelName}
+            </div>
+          </div>
+          <Monogram size={36} />
+        </div>
+        <span
+          aria-hidden
+          className="absolute inset-x-0 bottom-0 h-0.5 bg-gradient-to-r from-yellow via-gold-200 to-transparent"
+        />
+      </div>
+
+      {/* Winner rows */}
+      <div className="px-4">
+        {winners.map((w, i) => (
+          <div
+            key={i}
+            className="grid grid-cols-[44px_1fr_auto] items-center gap-3.5 border-t border-rule-soft py-3.5"
+          >
+            <span
+              className={`grid size-11 place-items-center rounded-[14px] font-cormorant text-[17px] font-bold italic ${
+                RANK_TILE[Math.min(i, 2)]
+              }`}
+            >
+              {ROMAN[Math.min(i, 4)]}
+            </span>
+            <div className="min-w-0">
+              <div className="truncate text-[15px] font-bold leading-tight text-ink-900">
+                {w.name_en ?? w.name_ml}
+              </div>
+              {w.unit_ml && (
+                <div className="mt-0.5 truncate text-[11.5px] text-ink-dim">
+                  {w.unit_ml}
+                </div>
+              )}
+            </div>
+            {(w.marks != null || w.grade) && (
+              <div className="text-right">
+                {w.marks != null && (
+                  <div className="font-jet text-[13px] tracking-[0.02em] text-ink-900">
+                    {w.marks}
+                  </div>
+                )}
+                {w.grade && (
+                  <div className="font-jet mt-0.5 text-[9px] font-semibold uppercase tracking-[0.12em] text-ink-mute">
+                    {w.grade}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+
+      {/* Footer */}
+      <div className="font-jet flex items-center justify-between border-t border-rule-soft bg-plum-wash px-4 py-2.5 text-[9px] uppercase tracking-[0.14em] text-ink-mute">
+        <span>{publishedAt ?? "Live result"}</span>
+        <span className="font-semibold text-red">
+          {zoomable ? "Tap to open poster" : "#Sahityotsav"}
+        </span>
+      </div>
     </div>
+  );
+}
+
+// Celebration burst — a one-shot particle burst that fires the moment a
+// result poster lands. 28 pieces (dots, squares, 2px "lines") explode
+// from a single origin point near the top of the screen, arc up ~120px
+// then fall ~320px past the viewport while spinning. Ported from the
+// design's CelebrationBurst + burstUp keyframe (CSS in app.css).
+function CelebrationBurst({ onDone }: { onDone: () => void }) {
+  useEffect(() => {
+    const reduce = window.matchMedia?.(
+      "(prefers-reduced-motion: reduce)",
+    ).matches;
+    // Outlast the slowest piece (2.5s flight + 0.5s delay) before unmount.
+    const t = window.setTimeout(onDone, reduce ? 0 : 3200);
+    return () => window.clearTimeout(t);
+  }, [onDone]);
+
+  // Deterministic seeded RNG — organic-looking but stable across renders.
+  const pieces = useMemo<CSSProperties[]>(() => {
+    const seed = (n: number) => ((n * 9301 + 49297) % 233280) / 233280;
+    const colors = ["#BF0603", "#FFCE05", "#CF1C19", "#FFE072", "#0B090A"];
+    return Array.from({ length: 28 }, (_, i) => {
+      const shape = i % 3; // 0 dot · 1 square · 2 line
+      const size = 5 + Math.floor(seed(i + 13) * 6);
+      return {
+        "--bx": `${((seed(i + 1) - 0.5) * 380).toFixed(1)}px`,
+        "--delay": `${(seed(i + 5) * 0.5).toFixed(2)}s`,
+        "--dur": `${(1.6 + seed(i + 9) * 0.9).toFixed(2)}s`,
+        "--size": `${size}px`,
+        "--h": `${shape === 2 ? 2 : size}px`,
+        "--r": shape === 0 ? "999px" : "1px",
+        "--c": colors[i % colors.length],
+      } as CSSProperties;
+    });
+  }, []);
+
+  // Portal to <body> — the chat <main> has its own stacking context
+  // (relative + z-10) that the sticky header sits above, so a fixed
+  // child can't escape it without portalling out.
+  if (typeof document === "undefined") return null;
+  return createPortal(
+    <div
+      aria-hidden
+      className="pointer-events-none fixed inset-x-0 top-[32%] z-[60]"
+    >
+      {pieces.map((s, i) => (
+        <span key={i} className="cb-piece" style={s} />
+      ))}
+    </div>,
+    document.body,
   );
 }
 
@@ -1979,7 +2476,7 @@ function ResultBubble({
   program,
   winners,
   resultNo,
-  onDifferentLevel,
+  onAnotherInLevel,
 }: {
   eventName: string;
   siteUrl: string;
@@ -1989,20 +2486,20 @@ function ResultBubble({
   winners: Winner[];
   resultNo: string | null;
   onAnotherInLevel: () => void;
-  onDifferentLevel: () => void;
 }) {
   const sorted = [...winners].sort((a, b) => a.position - b.position);
+  const ranked = sorted.filter((w) => w.position >= 1);
   const stageRef = useRef<Konva.Stage | null>(null);
-  const [busy, setBusy] = useState<null | "download" | "share">(null);
+  const [busy, setBusy] = useState<null | "share">(null);
   const [zoom, setZoom] = useState(false);
-  // Shuffle offset from the tenant's saved default within its allowed set.
+  // "Change poster" steps through the tenant's allowed templates.
   const [tmpl, setTmpl] = useState(0);
   const tplChoices = usableTemplates(
     eventTemplateList(posterMeta.subdomain, posterMeta.customTemplates),
     posterMeta.disabledTemplates,
   );
-  // Each result steps through the whole template set (deterministic by
-  // result number); the shuffle button still adds on top of that.
+  // Each result starts on a template deterministically picked by its
+  // result number; "Change poster" steps on from there.
   const tpl =
     pickFromList(
       tplChoices,
@@ -2010,6 +2507,12 @@ function ResultBubble({
       posterMeta.defaultTemplateId,
       rotationOffset(resultNo, program.code) + tmpl,
     ) ?? tplChoices[0];
+  // The HTML winners card always renders; only the Konva festival
+  // poster (share / zoom) needs an enabled template.
+  const hasPoster = !!tpl;
+  // One or two winners → lead with the design-system winners card;
+  // three or more → show the festival poster directly in the chat.
+  const showCard = ranked.length <= 2;
 
   const posterData: PosterData = {
     eventName,
@@ -2024,24 +2527,12 @@ function ResultBubble({
     programName: posterProgramName(program, posterMeta.lang),
     programCode: program.code,
     resultNo,
-    winners: sorted.map((w) => {
-      const unitEn = w.unit_ml;
-      return {
-        position: w.position,
-        name: w.name_en ?? w.name_ml,
-        unit: unitEn,
-      };
-    }),
+    winners: sorted.map((w) => ({
+      position: w.position,
+      name: w.name_en ?? w.name_ml,
+      unit: w.unit_ml,
+    })),
   };
-
-  async function onDownload() {
-    setBusy("download");
-    try {
-      await exportPosterPng(stageRef.current, `${program.code}_poster.png`);
-    } finally {
-      setBusy(null);
-    }
-  }
 
   async function onShare() {
     setBusy("share");
@@ -2052,91 +2543,92 @@ function ResultBubble({
     }
   }
 
-  // Strict mode: when every poster template has been hidden by the
-  // admin, `tplChoices` is empty and we MUST NOT render a disabled
-  // template. Show a soft empty state alongside the "Another result"
-  // affordance so the chat flow can keep going.
-  if (!tpl) {
-    return (
-      <div>
-        <div className="rounded-2xl border border-dashed border-black/15 bg-white/70 px-5 py-6 text-center">
-          <p className="text-sm font-semibold text-ink-800">
-            No poster template enabled yet.
-          </p>
-          <p className="mt-1.5 text-xs leading-relaxed text-ink-700/80">
-            The organisers have hidden every poster template. Once at
-            least one is enabled, this result's poster will appear
-            here.
-          </p>
-        </div>
-        <div className="mt-3 flex justify-end">
-          <button
-            type="button"
-            onClick={onDifferentLevel}
-            className="rounded-full border border-black/15 bg-white px-4 py-2 text-xs font-semibold text-ink-800 shadow-sm transition-all duration-200 hover:-translate-y-px hover:border-yellow hover:bg-yellow/15 active:translate-y-0 active:scale-[0.97] shrink-0"
-          >
-            Another result
-          </button>
-        </div>
-      </div>
-    );
-  }
-
   return (
     <div>
+      {/* Off-screen Konva stage — the card variant needs it for the
+          share / zoom exports (the direct variant mounts its own). */}
+      {showCard && tpl && (
+        <div
+          aria-hidden
+          className="pointer-events-none fixed left-[-200vw] top-0 -z-10 opacity-0"
+        >
+          <PosterCanvas
+            data={posterData}
+            templateIndex={tpl.builtinIndex ?? 0}
+            customSrc={tpl.src ?? undefined}
+            stageRef={stageRef}
+          />
+        </div>
+      )}
+
       <button
         type="button"
-        onClick={() => setZoom(true)}
-        aria-label="View poster full size"
+        onClick={() => hasPoster && setZoom(true)}
+        disabled={!hasPoster}
+        aria-label="View the full festival poster"
         style={{ touchAction: "manipulation" }}
-        className="block w-full overflow-hidden focus:outline-none focus-visible:ring-2 focus-visible:ring-yellow"
+        className="block w-full rounded-[18px] rounded-tl-md text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-yellow disabled:cursor-default"
       >
-        <PosterCanvas
-          data={posterData}
-          templateIndex={tpl.builtinIndex ?? 0}
-          customSrc={tpl.src ?? undefined}
-          stageRef={stageRef}
-        />
+        {showCard || !tpl ? (
+          <WinnersPoster
+            programName={posterProgramName(program, posterMeta.lang)}
+            levelName={posterLevelName(level, posterMeta.lang)}
+            code={program.code}
+            winners={ranked}
+            publishedAt={fmtStamp(program.result?.published_at ?? null)}
+            zoomable={hasPoster}
+          />
+        ) : (
+          <div className="overflow-hidden rounded-[18px] rounded-tl-md">
+            <PosterCanvas
+              data={posterData}
+              templateIndex={tpl.builtinIndex ?? 0}
+              customSrc={tpl.src ?? undefined}
+              stageRef={stageRef}
+            />
+          </div>
+        )}
       </button>
 
-      <div className="mt-2 px-1 flex flex-wrap items-center justify-between gap-2">
-        <div className="flex items-center gap-1.5">
-          <IconButton
-            label="Download poster"
-            onClick={onDownload}
-            disabled={busy !== null}
-            tone="brand"
-          >
-            {busy === "download" ? <Spinner /> : <DownloadIcon />}
-          </IconButton>
-          <IconButton
-            label="Share poster"
-            onClick={onShare}
-            disabled={busy !== null}
-            tone="brand"
-          >
-            {busy === "share" ? <Spinner /> : <ShareIcon />}
-          </IconButton>
-          {tplChoices.length > 1 && (
-            <IconButton
-              label="Switch template"
-              onClick={() => setTmpl((t) => t + 1)}
-              tone="ghost"
-            >
-              <SwapIcon />
-            </IconButton>
-          )}
-        </div>
-        <button
-          type="button"
-          onClick={onDifferentLevel}
-          className="rounded-full border border-black/15 bg-white px-4 py-2 text-xs font-semibold text-ink-800 shadow-sm transition-all duration-200 hover:-translate-y-px hover:border-yellow hover:bg-yellow/15 active:translate-y-0 active:scale-[0.97] shrink-0"
-        >
-          Another result
-        </button>
+      <div className="mt-2.5 flex gap-2">
+        <PosterActionBtn
+          primary
+          disabled={!hasPoster || busy !== null}
+          onClick={onShare}
+          icon={
+            busy === "share" ? (
+              <Spinner />
+            ) : (
+              <Share2 className="size-4" strokeWidth={2.5} aria-hidden />
+            )
+          }
+          label="Share"
+        />
+        {!showCard && tpl && tplChoices.length > 1 && (
+          <PosterActionBtn
+            iconOnly
+            onClick={() => setTmpl((t) => t + 1)}
+            icon={
+              <ArrowLeftRight className="size-4" strokeWidth={2.5} aria-hidden />
+            }
+            label="Change poster"
+          />
+        )}
+        <PosterActionBtn
+          onClick={onAnotherInLevel}
+          icon={<RotateCcw className="size-4" strokeWidth={2.5} aria-hidden />}
+          label="Different"
+        />
       </div>
 
-      {zoom && (
+      {!hasPoster && (
+        <p className="mt-1.5 px-1 text-[11px] leading-relaxed text-ink-mute">
+          The poster image isn't available — every poster template has been
+          turned off by the organisers.
+        </p>
+      )}
+
+      {zoom && tpl && (
         <PosterZoomModal
           data={posterData}
           templateIndex={tpl.builtinIndex ?? 0}
@@ -2149,59 +2641,19 @@ function ResultBubble({
 }
 
 
-function IconButton({
-  label,
-  onClick,
-  disabled,
-  tone,
-  children,
-}: {
-  label: string;
-  onClick: () => void;
-  disabled?: boolean;
-  tone: "brand" | "ghost";
-  children: ReactNode;
-}) {
-  // Tightened palette: brand carries a soft glow, ghost has a fine
-  // ink rim. Both lift 1 px on hover and settle on press — same
-  // motion vocabulary as ChoiceButton so the action row reads as a
-  // single instrument.
-  const toneCls =
-    tone === "brand"
-      ? "bg-red text-white shadow-[0_6px_14px_-8px_rgba(191,6,3,0.55)] hover:bg-brand-600 active:shadow-none"
-      : "bg-paper text-ink-800 ring-1 ring-inset ring-ink-900/10 hover:bg-yellow/15 hover:ring-yellow/60";
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={disabled}
-      aria-label={label}
-      title={label}
-      className={`inline-flex items-center justify-center size-10 rounded-full transition-all duration-200 hover:-translate-y-px active:translate-y-0 active:scale-[0.96] disabled:opacity-50 disabled:hover:translate-y-0 ${toneCls}`}
-    >
-      {children}
-    </button>
-  );
-}
-
-const SwapIcon = () => <ArrowLeftRight className="size-[18px]" aria-hidden />;
-const DownloadIcon = () => <Download className="size-[18px]" aria-hidden />;
-const ShareIcon = () => <Share2 className="size-[18px]" aria-hidden />;
-
 function Spinner() {
   return (
     <span
       aria-hidden
-      className="size-4 rounded-full border-2 border-current/30 border-t-current animate-spin"
+      className="size-4 animate-spin rounded-full border-2 border-current/30 border-t-current"
     />
   );
 }
 
+// Hairline-divided row of secondary choices under a bot message.
 function ChoiceRow({ children }: { children: ReactNode }) {
-  // Hairline divider instead of dashed — sits more quietly between the
-  // message body and its CTAs.
   return (
-    <div className="mt-3 flex flex-wrap gap-2 pt-3 border-t border-ink-900/[0.06]">
+    <div className="mt-3.5 flex flex-wrap gap-2 border-t border-rule-soft pt-3.5">
       {children}
     </div>
   );
@@ -2210,20 +2662,16 @@ function ChoiceRow({ children }: { children: ReactNode }) {
 function ChoiceButton({
   onClick,
   children,
-  primary = false,
 }: {
   onClick: () => void;
   children: ReactNode;
-  primary?: boolean;
 }) {
-  // Pill CTA. Primary keeps a short, low-blur red glow; secondary
-  // trades the hard black border for an ink-tinted ring that warms to
-  // yellow on hover. Motion is unified with IconButton.
-  const cls = primary
-    ? "rounded-full bg-red text-white px-4 py-2 text-xs font-semibold shadow-[0_6px_14px_-8px_rgba(191,6,3,0.55)] transition-all duration-200 hover:-translate-y-px hover:bg-brand-600 active:translate-y-0 active:scale-[0.97] active:shadow-none"
-    : "rounded-full bg-paper text-ink-800 ring-1 ring-inset ring-ink-900/12 px-4 py-2 text-xs font-semibold transition-all duration-200 hover:-translate-y-px hover:bg-yellow/15 hover:ring-yellow/60 active:translate-y-0 active:scale-[0.97]";
   return (
-    <button type="button" onClick={onClick} className={cls}>
+    <button
+      type="button"
+      onClick={onClick}
+      className="rounded-full bg-white px-4 py-2 text-[12px] font-semibold text-ink-900 ring-1 ring-inset ring-rule transition-all duration-150 hover:bg-yellow/15 hover:ring-yellow active:scale-[0.97]"
+    >
       {children}
     </button>
   );
