@@ -883,9 +883,21 @@ function ChatFlow({
   // reader should see the lead bubble (e.g. the final poster), not be
   // thrown to the bottom on load.
   const firstRenderRef = useRef(true);
+  // When the user actively picks a level/program we want the resulting
+  // bubble in view regardless of scroll position — set this to the
+  // bubble id to focus and the next render will scroll to its top.
+  const focusIdRef = useRef<string | null>(null);
 
   const scrollToEnd = () =>
     endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+
+  const scrollToBubble = (id: string) => {
+    const el = document.querySelector(
+      `[data-bubble-id="${id}"]`,
+    ) as HTMLElement | null;
+    if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+    else scrollToEnd();
+  };
 
   // Warm the poster-template cache once the chat is interactive so the
   // first result a user opens renders instantly (idle, low priority).
@@ -906,10 +918,21 @@ function ChatFlow({
   // Auto-scroll to bottom on new message — but only if the reader is
   // following along. If they've scrolled up, the "Latest" pill (which
   // shows whenever !atBottom) is their cue instead.
+  //
+  // Exception: when the user just picked a level/program (focusIdRef
+  // set), force a scroll to that bubble's top regardless of position
+  // so the tap always brings the answer into view (esp. the tall
+  // poster bubble where `block: "end"` would land mid-image).
   useEffect(() => {
     if (firstRenderRef.current) {
       firstRenderRef.current = false;
       return; // initial load — stay at the top, show the lead bubble
+    }
+    if (focusIdRef.current) {
+      const id = focusIdRef.current;
+      focusIdRef.current = null;
+      scrollToBubble(id);
+      return;
     }
     if (atBottomRef.current) scrollToEnd();
   }, [bubbles.length, typing]);
@@ -928,7 +951,8 @@ function ChatFlow({
     return () => window.removeEventListener("scroll", onScroll);
   }, []);
 
-  function push(b: Bubble) {
+  function push(b: Bubble, opts?: { focus?: boolean }) {
+    if (opts?.focus) focusIdRef.current = b.id;
     setBubbles((prev) => [...prev, b]);
   }
 
@@ -941,108 +965,138 @@ function ChatFlow({
 
   // Handlers — referenced from rendered bubbles below
   function handlePickLevel(level: Level) {
-    push({
-      id: nextId("u"),
-      side: "user",
-      node: <span>{levelLabel(level)}</span>,
-    });
+    push(
+      {
+        id: nextId("u"),
+        side: "user",
+        node: <span>{levelLabel(level)}</span>,
+      },
+      { focus: true },
+    );
     withTyping(380, () => {
-      push({
-        id: nextId("b"),
-        side: "bot",
-        node: <ProgramPickerBubble level={level} onPick={handlePickProgram} onDifferentLevel={handleDifferentLevel} />,
-      });
+      push(
+        {
+          id: nextId("b"),
+          side: "bot",
+          node: <ProgramPickerBubble level={level} onPick={handlePickProgram} onDifferentLevel={handleDifferentLevel} />,
+        },
+        { focus: true },
+      );
     });
   }
 
   function handlePickProgram(level: Level, program: Program) {
-    push({
-      id: nextId("u"),
-      side: "user",
-      node: <span>{programLabel(program)}</span>,
-    });
+    push(
+      {
+        id: nextId("u"),
+        side: "user",
+        node: <span>{programLabel(program)}</span>,
+      },
+      { focus: true },
+    );
     const ranked =
       program.result?.winners.filter((w) => w.position >= 1) ?? [];
     withTyping(program.result ? 480 : 280, () => {
       if (program.result && ranked.length >= 2) {
-        push({
-          id: nextId("b"),
-          side: "bot",
-          wide: true,
-          tight: true,
-          node: (
-            <ResultBubble
-              eventName={eventName}
-              siteUrl={siteUrl}
-              posterMeta={posterMeta}
-              level={level}
-              program={program}
-              winners={program.result.winners}
-              resultNo={program.result.result_no}
-              onAnotherInLevel={() => handleAnotherInLevel(level)}
-              onDifferentLevel={handleDifferentLevel}
-            />
-          ),
-        });
+        push(
+          {
+            id: nextId("b"),
+            side: "bot",
+            wide: true,
+            tight: true,
+            node: (
+              <ResultBubble
+                eventName={eventName}
+                siteUrl={siteUrl}
+                posterMeta={posterMeta}
+                level={level}
+                program={program}
+                winners={program.result.winners}
+                resultNo={program.result.result_no}
+                onAnotherInLevel={() => handleAnotherInLevel(level)}
+                onDifferentLevel={handleDifferentLevel}
+              />
+            ),
+          },
+          { focus: true },
+        );
       } else if (program.result) {
         // <2 ranked winners: published but no poster — compact text card.
-        push({
-          id: nextId("b"),
-          side: "bot",
-          node: (
-            <ResultTextBubble
-              level={level}
-              program={program}
-              winners={ranked}
-              onAnotherInLevel={() => handleAnotherInLevel(level)}
-              onDifferentLevel={handleDifferentLevel}
-            />
-          ),
-        });
+        push(
+          {
+            id: nextId("b"),
+            side: "bot",
+            node: (
+              <ResultTextBubble
+                level={level}
+                program={program}
+                winners={ranked}
+                onAnotherInLevel={() => handleAnotherInLevel(level)}
+                onDifferentLevel={handleDifferentLevel}
+              />
+            ),
+          },
+          { focus: true },
+        );
       } else {
-        push({
-          id: nextId("b"),
-          side: "bot",
-          node: (
-            <AwaitingBubble
-              level={level}
-              program={program}
-              onAnotherInLevel={() => handleAnotherInLevel(level)}
-              onDifferentLevel={handleDifferentLevel}
-            />
-          ),
-        });
+        push(
+          {
+            id: nextId("b"),
+            side: "bot",
+            node: (
+              <AwaitingBubble
+                level={level}
+                program={program}
+                onAnotherInLevel={() => handleAnotherInLevel(level)}
+                onDifferentLevel={handleDifferentLevel}
+              />
+            ),
+          },
+          { focus: true },
+        );
       }
     });
   }
 
   function handleAnotherInLevel(level: Level) {
-    push({
-      id: nextId("u"),
-      side: "user",
-      node: (
-        <>
-          Another in {levelLabel(level)}
-        </>
-      ),
-    });
+    push(
+      {
+        id: nextId("u"),
+        side: "user",
+        node: (
+          <>
+            Another in {levelLabel(level)}
+          </>
+        ),
+      },
+      { focus: true },
+    );
     withTyping(220, () => {
-      push({
-        id: nextId("b"),
-        side: "bot",
-        node: <ProgramPickerBubble level={level} onPick={handlePickProgram} onDifferentLevel={handleDifferentLevel} />,
-      });
+      push(
+        {
+          id: nextId("b"),
+          side: "bot",
+          node: <ProgramPickerBubble level={level} onPick={handlePickProgram} onDifferentLevel={handleDifferentLevel} />,
+        },
+        { focus: true },
+      );
     });
   }
 
   function handleDifferentLevel() {
-    push({ id: nextId("u"), side: "user", node: <>Different category</> });
+    push(
+      { id: nextId("u"), side: "user", node: <>Different category</> },
+      { focus: true },
+    );
     withTyping(220, () => {
-      push({
-        id: nextId("b"),
-        side: "bot",
-        node: <LevelPickerBubble levels={levels} onPick={handlePickLevel} />,
-      });
+      push(
+        {
+          id: nextId("b"),
+          side: "bot",
+          node: <LevelPickerBubble levels={levels} onPick={handlePickLevel} />,
+        },
+        { focus: true },
+      );
     });
   }
 
@@ -1085,9 +1139,22 @@ function ChatFlow({
   // One-time party-popper when a final poster leads the chat. Gated on
   // a mount effect so it's client-only — SSR renders nothing, so there's
   // no hydration mismatch from the randomised pieces.
+  //
+  // Fires once per unique final-poster URL per device — opening the
+  // page again after celebrating won't re-trigger it. A *new* final
+  // poster (different URL) cuts a fresh celebration.
   const [celebrate, setCelebrate] = useState(false);
   useEffect(() => {
-    if (finalPosterUrl) setCelebrate(true);
+    if (!finalPosterUrl) return;
+    try {
+      const key = "ssf:celebrated-final-poster";
+      if (localStorage.getItem(key) === finalPosterUrl) return;
+      localStorage.setItem(key, finalPosterUrl);
+    } catch {
+      // localStorage unavailable (private mode, quota) — fall through
+      // and celebrate anyway. Better to fire twice than to miss it.
+    }
+    setCelebrate(true);
   }, [finalPosterUrl]);
 
   // Render
@@ -1099,7 +1166,7 @@ function ChatFlow({
     >
       {celebrate && <Confetti onDone={() => setCelebrate(false)} />}
       {bubbles.map((b) => (
-        <BubbleRow key={b.id} side={b.side} wide={b.wide} tight={b.tight}>
+        <BubbleRow key={b.id} id={b.id} side={b.side} wide={b.wide} tight={b.tight}>
           {b.node}
         </BubbleRow>
       ))}
@@ -1147,11 +1214,13 @@ function ChatFlow({
 // ─────────────────────────────────────────────────────────────────────
 
 function BubbleRow({
+  id,
   side,
   wide = false,
   tight = false,
   children,
 }: {
+  id?: string;
   side: "bot" | "user";
   wide?: boolean;
   tight?: boolean;
@@ -1167,9 +1236,12 @@ function BubbleRow({
   const shellCls = isBot
     ? "bubble-bot text-ink-900 rounded-[1.25rem] rounded-tl-md"
     : "bubble-user text-white rounded-[1.25rem] rounded-tr-md";
+  // scroll-mt clears the sticky header when scrollIntoView lands on
+  // this bubble (focus scroll uses block: "start").
   return (
     <div
-      className={`animate-bubble-in flex items-start gap-2 sm:gap-2.5 ${
+      data-bubble-id={id}
+      className={`animate-bubble-in scroll-mt-28 flex items-start gap-2 sm:gap-2.5 ${
         isBot ? "justify-start" : "justify-end"
       }`}
     >
