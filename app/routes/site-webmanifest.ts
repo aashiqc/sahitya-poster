@@ -25,10 +25,16 @@ export async function loader({ request }: Route.LoaderArgs) {
     return new Response("Not found", { status: 404 });
   }
 
-  const orgName = org.name?.trim() || "Sahityotsav";
-  // Keep short_name actually short (12-char hard limit on iOS home
-  // screen before it ellipsises). For longer org names, fall back to
-  // the first word so the home-screen label stays readable.
+  // Drop the "SSF " prefix to match what the public results header
+  // already shows (sector = org.replace(/^SSF\s+/i, "") in home.tsx),
+  // so the home-screen label reads "Pantharangadi" rather than "SSF
+  // Pantharangadi Sector" — and the short_name first-word fallback
+  // doesn't degenerate to "SSF" for every tenant.
+  const orgName =
+    (org.name ?? "").replace(/^SSF\s+/i, "").trim() || "Sahityotsav";
+  // Keep short_name actually short (~12-char visible limit on iOS
+  // home screen). For longer cleaned names, fall back to the first
+  // word so the home-screen label stays readable.
   const shortName = orgName.length <= 12 ? orgName : orgName.split(/\s+/)[0];
 
   const manifest = {
