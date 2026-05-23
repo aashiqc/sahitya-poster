@@ -65,7 +65,6 @@ type SLayout = {
   nameGap: number;
   rowC0: number; // vertical CENTER of row 1 (native)
   rowPitch: number;
-  maxRows: number;
   baseNameSize: number;
   baseColor: string;
 };
@@ -110,7 +109,6 @@ export const STANDINGS_TEMPLATES: STemplate[] = [
       nameGap: 8,
       rowC0: 331,
       rowPitch: 61,
-      maxRows: 8,
       baseNameSize: 38,
       baseColor: "#4A4445",
     },
@@ -139,7 +137,6 @@ export const STANDINGS_TEMPLATES: STemplate[] = [
       nameGap: 8,
       rowC0: 378,
       rowPitch: 58,
-      maxRows: 8,
       baseNameSize: 35,
       baseColor: "#2B2738",
     },
@@ -168,7 +165,6 @@ export const STANDINGS_TEMPLATES: STemplate[] = [
       nameGap: 8,
       rowC0: 320,
       rowPitch: 62,
-      maxRows: 8,
       baseNameSize: 37,
       baseColor: "#D9D2E4",
     },
@@ -199,7 +195,6 @@ export const STANDINGS_TEMPLATES: STemplate[] = [
       nameGap: 8,
       rowC0: 378,
       rowPitch: 58,
-      maxRows: 8,
       baseNameSize: 35,
       baseColor: "#2B2738",
     },
@@ -234,7 +229,6 @@ export const STANDINGS_TEMPLATES: STemplate[] = [
       nameGap: 8,
       rowC0: 320,
       rowPitch: 62,
-      maxRows: 8,
       baseNameSize: 37,
       baseColor: "#D9D2E4",
     },
@@ -472,7 +466,10 @@ export const StandingsPosterCanvas = ({
   const displayHeight = STAGE_H * scale;
   const ready = mounted && w > 0 && imgDone;
 
-  const rows = data.rows.slice(0, LAYOUT.maxRows);
+  // Render every team. Templates used to cap at 8 to fit a baked
+  // artwork band; admins can now adjust the rank/name text size from
+  // the layout editor if the longer list overflows the artwork.
+  const rows = data.rows;
 
   return (
     <div
