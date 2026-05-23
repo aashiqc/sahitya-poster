@@ -4067,6 +4067,7 @@ function ResultModal({
                 {levelPrograms.map((p) => (
                   <option key={p.code} value={p.code}>
                     {p.code} · {p.name_ml}
+                    {p.name_en ? ` · ${p.name_en}` : ""}
                   </option>
                 ))}
               </select>
@@ -5821,12 +5822,30 @@ function ProgramListItem({ program: p }: { program: ProgramRow }) {
           {p.code}
         </span>
         <div className="min-w-0 flex-1">
-          <p lang="ml" className="text-sm font-medium truncate">
+          <p
+            lang="ml"
+            className="truncate text-[14.5px] font-semibold leading-snug"
+          >
             {p.name_ml}
           </p>
+          {p.name_en && (
+            <p className="font-sans mt-px flex items-center gap-1.5 text-[11.5px] font-medium leading-snug text-stone-600">
+              <span className="truncate">
+                {p.name_en.replace(/\s*\(\s*Girls Only\s*\)\s*/i, "").trim()}
+              </span>
+              {/\(\s*girls only\s*\)/i.test(p.name_en) && (
+                <span className="font-sans shrink-0 rounded-full bg-rose-100 px-1.5 py-[1px] text-[9px] font-bold uppercase tracking-[0.06em] text-rose-700">
+                  Girls
+                </span>
+              )}
+            </p>
+          )}
           {p.result?.topName && p.result.status === "published" && (
-            <p lang="ml" className="text-[11px] text-stone-500 truncate">
-              🥇 {p.result.topName}
+            <p className="font-sans mt-0.5 flex items-center gap-1 truncate text-[11px] text-stone-500">
+              <span aria-hidden>🥇</span>
+              <span lang="ml" className="truncate">
+                {p.result.topName}
+              </span>
             </p>
           )}
         </div>
