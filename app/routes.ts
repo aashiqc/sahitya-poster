@@ -4,6 +4,10 @@ export default [
   // ---------- Public ----------
   index("routes/home.tsx"),
   route("result/:programCode", "routes/result.$programCode.tsx"),
+  // PWA manifest — generated per-tenant from the org name so each
+  // sector installs as its own home-screen app. The static file at
+  // public/site.webmanifest was removed so requests fall through here.
+  route("site.webmanifest", "routes/site-webmanifest.ts"),
 
   // ---------- Admin ----------
   route("admin", "routes/admin.tsx"),

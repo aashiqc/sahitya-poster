@@ -40,6 +40,7 @@ import {
 } from "~/components/poster-canvas";
 import { PosterZoomModal } from "~/components/poster-modal";
 import { StandingsSheet } from "~/components/standings-sheet";
+import { InstallPrompt } from "~/components/install-prompt";
 import {
   ArrowLeftRight,
   Award,
@@ -490,6 +491,11 @@ export default function Home({ loaderData }: Route.ComponentProps) {
     <div className="font-manrope relative flex min-h-dvh flex-col text-ink-900">
       {/* Our existing flowing wave animation — kept as the page ground */}
       <WaveBackground />
+
+      {/* PWA install nudge — bottom-right toast after a short delay,
+          only on the live-results screen. Self-suppresses if already
+          installed / dismissed / opened from the installed shortcut. */}
+      <InstallPrompt orgName={sector} />
 
       {/* ── Header — editorial app bar (Sahityotsav Chat design) ── */}
       <header className="sticky top-0 z-20 border-b border-rule-soft bg-white">
