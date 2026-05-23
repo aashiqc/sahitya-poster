@@ -297,6 +297,19 @@ export default function WinnersPrint({ loaderData }: Route.ComponentProps) {
         table.winners td.resno { width: 4ch; text-align: right; }
         table.winners td.code  { width: 5ch; }
         table.winners td.prog  { font-weight: 600; }
+        table.winners td.prog .prog-ml { display: block; }
+        table.winners td.prog .prog-en {
+          display: block;
+          font-weight: 400;
+          font-size: 0.86em;
+          color: #57534e;
+          font-family: "Plus Jakarta Sans", system-ui, -apple-system, sans-serif;
+          margin-top: 1px;
+        }
+        table.winners td.prog .prog-girls {
+          color: #be185d;
+          font-weight: 600;
+        }
         table.winners td.pos   {
           font-family: "Fraunces", serif;
           font-weight: 700;
@@ -315,7 +328,7 @@ export default function WinnersPrint({ loaderData }: Route.ComponentProps) {
         /* Mark drafts in-table with a tiny inline pill so the admin
            knows which rows aren't live yet. Only the first row of a
            program carries .prog, so the pill renders once per program. */
-        tr.draft-row td.prog::after {
+        tr.draft-row td.prog .prog-ml::after {
           content: "draft";
           font-size: 9.5px;
           font-weight: 600;
@@ -356,7 +369,8 @@ export default function WinnersPrint({ loaderData }: Route.ComponentProps) {
           table.winners td.resno,
           table.winners td.code,
           table.winners td.marks { font-size: 7.5pt; }
-          tr.draft-row td.prog::after { font-size: 7pt; padding: 0.5pt 3pt; }
+          tr.draft-row td.prog .prog-ml::after { font-size: 7pt; padding: 0.5pt 3pt; }
+          table.winners td.prog .prog-en { font-size: 7.5pt; }
           a { color: inherit; text-decoration: none; }
         }
       `}</style>
@@ -538,12 +552,23 @@ export default function WinnersPrint({ loaderData }: Route.ComponentProps) {
                             </td>
                           )}
                           {isFirstRow && (
-                            <td
-                              className="prog ml"
-                              lang="ml"
-                              rowSpan={span}
-                            >
-                              {p.name_ml}
+                            <td className="prog" rowSpan={span}>
+                              <span lang="ml" className="prog-ml">
+                                {p.name_ml}
+                              </span>
+                              {p.name_en && (
+                                <span className="prog-en">
+                                  {p.name_en
+                                    .replace(
+                                      /\s*\(\s*Girls Only\s*\)\s*/i,
+                                      "",
+                                    )
+                                    .trim()}
+                                  {/\(\s*girls only\s*\)/i.test(p.name_en) && (
+                                    <span className="prog-girls"> · Girls</span>
+                                  )}
+                                </span>
+                              )}
                             </td>
                           )}
                           {posMode !== "first" && (
