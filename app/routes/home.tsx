@@ -644,38 +644,73 @@ function ApexLanding({ rootDomain }: { rootDomain: string }) {
   const sent = actionData?.ok === true;
 
   const inputCls =
-    "w-full rounded-xl border border-ink-200 bg-paper px-3.5 py-2.5 text-sm text-ink-900 placeholder:text-ink-400 focus:outline-none focus:border-brand-600 focus:ring-2 focus:ring-brand-600/25";
+    "w-full rounded-xl border border-ink-200 bg-paper px-3.5 py-2 text-sm text-ink-900 placeholder:text-ink-400 focus:outline-none focus:border-brand-600 focus:ring-2 focus:ring-brand-600/25";
 
   return (
     <main className="relative min-h-dvh bg-paper text-ink-900">
       <WaveBackground />
-      <div className="relative mx-auto flex min-h-dvh max-w-3xl flex-col justify-center px-5 py-20">
+      <div className="relative mx-auto flex min-h-dvh max-w-3xl flex-col justify-center px-5 py-8 sm:py-10">
         {/* Hero */}
         <header className="text-center">
           <p className="text-[11px] font-bold uppercase tracking-[0.3em] text-brand-700">
             <Ssf /> · Sahityotsav
           </p>
-          <h1 className="mt-3 font-display text-4xl leading-[1.05] tracking-tight sm:text-5xl">
+          <h1 className="mt-2.5 font-display text-[2rem] leading-[1.05] tracking-tight sm:text-4xl">
             Live Sahityotsav results.
           </h1>
-          <p className="mx-auto mt-4 max-w-xl text-sm leading-relaxed text-ink-700 sm:text-base">
+          <p className="mx-auto mt-3 max-w-xl text-sm leading-relaxed text-ink-700">
             Each team that runs Sahityotsav — unit, sector, division or
             district — has its own live address. Winners stream in as
             results are announced.
           </p>
-          <div className="mt-6 flex flex-wrap items-center justify-center gap-3">
+          <div className="mt-4 flex flex-wrap items-center justify-center gap-2.5">
             <a
               href="#request"
-              className="inline-flex items-center gap-2 rounded-full bg-brand-700 px-5 py-2.5 text-sm font-semibold text-paper shadow-sm hover:bg-brand-800"
+              className="inline-flex items-center gap-2 rounded-full bg-brand-700 px-5 py-2 text-sm font-semibold text-paper shadow-sm hover:bg-brand-800"
             >
               Request a new address ↓
             </a>
             <Link
               to="/admin"
-              className="inline-flex items-center gap-2 rounded-full border border-ink-200 px-5 py-2.5 text-sm font-medium text-ink-800 hover:bg-paper-2"
+              className="inline-flex items-center gap-2 rounded-full border border-ink-200 px-5 py-2 text-sm font-medium text-ink-800 hover:bg-paper-2"
             >
               Admin sign in
             </Link>
+          </div>
+
+          {/* Live examples — real sector sites the visitor can open to
+              preview what their own address would look like. */}
+          <div className="mt-5">
+            <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-ink-mute">
+              See it live
+            </p>
+            <ul className="mt-2 flex flex-wrap items-center justify-center gap-2">
+              {[
+                { sub: "pantharangadi", label: "SSF Pantharangadi" },
+                { sub: "ssfchemmad", label: "SSF Chemmad" },
+              ].map((s) => (
+                <li key={s.sub}>
+                  <a
+                    href={`https://${s.sub}.${rootDomain}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="group inline-flex items-center gap-2 rounded-full border border-ink-200 bg-paper px-3 py-1.5 text-xs text-ink-700 hover:border-brand-600 hover:bg-paper-2 hover:text-ink-900"
+                  >
+                    <span className="font-mono text-ink-900">
+                      {s.sub}.{rootDomain}
+                    </span>
+                    <span className="text-ink-400">·</span>
+                    <span className="font-medium">{s.label}</span>
+                    <span
+                      aria-hidden
+                      className="text-ink-400 transition-transform group-hover:translate-x-0.5"
+                    >
+                      ↗
+                    </span>
+                  </a>
+                </li>
+              ))}
+            </ul>
           </div>
         </header>
 
@@ -683,12 +718,12 @@ function ApexLanding({ rootDomain }: { rootDomain: string }) {
             access-request list (no mail, no leaving the site). */}
         <section
           id="request"
-          className="mt-12 rounded-2xl border border-ink-200 bg-paper-2/60 p-6 shadow-sm sm:p-8"
+          className="mt-6 rounded-2xl border border-ink-200 bg-paper-2/60 p-5 shadow-sm sm:p-6"
         >
-          <h2 className="font-display text-xl tracking-tight sm:text-2xl">
+          <h2 className="font-display text-lg tracking-tight sm:text-xl">
             Request a live results page for your team
           </h2>
-          <p className="mt-2 text-sm leading-relaxed text-ink-700">
+          <p className="mt-1 text-[13px] leading-relaxed text-ink-700">
             Send your details — the owner will set up your address
             (e.g.{" "}
             <span className="font-mono text-ink-900">
@@ -709,8 +744,8 @@ function ApexLanding({ rootDomain }: { rootDomain: string }) {
               </span>
             </div>
           ) : (
-            <Form method="post" className="mt-5 grid gap-3 sm:grid-cols-2">
-              <label className="space-y-1.5 sm:col-span-2">
+            <Form method="post" className="mt-4 grid gap-2.5 sm:grid-cols-2">
+              <label className="space-y-1 sm:col-span-2">
                 <span className="text-[11px] font-semibold uppercase tracking-wider text-ink-600">
                   Your name
                 </span>
@@ -725,7 +760,7 @@ function ApexLanding({ rootDomain }: { rootDomain: string }) {
                   className={inputCls}
                 />
               </label>
-              <label className="space-y-1.5">
+              <label className="space-y-1">
                 <span className="text-[11px] font-semibold uppercase tracking-wider text-ink-600">
                   Mobile number
                 </span>
@@ -741,7 +776,7 @@ function ApexLanding({ rootDomain }: { rootDomain: string }) {
                   className={inputCls}
                 />
               </label>
-              <label className="space-y-1.5">
+              <label className="space-y-1">
                 <span className="text-[11px] font-semibold uppercase tracking-wider text-ink-600">
                   Organisation name
                 </span>
@@ -765,7 +800,7 @@ function ApexLanding({ rootDomain }: { rootDomain: string }) {
                 <button
                   type="submit"
                   disabled={busy}
-                  className="inline-flex items-center gap-2 rounded-full bg-ink-900 px-5 py-2.5 text-sm font-semibold text-paper hover:bg-ink-800 disabled:opacity-50"
+                  className="inline-flex items-center gap-2 rounded-full bg-ink-900 px-5 py-2 text-sm font-semibold text-paper hover:bg-ink-800 disabled:opacity-50"
                 >
                   {busy ? "Sending…" : "Send request"}
                 </button>

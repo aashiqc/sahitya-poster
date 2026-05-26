@@ -63,7 +63,12 @@ export function resolveTenant(request: Request): string {
   }
 
   // localhost / *.workers.dev / preview deployments
-  return url.searchParams.get("tenant")?.trim() || DEV_DEFAULT_TENANT;
+  // `?apex=1` (or `?tenant=__apex`) forces the apex landing in dev so you
+  // can preview sahityotsav.live without editing /etc/hosts.
+  if (url.searchParams.has("apex")) return "";
+  const t = url.searchParams.get("tenant")?.trim();
+  if (t === "__apex") return "";
+  return t || DEV_DEFAULT_TENANT;
 }
 
 /** Per-request canonical origin (e.g. https://pantharangadi.sahityotsav.live).
