@@ -18,4 +18,5 @@ export default [
 
   // ---------- Owner console (host-gated to owner.<root>) ----------
   route("owner", "routes/owner.tsx"),
+  route("owner/requests", "routes/owner.requests.tsx"),
 ] satisfies RouteConfig;

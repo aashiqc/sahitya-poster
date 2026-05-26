@@ -60,6 +60,40 @@ function genPassword(len = 14): string {
   return s;
 }
 
+// Compose a `wa.me` link from a free-text mobile number — strips
+// spaces, dashes and a leading "+" so country-coded numbers like
+// "+91 98765 43210" still produce a valid WhatsApp deeplink.
+function waUrl(mobile: string): string {
+  const digits = mobile.replace(/\D+/g, "");
+  return `https://wa.me/${digits}`;
+}
+
+// Build a wa.me deep link with a prefilled credentials message so the
+// owner can ship a fresh email + password to the new admin in one
+// tap. The password lives only in the URL of that one click — we
+// never persist plaintext server-side. Caller is responsible for
+// fetching `mobile` from the originating access_request.
+function waCredentialsUrl(input: {
+  mobile: string;
+  orgName: string;
+  loginUrl: string;
+  email: string;
+  password: string;
+}): string {
+  const digits = input.mobile.replace(/\D+/g, "");
+  const lines = [
+    `Sahityotsav — ${input.orgName}`,
+    "",
+    "Your admin login is ready:",
+    `Login URL: ${input.loginUrl}`,
+    `Email: ${input.email}`,
+    `Password: ${input.password}`,
+    "",
+    "Please change the password after your first sign-in.",
+  ];
+  return `https://wa.me/${digits}?text=${encodeURIComponent(lines.join("\n"))}`;
+}
+
 async function userEmail(request: Request): Promise<string | null> {
   const { supabase } = createSupabaseServerClient(request);
   const {
@@ -119,11 +153,20 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   });
 
   // Pending access requests submitted from the apex landing form.
+  // Approved + rejected history lives at /owner/requests so this page
+  // stays focused on the active queue.
   const { data: pendingReqs } = await svc
     .from("access_requests")
     .select("id, name, mobile, organization_name, created_at")
     .eq("status", "pending")
     .order("created_at", { ascending: false });
+
+  // Count of processed (approved+rejected) rows — just for the badge
+  // on the "Request history" link. Cheap head-count query.
+  const { count: historyCount } = await svc
+    .from("access_requests")
+    .select("id", { count: "exact", head: true })
+    .neq("status", "pending");
 
   return data({
     tenants,
@@ -135,10 +178,21 @@ export async function loader({ request, context }: Route.LoaderArgs) {
       organization_name: string;
       created_at: string;
     }[],
+    historyCount: historyCount ?? 0,
   });
 }
 
-type ActionResult = { error: string } | { ok: true; message: string };
+// `whatsapp` (optional) on the success branch carries a one-tap deep
+// link the owner can use to ship the freshly-shown credentials to the
+// requester via WhatsApp. The plaintext password lives only in that
+// URL — nothing is persisted server-side.
+type ActionResult =
+  | { error: string }
+  | {
+      ok: true;
+      message: string;
+      whatsapp?: { url: string; mobile: string } | null;
+    };
 
 export async function action({
   request,
@@ -159,15 +213,39 @@ export async function action({
   if (intent === "reset_admin_password") {
     const userId = String(fd.get("user_id") ?? "").trim();
     const email = String(fd.get("email") ?? "").trim();
+    const mobile = String(fd.get("mobile") ?? "").trim();
+    const orgName = String(fd.get("org_name") ?? "").trim();
+    const subdomain = String(fd.get("subdomain") ?? "").trim();
     if (!userId) return { error: "No admin account on that tenant." };
     const pwd = genPassword();
     const { error } = await svc.auth.admin.updateUserById(userId, {
       password: pwd,
     });
     if (error) return { error: `Reset failed: ${error.message}` };
+
+    // If the owner passed a mobile (optional, from the row inline
+    // form), build a wa.me prefill so they can ship the fresh
+    // password without ever touching the clipboard.
+    const whatsapp =
+      mobile && email
+        ? {
+            url: waCredentialsUrl({
+              mobile,
+              orgName: orgName || "Sahityotsav",
+              loginUrl: subdomain
+                ? `${tenantUrl(request, subdomain)}/admin`
+                : "",
+              email,
+              password: pwd,
+            }),
+            mobile,
+          }
+        : null;
+
     return {
       ok: true,
       message: `New password for ${email || "admin"}: ${pwd}  — copy it now, it is shown only once.`,
+      whatsapp,
     };
   }
 
@@ -425,7 +503,17 @@ export async function action({
     // log the message in the success banner so the owner can clean
     // the request up by hand.
     let requestNote = "";
+    let requesterMobile: string | null = null;
     if (requestId) {
+      // Capture the requester's mobile before flipping status so the
+      // WhatsApp credentials deep-link below can address them.
+      const { data: reqRow } = await svc
+        .from("access_requests")
+        .select("mobile")
+        .eq("id", requestId)
+        .maybeSingle();
+      requesterMobile = reqRow?.mobile ?? null;
+
       const { error: reqErr } = await svc
         .from("access_requests")
         .update({ status: "approved" })
@@ -435,11 +523,26 @@ export async function action({
       }
     }
 
+    const loginUrl = `${tenantUrl(request, subdomain)}/admin`;
+    const whatsapp = requesterMobile
+      ? {
+          url: waCredentialsUrl({
+            mobile: requesterMobile,
+            orgName,
+            loginUrl,
+            email: adminEmail,
+            password: adminPassword,
+          }),
+          mobile: requesterMobile,
+        }
+      : null;
+
     return {
       ok: true,
       message: `Created ${orgName} → ${tenantUrl(request, subdomain)} · login ${adminEmail} / ${adminPassword} · ${
         tplPrograms?.length ?? 0
       } programs seeded (event is draft — the admin signs in and publishes).${requestNote}`,
+      whatsapp,
     };
   }
 
@@ -684,6 +787,68 @@ export async function action({
   return { error: `Unknown intent: ${intent}` };
 }
 
+// Inline "Reset password" form used in every tenant row. Prompts the
+// owner for an optional WhatsApp number on submit — if supplied, the
+// success banner exposes a one-tap wa.me deeplink that ships the
+// fresh credentials. Blank/cancel still resets, just without the
+// auto-send link. We never persist the plaintext password.
+function ResetPasswordButton({
+  adminUserId,
+  adminEmail,
+  orgName,
+  subdomain,
+  className,
+}: {
+  adminUserId: string;
+  adminEmail: string;
+  orgName: string;
+  subdomain: string | null;
+  className?: string;
+}) {
+  return (
+    <Form
+      method="post"
+      onSubmit={(e) => {
+        // confirm + prompt run BEFORE the browser serialises the
+        // form, so writing into the hidden `mobile` input here is
+        // picked up in the request body.
+        const form = e.currentTarget;
+        const ask = window.prompt(
+          `Send the new password to a WhatsApp number? Enter with country code (e.g. +91…), or leave blank to just show it on screen.`,
+          "",
+        );
+        if (ask === null) {
+          // User cancelled the prompt — abort the whole submit so
+          // we don't silently rotate the password without their
+          // intent.
+          e.preventDefault();
+          return;
+        }
+        const input = form.querySelector(
+          'input[name="mobile"]',
+        ) as HTMLInputElement | null;
+        if (input) input.value = ask.trim();
+      }}
+    >
+      <input type="hidden" name="intent" value="reset_admin_password" />
+      <input type="hidden" name="user_id" value={adminUserId} />
+      <input type="hidden" name="email" value={adminEmail} />
+      <input type="hidden" name="org_name" value={orgName} />
+      <input type="hidden" name="subdomain" value={subdomain ?? ""} />
+      <input type="hidden" name="mobile" value="" />
+      <button
+        type="submit"
+        className={
+          className ??
+          "text-[11px] font-medium text-stone-400 underline decoration-dotted underline-offset-4 transition hover:text-brand-700"
+        }
+      >
+        Reset password
+      </button>
+    </Form>
+  );
+}
+
 function StatusPill({ status }: { status: string }) {
   const tone =
     status === "published"
@@ -705,7 +870,7 @@ const GRAIN =
   "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.82' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)'/%3E%3C/svg%3E\")";
 
 export default function OwnerConsole({ loaderData }: Route.ComponentProps) {
-  const { tenants, rootDomain, accessRequests } = loaderData;
+  const { tenants, rootDomain, accessRequests, historyCount } = loaderData;
   const actionData = useActionData<typeof action>();
   const navigate = useNavigate();
   // Intent-scoped busy. Each button derives its own loading state from
@@ -807,23 +972,35 @@ export default function OwnerConsole({ loaderData }: Route.ComponentProps) {
 
       {/* ── Masthead ── */}
       <header className="sticky top-0 z-30 bg-[#1B1714] text-[#EDE6D8]">
-        <div className="mx-auto flex max-w-[1280px] items-center justify-between gap-6 px-6 py-2.5">
-          <div className="flex items-center gap-3">
-            <div className="grid size-7 place-items-center rounded border border-[#C8A24A]/40 bg-[#C8A24A]/10 font-[Fraunces,serif] text-sm leading-none text-[#E8C879]">
+        <div className="mx-auto flex max-w-[1280px] items-center justify-between gap-3 px-4 py-2.5 sm:gap-6 sm:px-6">
+          <div className="flex min-w-0 items-center gap-3">
+            <div className="grid size-7 shrink-0 place-items-center rounded border border-[#C8A24A]/40 bg-[#C8A24A]/10 font-[Fraunces,serif] text-sm leading-none text-[#E8C879]">
               സ
             </div>
-            <p className="font-[Fraunces,serif] text-sm tracking-tight text-[#F4EEE0]">
+            <p className="truncate font-[Fraunces,serif] text-sm tracking-tight text-[#F4EEE0]">
               Sahityotsav
-              <span className="ml-2 text-[11px] font-normal text-[#9b9080]">
+              <span className="ml-2 hidden text-[11px] font-normal text-[#9b9080] sm:inline">
                 Owner console
               </span>
             </p>
           </div>
-          <div className="flex items-center gap-4">
+          <div className="flex shrink-0 items-center gap-2 sm:gap-4">
             <span className="hidden text-xs text-[#9b9080] sm:inline">
               {tenants.length} org{tenants.length === 1 ? "" : "s"} ·{" "}
               <span className="text-[#C8A24A]">{liveCount} live</span>
             </span>
+            <Link
+              to="/owner/requests"
+              prefetch="intent"
+              className="inline-flex items-center gap-1.5 rounded border border-[#3a322b] px-2.5 py-1 text-xs font-medium text-[#cfc5b3] transition hover:border-[#C8A24A]/50 hover:text-[#F4EEE0]"
+            >
+              History
+              {historyCount > 0 && (
+                <span className="rounded-full bg-[#C8A24A]/20 px-1.5 py-0.5 text-[10px] font-semibold tabular-nums text-[#E8C879]">
+                  {historyCount}
+                </span>
+              )}
+            </Link>
             <Form method="post">
               <button
                 type="submit"
@@ -839,7 +1016,7 @@ export default function OwnerConsole({ loaderData }: Route.ComponentProps) {
         <div className="h-px w-full bg-gradient-to-r from-transparent via-[#C8A24A]/55 to-transparent" />
       </header>
 
-      <main className="relative z-10 mx-auto max-w-[1280px] px-6 pb-12 pt-6">
+      <main className="relative z-10 mx-auto max-w-[1280px] px-4 pb-12 pt-5 sm:px-6 sm:pt-6">
         {/* ── Heading ── */}
         <div className="o-rise mb-4 flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
           <div className="flex items-baseline gap-3">
@@ -862,7 +1039,18 @@ export default function OwnerConsole({ loaderData }: Route.ComponentProps) {
         )}
         {actionData && "ok" in actionData && (
           <div className="o-rise mb-4 rounded-lg border border-emerald-200 bg-emerald-50/80 px-4 py-2.5 text-sm leading-relaxed text-emerald-800">
-            {actionData.message}
+            <p>{actionData.message}</p>
+            {actionData.whatsapp && (
+              <a
+                href={actionData.whatsapp.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="mt-2 inline-flex items-center gap-2 rounded-md bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:bg-emerald-700"
+              >
+                <span aria-hidden>💬</span>
+                Send credentials via WhatsApp ({actionData.whatsapp.mobile})
+              </a>
+            )}
           </div>
         )}
 
@@ -872,7 +1060,7 @@ export default function OwnerConsole({ loaderData }: Route.ComponentProps) {
             className={`${card} o-rise mb-5 overflow-hidden`}
             style={{ animationDelay: ".05s" }}
           >
-            <div className="flex items-center justify-between border-b border-stone-100 px-5 py-3">
+            <div className="flex items-center justify-between border-b border-stone-100 px-4 py-3 sm:px-5">
               <h2 className="font-[Fraunces,serif] text-base tracking-tight">
                 Pending access requests
               </h2>
@@ -886,21 +1074,26 @@ export default function OwnerConsole({ loaderData }: Route.ComponentProps) {
                 return (
                   <li
                     key={r.id}
-                    className="flex flex-wrap items-center gap-x-5 gap-y-2 px-5 py-3"
+                    className="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3 sm:px-5"
                   >
-                    <div className="min-w-0 flex-1">
+                    <div className="min-w-0 flex-1 basis-full sm:basis-0">
                       <p className="truncate text-sm font-semibold text-stone-900">
                         {r.organization_name}
                       </p>
-                      <p className="mt-0.5 truncate text-xs text-stone-600">
-                        {r.name} ·{" "}
+                      <p className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-stone-600">
+                        <span className="truncate">{r.name}</span>
+                        <span className="text-stone-300">·</span>
                         <a
-                          href={`tel:${r.mobile.replace(/\s+/g, "")}`}
-                          className="font-mono text-stone-700 hover:text-brand-700"
+                          href={waUrl(r.mobile)}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1 font-mono text-emerald-700 hover:text-emerald-800"
+                          title="Open WhatsApp chat"
                         >
+                          <span aria-hidden>💬</span>
                           {r.mobile}
-                        </a>{" "}
-                        ·{" "}
+                        </a>
+                        <span className="text-stone-300">·</span>
                         <span className="text-stone-400">
                           {ts.toLocaleString("en-IN", {
                             day: "2-digit",
@@ -911,7 +1104,7 @@ export default function OwnerConsole({ loaderData }: Route.ComponentProps) {
                         </span>
                       </p>
                     </div>
-                    <div className="flex shrink-0 gap-1.5">
+                    <div className="ml-auto flex shrink-0 gap-1.5">
                       {/* Approve = open the Create-tenant modal with
                           org_name + request_id prefilled. Status only
                           flips to 'approved' once provisioning succeeds,
@@ -974,7 +1167,7 @@ export default function OwnerConsole({ loaderData }: Route.ComponentProps) {
                 );
               })}
             </ul>
-            <p className="border-t border-stone-100 bg-stone-50/60 px-5 py-2 text-[11px] text-stone-500">
+            <p className="border-t border-stone-100 bg-stone-50/60 px-4 py-2 text-[11px] text-stone-500 sm:px-5">
               Approve fills the Create-tenant form on the right with
               the organisation name. The request is only marked
               approved once provisioning succeeds, so a half-done
@@ -990,7 +1183,7 @@ export default function OwnerConsole({ loaderData }: Route.ComponentProps) {
             className={`${card} order-2 overflow-hidden lg:col-span-7`}
             style={{ animationDelay: ".1s" }}
           >
-            <div className="flex items-center justify-between border-b border-stone-100 px-5 py-3">
+            <div className="flex items-center justify-between border-b border-stone-100 px-4 py-3 sm:px-5">
               <h2 className="font-[Fraunces,serif] text-base tracking-tight">
                 Active organizations
               </h2>
@@ -1003,30 +1196,21 @@ export default function OwnerConsole({ loaderData }: Route.ComponentProps) {
                 No organizations yet — create the first one →
               </p>
             ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full min-w-[640px] text-sm">
-                  <thead>
-                    <tr className="text-left text-[10px] uppercase tracking-[0.14em] text-stone-400">
-                      <th className="w-9 py-2.5 pl-5 pr-2 font-semibold">#</th>
-                      <th className="px-3 py-2.5 font-semibold">
-                        Organization
-                      </th>
-                      <th className="px-3 py-2.5 font-semibold">Event</th>
-                      <th className="px-3 py-2.5 pr-5 font-semibold">Admin</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {tenants.map((t, i) => (
-                      <tr
-                        key={t.subdomain ?? t.name}
-                        className="border-t border-stone-100 align-top transition-colors hover:bg-[#FBF8F1]"
-                      >
-                        <td className="py-3 pl-5 pr-2 font-[Fraunces,serif] text-xs tabular-nums text-stone-300">
+              <>
+                {/* Mobile: stacked cards. The table layout below would
+                    force a 640px-wide horizontal scroll on phones and
+                    truncate the inline action links — cards keep every
+                    affordance one-tap reachable. */}
+                <ul className="divide-y divide-stone-100 md:hidden">
+                  {tenants.map((t, i) => (
+                    <li key={t.subdomain ?? t.name} className="px-4 py-3.5">
+                      <div className="flex items-start gap-2">
+                        <span className="mt-0.5 font-[Fraunces,serif] text-xs tabular-nums text-stone-300">
                           {String(i + 1).padStart(2, "0")}
-                        </td>
-                        <td className="px-3 py-3">
+                        </span>
+                        <div className="min-w-0 flex-1">
                           <div className="flex flex-wrap items-center gap-2">
-                            <span className="font-medium text-stone-900">
+                            <span className="text-sm font-semibold text-stone-900">
                               {t.name}
                             </span>
                             {t.level && (
@@ -1034,106 +1218,193 @@ export default function OwnerConsole({ loaderData }: Route.ComponentProps) {
                                 {t.level}
                               </span>
                             )}
+                            {t.event && (
+                              <StatusPill status={t.event.status} />
+                            )}
                           </div>
                           {t.url ? (
                             <a
                               href={t.url}
-                              className="mt-0.5 block font-mono text-[11px] text-brand-700 hover:underline break-all"
+                              className="mt-1 block font-mono text-[11px] text-brand-700 hover:underline break-all"
                             >
                               {t.url.replace(/^https?:\/\//, "")}
                             </a>
                           ) : (
-                            <span className="text-[11px] text-stone-300">
-                              — not set —
+                            <span className="mt-1 block text-[11px] text-stone-300">
+                              — subdomain not set —
                             </span>
                           )}
-                        </td>
-                        <td className="px-3 py-3">
-                          {t.event ? (
-                            <div className="space-y-1">
-                              <StatusPill status={t.event.status} />
-                              <div className="text-[12px] text-stone-600">
-                                {t.event.name}
-                              </div>
-                            </div>
-                          ) : (
-                            <span className="text-stone-300">—</span>
+                          {t.event && (
+                            <p className="mt-1 text-xs text-stone-600">
+                              {t.event.name}
+                            </p>
                           )}
-                        </td>
-                        <td className="px-3 py-3 pr-5">
-                          {t.adminEmail ? (
-                            <div className="space-y-1">
-                              <div className="font-mono text-[11.5px] text-stone-700 break-all">
+                          <div className="mt-2 text-[11px]">
+                            <span className="text-stone-400">Admin:</span>{" "}
+                            {t.adminEmail ? (
+                              <span className="font-mono text-stone-700 break-all">
                                 {t.adminEmail}
+                              </span>
+                            ) : (
+                              <span className="text-stone-300">—</span>
+                            )}
+                          </div>
+                          <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
+                            {t.adminUserId && (
+                              <>
+                                <Link
+                                  to={{ search: `?edit=${t.adminUserId}` }}
+                                  className="text-[11px] font-medium text-stone-600 underline decoration-dotted underline-offset-4 transition hover:text-brand-700"
+                                >
+                                  Edit
+                                </Link>
+                                <ResetPasswordButton
+                                  adminUserId={t.adminUserId}
+                                  adminEmail={t.adminEmail ?? ""}
+                                  orgName={t.name}
+                                  subdomain={t.subdomain}
+                                  className="text-[11px] font-medium text-stone-500 underline decoration-dotted underline-offset-4 transition hover:text-brand-700"
+                                />
+                              </>
+                            )}
+                            {t.subdomain &&
+                              t.subdomain !== TEMPLATE_SUBDOMAIN && (
+                                <Link
+                                  to={{ search: `?delete=${t.subdomain}` }}
+                                  className="text-[11px] font-medium text-red-500 underline decoration-dotted underline-offset-4 transition hover:text-red-700"
+                                >
+                                  Delete tenant
+                                </Link>
+                              )}
+                          </div>
+                        </div>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+
+                {/* Desktop/tablet: the original ledger table. */}
+                <div className="hidden overflow-x-auto md:block">
+                  <table className="w-full min-w-[640px] text-sm">
+                    <thead>
+                      <tr className="text-left text-[10px] uppercase tracking-[0.14em] text-stone-400">
+                        <th className="w-9 py-2.5 pl-5 pr-2 font-semibold">
+                          #
+                        </th>
+                        <th className="px-3 py-2.5 font-semibold">
+                          Organization
+                        </th>
+                        <th className="px-3 py-2.5 font-semibold">Event</th>
+                        <th className="px-3 py-2.5 pr-5 font-semibold">
+                          Admin
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {tenants.map((t, i) => (
+                        <tr
+                          key={t.subdomain ?? t.name}
+                          className="border-t border-stone-100 align-top transition-colors hover:bg-[#FBF8F1]"
+                        >
+                          <td className="py-3 pl-5 pr-2 font-[Fraunces,serif] text-xs tabular-nums text-stone-300">
+                            {String(i + 1).padStart(2, "0")}
+                          </td>
+                          <td className="px-3 py-3">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="font-medium text-stone-900">
+                                {t.name}
+                              </span>
+                              {t.level && (
+                                <span className="rounded border border-stone-200 bg-stone-50 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-[0.12em] text-stone-500">
+                                  {t.level}
+                                </span>
+                              )}
+                            </div>
+                            {t.url ? (
+                              <a
+                                href={t.url}
+                                className="mt-0.5 block font-mono text-[11px] text-brand-700 hover:underline break-all"
+                              >
+                                {t.url.replace(/^https?:\/\//, "")}
+                              </a>
+                            ) : (
+                              <span className="text-[11px] text-stone-300">
+                                — not set —
+                              </span>
+                            )}
+                          </td>
+                          <td className="px-3 py-3">
+                            {t.event ? (
+                              <div className="space-y-1">
+                                <StatusPill status={t.event.status} />
+                                <div className="text-[12px] text-stone-600">
+                                  {t.event.name}
+                                </div>
                               </div>
-                              <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-                                {t.adminUserId && (
-                                  <>
-                                    <Link
-                                      to={{ search: `?edit=${t.adminUserId}` }}
-                                      className="text-[11px] font-medium text-stone-500 underline decoration-dotted underline-offset-4 transition hover:text-brand-700"
-                                    >
-                                      Edit
-                                    </Link>
-                                    <Form method="post">
-                                      <input
-                                        type="hidden"
-                                        name="intent"
-                                        value="reset_admin_password"
-                                      />
-                                      <input
-                                        type="hidden"
-                                        name="user_id"
-                                        value={t.adminUserId}
-                                      />
-                                      <input
-                                        type="hidden"
-                                        name="email"
-                                        value={t.adminEmail}
-                                      />
-                                      <button
-                                        type="submit"
-                                        className="text-[11px] font-medium text-stone-400 underline decoration-dotted underline-offset-4 transition hover:text-brand-700"
+                            ) : (
+                              <span className="text-stone-300">—</span>
+                            )}
+                          </td>
+                          <td className="px-3 py-3 pr-5">
+                            {t.adminEmail ? (
+                              <div className="space-y-1">
+                                <div className="font-mono text-[11.5px] text-stone-700 break-all">
+                                  {t.adminEmail}
+                                </div>
+                                <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                                  {t.adminUserId && (
+                                    <>
+                                      <Link
+                                        to={{ search: `?edit=${t.adminUserId}` }}
+                                        className="text-[11px] font-medium text-stone-500 underline decoration-dotted underline-offset-4 transition hover:text-brand-700"
                                       >
-                                        Reset password
-                                      </button>
-                                    </Form>
-                                  </>
-                                )}
+                                        Edit
+                                      </Link>
+                                      <ResetPasswordButton
+                                        adminUserId={t.adminUserId}
+                                        adminEmail={t.adminEmail}
+                                        orgName={t.name}
+                                        subdomain={t.subdomain}
+                                      />
+                                    </>
+                                  )}
+                                  {t.subdomain &&
+                                    t.subdomain !== TEMPLATE_SUBDOMAIN && (
+                                      <Link
+                                        to={{
+                                          search: `?delete=${t.subdomain}`,
+                                        }}
+                                        className="text-[11px] font-medium text-red-500 underline decoration-dotted underline-offset-4 transition hover:text-red-700"
+                                      >
+                                        Delete tenant
+                                      </Link>
+                                    )}
+                                </div>
+                              </div>
+                            ) : (
+                              <div className="space-y-1">
+                                <span className="text-stone-300">—</span>
                                 {t.subdomain &&
                                   t.subdomain !== TEMPLATE_SUBDOMAIN && (
                                     <Link
-                                      to={{ search: `?delete=${t.subdomain}` }}
-                                      className="text-[11px] font-medium text-red-500 underline decoration-dotted underline-offset-4 transition hover:text-red-700"
+                                      to={{
+                                        search: `?delete=${t.subdomain}`,
+                                        hash: "#delete-tenant",
+                                      }}
+                                      className="block text-[11px] font-medium text-red-500 underline decoration-dotted underline-offset-4 transition hover:text-red-700"
                                     >
                                       Delete tenant
                                     </Link>
                                   )}
                               </div>
-                            </div>
-                          ) : (
-                            <div className="space-y-1">
-                              <span className="text-stone-300">—</span>
-                              {t.subdomain &&
-                                t.subdomain !== TEMPLATE_SUBDOMAIN && (
-                                  <Link
-                                    to={{
-                                      search: `?delete=${t.subdomain}`,
-                                      hash: "#delete-tenant",
-                                    }}
-                                    className="block text-[11px] font-medium text-red-500 underline decoration-dotted underline-offset-4 transition hover:text-red-700"
-                                  >
-                                    Delete tenant
-                                  </Link>
-                                )}
-                            </div>
-                          )}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </>
             )}
           </section>
 
