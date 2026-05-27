@@ -1134,7 +1134,13 @@ export async function action({ request }: Route.ActionArgs) {
     const path = `templates/standings/${event.id}/${id}.${ext}`;
     const up = await supabase.storage
       .from("posters")
-      .upload(path, file, { upsert: true, contentType: file.type });
+      .upload(path, file, {
+        upsert: true,
+        contentType: file.type,
+        // URL is cache-busted with `?v=<ts>` on every save, so a long
+        // max-age is safe and keeps Supabase storage egress tiny.
+        cacheControl: "31536000",
+      });
     if (up.error)
       return data(
         { error: `Upload failed: ${up.error.message}` },
@@ -1267,7 +1273,13 @@ export async function action({ request }: Route.ActionArgs) {
     const path = `final/${event.id}.${ext}`;
     const up = await supabase.storage
       .from("posters")
-      .upload(path, file, { upsert: true, contentType: file.type });
+      .upload(path, file, {
+        upsert: true,
+        contentType: file.type,
+        // URL is cache-busted with `?v=<ts>` on every save, so a long
+        // max-age is safe and keeps Supabase storage egress tiny.
+        cacheControl: "31536000",
+      });
     if (up.error) {
       return data(
         { error: `Upload failed: ${up.error.message}` },
@@ -1339,7 +1351,13 @@ export async function action({ request }: Route.ActionArgs) {
     const path = `templates/${event.id}/${id}.${ext}`;
     const up = await supabase.storage
       .from("posters")
-      .upload(path, file, { upsert: true, contentType: file.type });
+      .upload(path, file, {
+        upsert: true,
+        contentType: file.type,
+        // URL is cache-busted with `?v=<ts>` on every save, so a long
+        // max-age is safe and keeps Supabase storage egress tiny.
+        cacheControl: "31536000",
+      });
     if (up.error) {
       return data(
         { error: `Upload failed: ${up.error.message}` },
